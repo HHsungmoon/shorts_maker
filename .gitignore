@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+work/
+*.db
+*.db-journal
+
+# 원본 영상은 서버에 scp 로 올린다 — 레포에 넣지 않는다.
+sources/*
+!sources/.gitkeep
