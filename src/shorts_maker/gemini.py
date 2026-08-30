@@ -58,6 +58,31 @@ def ping(cfg: config.Config) -> dict:
 
 RESPONSE_SCHEMA_KEY = "response_schema"
 
+# 재시도할 상태코드. 과부하·일시 장애만 다시 부른다.
+# 🔴 4xx 는 재시도하지 않는다 — 잘못된 키나 잘못된 요청을 반복해봐야 같은 답이고 돈만 든다.
+TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 4
+BASE_BACKOFF_SEC = 2.0
+
+
+def _status_of(exc: Exception) -> int | None:
+    """예외에서 HTTP 상태코드를 뽑는다.
+
+    google-genai 의 예외 계층에 기대지 않는다 — 버전마다 클래스가 바뀌어서, 못 알아보면
+    재시도가 조용히 사라진다. code 속성을 먼저 보고 없으면 메시지에서 찾는다.
+    """
+    code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    import re
+
+    found = re.search(r"\b(429|5\d\d)\b", str(exc))
+    return int(found.group(1)) if found else None
+
+
+def is_transient(exc: Exception) -> bool:
+    return _status_of(exc) in TRANSIENT_STATUS
+
 
 def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tuple[str, dict, int]:
     """JSON 을 강제해서 한 번 호출한다. (본문, 사용량, 소요 ms) 를 돌려준다.
@@ -66,21 +91,37 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
     강제되면 "JSON 이 깨져서 재시도" 라는 실패 경로 자체가 사라진다. 우리가 검증해야 할 건
     형식이 아니라 내용(인덱스가 실제로 존재하는가)만 남는다(§12).
     """
+    import logging
     import time
 
     from google.genai import types
 
-    started = time.monotonic()
-    response = client(cfg).models.generate_content(
-        model=cfg.gemini_model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=response_schema,
-        ),
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=response_schema,
     )
-    latency_ms = int((time.monotonic() - started) * 1000)
+    active = client(cfg)
+    started = time.monotonic()
 
+    # 파이프라인은 LLM 을 연달아 3번 이상 부른다. 그중 하나가 과부하로 실패하면 잡 전체가
+    # 죽는데, 그건 대개 몇 초 뒤면 되는 종류의 실패다.
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            response = active.models.generate_content(
+                model=cfg.gemini_model, contents=prompt, config=config
+            )
+            break
+        except Exception as exc:
+            if attempt == MAX_ATTEMPTS or not is_transient(exc):
+                raise
+            wait = BASE_BACKOFF_SEC * (2 ** (attempt - 1))
+            logging.warning(
+                "Gemini call failed (%s), retrying in %.0fs [%d/%d]",
+                _status_of(exc), wait, attempt, MAX_ATTEMPTS,
+            )
+            time.sleep(wait)
+
+    latency_ms = int((time.monotonic() - started) * 1000)
     usage = getattr(response, "usage_metadata", None)
     return (
         getattr(response, "text", "") or "",
@@ -88,6 +129,7 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
             "input_tokens": getattr(usage, "prompt_token_count", None),
             "output_tokens": getattr(usage, "candidates_token_count", None),
             "thinking_tokens": getattr(usage, "thoughts_token_count", None),
+            "attempts": attempt,
         },
         latency_ms,
     )

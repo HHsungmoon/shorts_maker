@@ -163,7 +163,16 @@ def run_for_segment(
     context = conn.execute("select context from sources where id = ?", (source_id,)).fetchone()["context"]
 
     prompt = build_prompt(utterances, segment["description"] or "", context)
-    raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
+    try:
+        raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
+    except Exception as exc:
+        conn.execute(
+            """insert into stage_calls (source_id, run_id, segment_id, stage, model, error)
+               values (?, ?, ?, 'cut', ?, ?)""",
+            (source_id, run_id, segment_id, cfg.gemini_model, f"{type(exc).__name__}: {exc}"),
+        )
+        conn.commit()
+        raise
     call = conn.execute(
         """insert into stage_calls
            (source_id, run_id, segment_id, stage, model, input_tokens, output_tokens,
