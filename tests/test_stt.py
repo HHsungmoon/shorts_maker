@@ -79,3 +79,23 @@ class ToUtteranceRowsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckLanguageTest(unittest.TestCase):
+    def test_accepts_supported_codes(self):
+        for code in stt.LANGUAGES:
+            with self.subTest(code=code):
+                self.assertEqual(stt.check_language(code), code)
+
+    def test_treats_empty_as_auto_detect(self):
+        for blank in (None, ""):
+            with self.subTest(blank=repr(blank)):
+                self.assertIsNone(stt.check_language(blank))
+
+    def test_rejects_unknown_codes(self):
+        # 🔴 whisper 는 모르는 코드를 받으면 에러를 낸다. 전사를 몇 분 돌린 뒤가 아니라
+        # 등록 시점에 걸러야 한다.
+        for code in ("kr", "korean", "KO", "en-US", "xx"):
+            with self.subTest(code=code):
+                with self.assertRaises(stt.SttError):
+                    stt.check_language(code)
