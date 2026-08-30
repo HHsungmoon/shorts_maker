@@ -148,7 +148,16 @@ def run_for_chunk(
 
     utterances = load_utterances(conn, chunk_id)
     prompt = build_prompt(utterances, chunk["context"])
-    raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
+    try:
+        raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
+    except Exception as exc:
+        # 🔴 실패한 호출도 남긴다(§12). 안 남기면 "왜 이 시각에 아무 일도 없었나"를 못 푼다.
+        conn.execute(
+            "insert into stage_calls (source_id, stage, model, error) values (?, 'segment', ?, ?)",
+            (chunk["source_id"], cfg.gemini_model, f"{type(exc).__name__}: {exc}"),
+        )
+        conn.commit()
+        raise
 
     call = conn.execute(
         """insert into stage_calls

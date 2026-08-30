@@ -175,6 +175,10 @@ def run_for_source(
     try:
         raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
     except Exception as exc:
+        conn.execute(
+            "insert into stage_calls (source_id, run_id, stage, model, error) values (?, ?, 'rank', ?, ?)",
+            (source_id, run_id, cfg.gemini_model, f"{type(exc).__name__}: {exc}"),
+        )
         conn.execute("update runs set status = 'FAILED', error = ? where id = ?", (str(exc), run_id))
         conn.commit()
         raise
