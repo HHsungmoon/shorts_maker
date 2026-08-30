@@ -71,6 +71,12 @@ def run_for_clip(
                 "SHORTS_FFMPEG 를 libass 포함 빌드로 지정하거나 --no-subtitles 로 끈다 "
                 "(macOS: brew install ffmpeg-full → /opt/homebrew/opt/ffmpeg-full/bin/ffmpeg)"
             )
+        if ffmpeg.font_available(cfg.subtitle_font) is False:
+            raise RenderError(
+                f"자막 폰트 '{cfg.subtitle_font}' 를 찾을 수 없다. 이대로 렌더하면 글자가 아니라"
+                " 네모(□)로 찍힌다 — SHORTS_SUBTITLE_FONT 를 설치된 폰트로 바꾸거나"
+                " 한글 폰트를 설치한다(데비안: apt-get install fonts-nanum)"
+            )
         subtitle_path, cue_count = build_subtitle_file(conn, cfg, clip, out_dir)
 
     started = time.monotonic()

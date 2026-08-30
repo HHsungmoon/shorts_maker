@@ -140,3 +140,19 @@ def copy_segment(src: str, dst: str, start: float, end: float, binary: str = "ff
         ],
         timeout=600,
     )
+
+
+def font_available(family: str) -> bool | None:
+    """그 폰트가 실제로 있는지 fontconfig 에 묻는다. fc-match 가 없으면 None(모름).
+
+    🔴 libass 는 폰트를 못 찾아도 실패하지 않는다 — 아무 폰트로 폴백해 **두부(□)를 그린다.**
+    결과 영상만 봐서는 "자막이 안 나온다"가 아니라 "자막이 깨졌다"로 보여서 원인을 찾기 어렵다.
+    렌더 전에 여기서 걸러 이유를 말해준다.
+    """
+    try:
+        matched = _run(["fc-match", "-f", "%{family}", family], timeout=15)
+    except FfmpegError:
+        return None
+    # fc-match 는 못 찾아도 대체 폰트를 돌려준다. 요청한 이름이 결과에 없으면 폴백된 것이다.
+    wanted = family.replace(" ", "").lower()
+    return any(wanted == part.replace(" ", "").lower() for part in matched.split(","))

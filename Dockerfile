@@ -25,9 +25,13 @@ FROM python:3.12-slim AS runtime
 
 # ffmpeg: 자막 번인에 libass 가 필요하다. 데비안 패키지에는 포함돼 있다
 # (macOS Homebrew 기본 빌드에는 없어서 로컬에서는 ffmpeg-full 을 따로 깐다).
+# 🔴 fonts-nanum: libass 는 폰트를 못 찾으면 **조용히 폴백해 두부(□)를 그린다.**
+# slim 이미지에는 한글 폰트가 하나도 없어서 자막이 전부 □ 로 나온다(실제로 겪었다).
+# fontconfig 는 fc-match 를 주며, 렌더 전에 폰트 존재를 확인하는 데 쓴다.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install -y --no-install-recommends ffmpeg ca-certificates fonts-nanum fontconfig \
+ && rm -rf /var/lib/apt/lists/* \
+ && fc-cache -f
 
 WORKDIR /app
 # uv sync 는 프로젝트를 editable 로 깐다 — venv 만 옮기면 안 되고 소스도 같이 와야 한다.
@@ -44,7 +48,8 @@ ENV PATH=/opt/venv/bin:$PATH \
     SHORTS_DB_PATH=/data/shorts.db \
     SHORTS_WORK_DIR=/data/work \
     SHORTS_SOURCE_DIR=/sources \
-    SHORTS_FFMPEG=ffmpeg
+    SHORTS_FFMPEG=ffmpeg \
+    SHORTS_SUBTITLE_FONT=NanumGothic
 
 EXPOSE 8100
 CMD ["sm", "serve"]
