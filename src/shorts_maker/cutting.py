@@ -176,11 +176,12 @@ def run_for_segment(
     call = conn.execute(
         """insert into stage_calls
            (source_id, run_id, segment_id, stage, model, input_tokens, output_tokens,
-            thinking_tokens, latency_ms)
-           values (?, ?, ?, 'cut', ?, ?, ?, ?, ?)""",
+            thinking_tokens, total_tokens, cached_tokens, latency_ms)
+           values (?, ?, ?, 'cut', ?, ?, ?, ?, ?, ?, ?)""",
         (
             source_id, run_id, segment_id, cfg.gemini_model,
-            usage["input_tokens"], usage["output_tokens"], usage["thinking_tokens"], latency_ms,
+            usage["input_tokens"], usage["output_tokens"], usage["thinking_tokens"],
+            usage["total_tokens"], usage["cached_tokens"], latency_ms,
         ),
     )
     conn.commit()

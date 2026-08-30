@@ -7,7 +7,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 TABLES = ("sources", "chunks", "utterances", "segments", "runs", "clips", "clip_reviews", "stage_calls")
@@ -19,6 +19,10 @@ TABLES = ("sources", "chunks", "utterances", "segments", "runs", "clips", "clip_
 MIGRATIONS: dict[int, list[str]] = {
     5: ["create unique index if not exists uq_clips_run_segment on clips (run_id, segment_id)"],
     6: ["alter table sources add column language text"],
+    7: [
+        "alter table stage_calls add column total_tokens integer",
+        "alter table stage_calls add column cached_tokens integer",
+    ],
 }
 
 

@@ -13,8 +13,10 @@ DEFAULTS = {
     "SHORTS_API_PORT": "8100",
     "SHORTS_FFMPEG": "ffmpeg",
     "SHORTS_SUBTITLE_FONT": "Apple SD Gothic Neo",
-    # 문서 §7 의 3.6 Flash 도입가. 🔴 가격은 자주 바뀌고 모델마다 다르다 — 화면에 "추정"으로
-    # 표시하고 여기 값을 함께 보여준다. 2027-01-01 에 2배 인상 예정이라고 문서에 적혀 있다.
+    # Gemini 3.6 Flash 유료 등급. 공식 가격 페이지에서 확인함(2026-08-31):
+    #   2026-12-31 까지 $0.75 / $3.75 → 2027-01-01 부터 $1.50 / $7.50 (2배)
+    # 🔴 **무료 등급이면 실제 청구는 0 이다.** 그 경우 화면 숫자는 "유료였다면" 값이다.
+    # Batch API 는 50% 라 쓰게 되면 여기도 바꿔야 한다.
     "SHORTS_PRICE_INPUT_USD_PER_1M": "0.75",
     "SHORTS_PRICE_OUTPUT_USD_PER_1M": "3.75",
     "SHORTS_USD_KRW": "1400",

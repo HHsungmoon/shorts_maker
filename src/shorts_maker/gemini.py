@@ -129,6 +129,12 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
             "input_tokens": getattr(usage, "prompt_token_count", None),
             "output_tokens": getattr(usage, "candidates_token_count", None),
             "thinking_tokens": getattr(usage, "thoughts_token_count", None),
+            # 🔴 총합을 함께 저장한다. 구글은 "output (including thinking tokens)" 으로 과금하는데,
+            # candidates 에 thinking 이 이미 포함되는지가 SDK/모델마다 분명하지 않다.
+            # total - prompt 로 계산하면 어느 쪽이든 정확하다.
+            "total_tokens": getattr(usage, "total_token_count", None),
+            # 캐시된 입력은 기본가의 10% 로 과금된다. 지금은 캐싱을 안 쓰지만 값은 남겨둔다.
+            "cached_tokens": getattr(usage, "cached_content_token_count", None),
             "attempts": attempt,
         },
         latency_ms,
