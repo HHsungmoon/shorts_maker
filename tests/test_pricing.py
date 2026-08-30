@@ -65,3 +65,19 @@ class EstimateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BilledOutputTest(unittest.TestCase):
+    def test_prefers_total_minus_input(self):
+        # 🔴 구글은 output(사고 포함)으로 과금하는데, candidates 에 thoughts 가 이미 포함되는지가
+        # SDK/모델마다 분명하지 않다. total - input 은 어느 쪽이든 맞는다.
+        call = {"input_tokens": 1000, "output_tokens": 300, "thinking_tokens": 700, "total_tokens": 2000}
+        self.assertEqual(pricing.billed_output_of(call), 1000)
+
+    def test_falls_back_to_adding_when_total_is_missing(self):
+        call = {"input_tokens": 1000, "output_tokens": 300, "thinking_tokens": 700}
+        self.assertEqual(pricing.billed_output_of(call), 1000)
+
+    def test_never_goes_negative(self):
+        call = {"input_tokens": 5000, "total_tokens": 100}
+        self.assertEqual(pricing.billed_output_of(call), 0)

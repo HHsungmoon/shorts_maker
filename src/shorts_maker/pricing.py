@@ -11,11 +11,25 @@
 from . import config
 
 
+def billed_output_of(call: dict) -> int:
+    """출력으로 과금되는 토큰 수.
+
+    🔴 구글의 과금 단위는 "input" 과 "output(사고 토큰 포함)" 둘뿐이다. 그런데
+    candidates_token_count 에 thoughts 가 이미 포함되는지가 SDK/모델마다 분명하지 않아,
+    단순히 더하면 이중으로 셀 수 있다. **total - input 으로 구하면 어느 쪽이든 맞는다.**
+    total 이 없는 옛 기록만 더하기로 되돌아간다.
+    """
+    total = call.get("total_tokens")
+    if total:
+        return max(0, int(total) - int(call.get("input_tokens") or 0))
+    return int(call.get("output_tokens") or 0) + int(call.get("thinking_tokens") or 0)
+
+
 def estimate(calls: list[dict], cfg: config.Config) -> dict:
     input_tokens = sum(c.get("input_tokens") or 0 for c in calls)
     output_tokens = sum(c.get("output_tokens") or 0 for c in calls)
     thinking_tokens = sum(c.get("thinking_tokens") or 0 for c in calls)
-    billed_output = output_tokens + thinking_tokens
+    billed_output = sum(billed_output_of(c) for c in calls)
 
     usd = (
         input_tokens / 1_000_000 * cfg.price_input_usd_per_1m

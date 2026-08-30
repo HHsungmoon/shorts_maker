@@ -229,6 +229,13 @@ create table if not exists stage_calls (
     output_tokens   integer,
     -- 🔴 사고 토큰은 출력 단가로 과금된다. 비용이 튀는 지점이라 따로 센다(§7).
     thinking_tokens integer,
+
+    -- 🔴 구글의 과금 단위는 input 과 output(사고 포함) 둘뿐인데, candidates 에 thoughts 가
+    -- 이미 포함되는지가 SDK/모델마다 분명하지 않다. total 을 함께 저장해두면
+    -- `total - input` 으로 계산할 수 있어 어느 쪽이든 정확하다.
+    total_tokens    integer,
+    -- 캐시된 입력은 기본가의 10%. 지금은 캐싱을 쓰지 않지만 값은 남겨둔다.
+    cached_tokens   integer,
     latency_ms      integer,
 
     -- 그 단계를 무엇으로 돌렸나 (JSON). stt 면 initial_prompt·vad, LLM 이면 온도 같은 것.
