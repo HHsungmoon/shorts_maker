@@ -30,7 +30,16 @@ def _check_ffmpeg(cfg: config.Config) -> bool:
     # 🔴 자막 번인에는 libass 가 필요하다(§9-9). Homebrew 기본 ffmpeg 에는 없어서, 이걸
     # 확인하지 않으면 렌더 단계에 가서야 실패한다.
     if ffmpeg.has_filter("ass", cfg.ffmpeg_bin):
-        _line(OK, "자막(libass)", "ass 필터 사용 가능")
+        available = ffmpeg.font_available(cfg.subtitle_font)
+        if available is True:
+            _line(OK, "자막(libass)", f"ass 필터 · 폰트 '{cfg.subtitle_font}'")
+        elif available is False:
+            _line(FAIL, "자막 폰트",
+                  f"'{cfg.subtitle_font}' 없음 — 자막이 네모(□)로 찍힌다. SHORTS_SUBTITLE_FONT 확인")
+            ok = False
+        else:
+            _line(OK, "자막(libass)",
+                  f"ass 필터 · 폰트 '{cfg.subtitle_font}' (fc-match 가 없어 확인 불가)")
     else:
         _line(FAIL, "자막(libass)",
               f"{cfg.ffmpeg_bin} 에 ass 필터가 없다 — SHORTS_FFMPEG 를 libass 포함 빌드로 지정한다 "
