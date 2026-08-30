@@ -8,6 +8,7 @@ dependencies = [
     "google-genai>=1.0.0",
     "python-multipart>=0.0.32",
     "uvicorn[standard]>=0.52.4",
+    "yt-dlp>=2026.8.19",
 ]
 
 # STT 는 A3 에서만 필요하고 ctranslate2/onnxruntime 를 끌고 와 무겁다.
