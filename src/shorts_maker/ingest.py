@@ -53,14 +53,16 @@ def add_source(
     content_type: str,
     origin: str | None,
     context: str | None,
+    language: str | None = None,
 ) -> int:
     path = resolve_source_path(cfg, raw_path)
     duration = ffmpeg.duration_sec(str(path))
     try:
         cursor = conn.execute(
-            """insert into sources (title, content_type, path, duration_sec, origin, fingerprint, context)
-               values (?, ?, ?, ?, ?, ?, ?)""",
-            (title, content_type, str(path), duration, origin, fingerprint(path), context),
+            """insert into sources
+               (title, content_type, path, duration_sec, origin, fingerprint, context, language)
+               values (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (title, content_type, str(path), duration, origin, fingerprint(path), context, language),
         )
     except sqlite3.IntegrityError as exc:
         if "fingerprint" in str(exc):

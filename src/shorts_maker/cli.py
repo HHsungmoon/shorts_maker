@@ -45,7 +45,8 @@ def _cmd_db_reset(cfg: config.Config, confirmed: bool) -> int:
 def _cmd_source_add(cfg: config.Config, args) -> int:
     with store.connect(cfg.db_path) as conn:
         source_id = ingest.add_source(
-            conn, cfg, args.path, args.title, args.type, args.origin, args.context
+            conn, cfg, args.path, args.title, args.type, args.origin, args.context,
+            stt.check_language(args.language),
         )
         row = conn.execute("select * from sources where id = ?", (source_id,)).fetchone()
     minutes, seconds = divmod(int(row["duration_sec"]), 60)
@@ -104,7 +105,9 @@ def _cmd_chunk_list(cfg: config.Config, source_id: int | None) -> int:
 
 def _cmd_stt_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.db_path) as conn:
-        result = stt.run_for_chunk(conn, cfg, args.chunk_id, args.model, args.force, args.prompt)
+        result = stt.run_for_chunk(
+            conn, cfg, args.chunk_id, args.model, args.force, args.prompt, args.language
+        )
         audio_sec = conn.execute(
             "select end_sec - start_sec as d from chunks where id = ?", (args.chunk_id,)
         ).fetchone()["d"]
@@ -297,6 +300,7 @@ def main(argv: list[str] | None = None) -> int:
     source_add.add_argument("--type", default="LECTURE", choices=("LECTURE", "FILM"))
     source_add.add_argument("--origin", help="출처 URL/설명 — 권리 감사용, 나중엔 못 되찾는다")
     source_add.add_argument("--context", help="줄거리/강연 개요. rank 의 자립성 판단에 쓰인다")
+    source_add.add_argument("--language", help="ko/en/ja/zh. 비우면 STT 가 자동 감지")
     source_sub.add_parser("list", help="등록된 원본 목록")
 
     chunk = sub.add_parser("chunk", help="처리할 조각 추출")
@@ -315,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     stt_run.add_argument("--model", help="whisper 모델 (기본: SHORTS_WHISPER_MODEL)")
     stt_run.add_argument("--force", action="store_true", help="기존 발화를 지우고 다시 한다")
     stt_run.add_argument("--prompt", help="도메인 어휘를 물려준다 (고유명사 교정용, 짧게)")
+    stt_run.add_argument("--language", help="ko/en/ja/zh. 비우면 원본 설정, 원본도 없으면 자동 감지")
     stt_show = stt_sub.add_parser("show", help="전사 결과를 본다")
     stt_show.add_argument("chunk_id", type=int)
     stt_show.add_argument("--limit", type=int, default=20)

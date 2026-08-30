@@ -63,6 +63,27 @@ class ApplySchemaTest(SchemaTestCase):
         with self.assertRaises(store.SchemaError):
             store.apply_schema(self.conn)
 
+    def test_migrates_in_place_without_losing_rows(self):
+        # STT 한 번에 수 분이 든다. 컬럼 하나 추가하려고 전사를 날리면 안 된다.
+        self.insert_source()
+        self.conn.execute("delete from schema_version")
+        self.conn.execute("insert into schema_version (version) values (5)")
+        self.conn.commit()
+        self.assertEqual(store.apply_schema(self.conn), store.SCHEMA_VERSION)
+        self.assertEqual(store.row_counts(self.conn)["sources"], 1)
+        self.conn.execute("update sources set language = 'en'")
+
+    def test_rerunning_a_half_applied_migration_is_safe(self):
+        # ALTER 는 됐는데 버전 기록 전에 죽은 상태. 다시 돌려도 막히면 안 된다.
+        self.conn.execute("delete from schema_version")
+        self.conn.execute("insert into schema_version (version) values (5)")
+        self.conn.commit()
+        store.apply_schema(self.conn)
+        self.conn.execute("delete from schema_version")
+        self.conn.execute("insert into schema_version (version) values (5)")
+        self.conn.commit()
+        self.assertEqual(store.apply_schema(self.conn), store.SCHEMA_VERSION)
+
     def test_is_idempotent_at_current_version(self):
         self.assertEqual(store.apply_schema(self.conn), store.SCHEMA_VERSION)
 

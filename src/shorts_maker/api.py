@@ -56,6 +56,7 @@ def health() -> dict:
         "geminiKey": bool(cfg.gemini_api_key),
         "geminiModel": cfg.gemini_model,
         "whisperModel": cfg.whisper_model,
+        "languages": stt.LANGUAGES,
         "activeJob": active.as_dict() if active else None,
     }
 
@@ -139,6 +140,7 @@ class SourceIn(BaseModel):
 class UrlIn(BaseModel):
     url: str
     context: str | None = None
+    language: str | None = None
     adminId: int | None = None
 
 
@@ -146,12 +148,14 @@ class RegisterIn(BaseModel):
     title: str | None = None
     origin: str | None = None
     context: str | None = None
+    language: str | None = None
     adminId: int | None = None
 
 
 class SttIn(BaseModel):
     model: str | None = None
     initialPrompt: str | None = None
+    language: str | None = None
     force: bool = False
 
 
@@ -220,7 +224,8 @@ def register_media(name: str, body: RegisterIn) -> dict:
     def work() -> dict:
         with connect() as conn:
             source_id = ingest.add_source(
-                conn, cfg, path.name, body.title or path.stem, "LECTURE", body.origin, body.context
+                conn, cfg, path.name, body.title or path.stem, "LECTURE", body.origin,
+                body.context, stt.check_language(body.language),
             )
             if body.adminId is not None:
                 conn.execute(
@@ -253,7 +258,7 @@ def add_source_from_url(body: UrlIn) -> dict:
                 return {"sourceId": existing, "reused": True, "title": info.title}
             source_id = ingest.add_source(
                 conn, cfg, path.name, info.title, "LECTURE",
-                f"{info.url} ({info.uploader})", body.context,
+                f"{info.url} ({info.uploader})", body.context, stt.check_language(body.language),
             )
             if body.adminId is not None:
                 conn.execute(
@@ -279,7 +284,9 @@ def add_chunk(source_id: int, body: ChunkIn) -> dict:
 def run_stt(chunk_id: int, body: SttIn) -> dict:
     def work() -> dict:
         with connect() as conn:
-            result = stt.run_for_chunk(conn, cfg, chunk_id, body.model, body.force, body.initialPrompt)
+            result = stt.run_for_chunk(
+                conn, cfg, chunk_id, body.model, body.force, body.initialPrompt, body.language
+            )
         return {"utterances": len(result.rows), "transcribeMs": result.transcribe_ms, "model": result.model}
 
     return submit("stt", f"chunk {chunk_id}", work)

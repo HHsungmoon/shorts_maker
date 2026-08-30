@@ -16,8 +16,22 @@ from pathlib import Path
 from . import config
 
 
+# whisper 가 아는 코드 중 이 프로젝트가 쓰는 것만 연다. 늘리려면 여기 한 줄이면 된다.
+LANGUAGES = {"ko": "한국어", "en": "영어", "ja": "일본어", "zh": "중국어"}
+
+
 class SttError(RuntimeError):
     pass
+
+
+def check_language(code: str | None) -> str | None:
+    """None 은 자동 감지다. 🔴 자동은 앞 30초로 판단해서 가끔 틀리고, 틀리면 결과가 통째로
+    쓸모없어진다 — 아는 언어면 지정하는 쪽이 낫다."""
+    if code is None or code == "":
+        return None
+    if code not in LANGUAGES:
+        raise SttError(f"지원하지 않는 언어: {code} (가능: {', '.join(LANGUAGES)}, 비우면 자동)")
+    return code
 
 
 @dataclass
@@ -73,7 +87,11 @@ def to_utterance_rows(segments, chunk_start_sec: float) -> tuple[list[dict], int
 
 
 def transcribe(
-    audio_path: Path, chunk_start_sec: float, model_name: str, initial_prompt: str | None = None
+    audio_path: Path,
+    chunk_start_sec: float,
+    model_name: str,
+    initial_prompt: str | None = None,
+    language: str | None = None,
 ) -> Transcription:
     try:
         from faster_whisper import WhisperModel
@@ -89,9 +107,9 @@ def transcribe(
     started = time.monotonic()
     segments, info = model.transcribe(
         str(audio_path),
-        # 언어를 고정한다. 자동 감지는 앞부분 30초로 판단해서 가끔 틀리는데, 틀리면 결과가
-        # 통째로 쓸모없어진다. 입력을 제한하는 쪽이 낫다(§12).
-        language="ko",
+        # 원본에 지정된 언어. None 이면 whisper 가 자동 감지한다 — 앞 30초로 판단해서
+        # 가끔 틀리고, 틀리면 결과가 통째로 쓸모없어지므로 아는 경우엔 지정하는 쪽이 낫다.
+        language=language,
         # [6] 이 발화 중간을 자르게 될 때 필요하다(§4-[6]).
         word_timestamps=True,
         # 강연은 침묵 구간이 길고, whisper 는 무음에서 같은 문장을 반복 생성하는 환각이 있다.
@@ -124,9 +142,11 @@ def run_for_chunk(
     model_name: str | None,
     force: bool,
     initial_prompt: str | None = None,
+    language: str | None = None,
 ) -> Transcription:
     chunk = conn.execute(
-        "select c.*, s.id as source_id from chunks c join sources s on s.id = c.source_id where c.id = ?",
+        "select c.*, s.id as source_id, s.language from chunks c join sources s on s.id = c.source_id"
+        " where c.id = ?",
         (chunk_id,),
     ).fetchone()
     if chunk is None:
@@ -142,7 +162,16 @@ def run_for_chunk(
     if not audio.is_file():
         raise SttError(f"청크 파일이 없다: {audio}")
 
-    result = transcribe(audio, float(chunk["start_sec"]), model_name or cfg.whisper_model, initial_prompt)
+    # 이번 호출에 언어를 주면 원본 설정을 덮고 그 값을 저장한다 — 처음에 잘못 골랐을 때
+    # 원본을 다시 등록하지 않고 고칠 수 있어야 한다.
+    chosen = check_language(language) if language is not None else chunk["language"]
+    if chosen != chunk["language"]:
+        conn.execute("update sources set language = ? where id = ?", (chosen, chunk["source_id"]))
+        conn.commit()
+
+    result = transcribe(
+        audio, float(chunk["start_sec"]), model_name or cfg.whisper_model, initial_prompt, chosen
+    )
 
     conn.execute("delete from utterances where chunk_id = ?", (chunk_id,))
     conn.executemany(
@@ -158,7 +187,7 @@ def run_for_chunk(
             f"faster-whisper:{result.model}",
             result.transcribe_ms,
             json.dumps(
-                {"initial_prompt": initial_prompt, "vad_filter": True, "language": "ko"},
+                {"initial_prompt": initial_prompt, "vad_filter": True, "language": chosen or "auto"},
                 ensure_ascii=False,
             ),
         ),

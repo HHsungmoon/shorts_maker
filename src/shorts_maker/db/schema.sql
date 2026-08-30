@@ -28,6 +28,11 @@ create table if not exists sources (
     -- 줄거리 / 강연 개요. rank 의 자립성 판단에 들어간다(§4-[5]).
     context             text,
 
+    -- STT 언어. null 이면 자동 감지.
+    -- 🔴 check 제약을 걸지 않는다. SQLite 는 `alter table add column` 으로 제약을 못 붙여서,
+    -- 여기에만 걸면 새로 만든 DB 와 마이그레이션한 DB 의 스키마가 달라진다. 검증은 코드에서 한다.
+    language            text,
+
     -- backend admins.id. 서비스가 분리돼 있으므로 FK 가 아니라 숫자만 들고 있는다(§13).
     created_by_admin_id integer,
 

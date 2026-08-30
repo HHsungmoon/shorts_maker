@@ -7,17 +7,18 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 TABLES = ("sources", "chunks", "utterances", "segments", "runs", "clips", "clip_reviews", "stage_calls")
 
-# 버전별 제자리 업그레이드. **덧붙이기만 가능한 것**(테이블·인덱스 추가)만 여기 넣는다 —
-# 컬럼 추가나 제약 변경은 SQLite 에서 테이블 재생성이 필요하고, 그건 조용히 어긋날 여지가 커서
-# 여전히 `sm db reset` 을 요구한다.
+# 버전별 제자리 업그레이드. **덧붙이기만 가능한 것**(테이블·인덱스·컬럼 추가)만 여기 넣는다.
+# 🔴 제약 변경은 SQLite 에서 테이블 재생성이 필요하고 조용히 어긋날 여지가 커서 넣지 않는다 —
+# 그래서 새로 넣는 컬럼에는 check 를 걸지 않는다(걸면 새 DB 와 마이그레이션한 DB 가 달라진다).
 # A 단계엔 통째로 날리는 게 정상 경로였지만, STT 한 번에 수 분이 드는 지금은 그 비용이 실제로 아프다.
 MIGRATIONS: dict[int, list[str]] = {
     5: ["create unique index if not exists uq_clips_run_segment on clips (run_id, segment_id)"],
+    6: ["alter table sources add column language text"],
 }
 
 
@@ -40,6 +41,20 @@ def schema_version(conn: sqlite3.Connection) -> int:
 
 class SchemaError(RuntimeError):
     pass
+
+
+def _apply_once(conn: sqlite3.Connection, statement: str) -> None:
+    """이미 적용된 문장은 넘어간다.
+
+    🔴 SQLite 에는 `add column if not exists` 가 없다. ALTER 는 성공했는데 버전 기록 직전에
+    죽으면, 다시 돌릴 때 `duplicate column name` 으로 막혀 손으로 고쳐야 한다 —
+    마이그레이션은 몇 번을 돌려도 같은 결과여야 한다.
+    """
+    try:
+        conn.execute(statement)
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc):
+            raise
 
 
 def apply_schema(conn: sqlite3.Connection) -> int:
@@ -65,7 +80,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
             )
         for version in steps:
             for statement in MIGRATIONS[version]:
-                conn.execute(statement)
+                _apply_once(conn, statement)
             conn.execute("insert into schema_version (version) values (?)", (version,))
         conn.commit()
         return SCHEMA_VERSION
