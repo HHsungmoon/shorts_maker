@@ -17,8 +17,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from . import (
-    config, cutting, ffmpeg, ingest, jobs, pipeline, pricing, ranking, render,
-    segmentation, stt, web,
+    config, cutting, download, ffmpeg, ingest, jobs, media, pipeline, pricing, ranking,
+    render, segmentation, stt, web,
 )
 from .db import store
 
@@ -136,6 +136,19 @@ class SourceIn(BaseModel):
     adminId: int | None = None
 
 
+class UrlIn(BaseModel):
+    url: str
+    context: str | None = None
+    adminId: int | None = None
+
+
+class RegisterIn(BaseModel):
+    title: str | None = None
+    origin: str | None = None
+    context: str | None = None
+    adminId: int | None = None
+
+
 class SttIn(BaseModel):
     model: str | None = None
     initialPrompt: str | None = None
@@ -177,6 +190,79 @@ def add_source(body: SourceIn) -> dict:
             )
             conn.commit()
     return {"sourceId": source_id}
+
+
+@app.get("/api/media", dependencies=[Depends(require_token)])
+def list_media() -> dict:
+    with connect() as conn:
+        return {"items": media.listing(conn, cfg), "disk": media.disk_usage(cfg)}
+
+
+@app.delete("/api/media/{name}", dependencies=[Depends(require_token)])
+def delete_media(name: str) -> dict:
+    """🔴 파일과 파생물을 실제로 지운다. 되돌릴 수 없다."""
+    with connect() as conn:
+        try:
+            result = media.delete(conn, cfg, name)
+        except media.MediaError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return {"removed": result.files, "freedBytes": result.freed_bytes, "sourceId": result.source_id}
+
+
+@app.post("/api/media/{name}/register", dependencies=[Depends(require_token)])
+def register_media(name: str, body: RegisterIn) -> dict:
+    """이미 서버에 있는 파일을 원본으로 등록한다(scp 로 올려둔 경우)."""
+    try:
+        path = media.resolve(cfg, name)
+    except media.MediaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    def work() -> dict:
+        with connect() as conn:
+            source_id = ingest.add_source(
+                conn, cfg, path.name, body.title or path.stem, "LECTURE", body.origin, body.context
+            )
+            if body.adminId is not None:
+                conn.execute(
+                    "update sources set created_by_admin_id = ? where id = ?", (body.adminId, source_id)
+                )
+                conn.commit()
+        return {"sourceId": source_id}
+
+    return submit("register", name, work)
+
+
+@app.post("/api/sources/from-url", dependencies=[Depends(require_token)])
+def add_source_from_url(body: UrlIn) -> dict:
+    """URL 로 받아서 바로 원본으로 등록한다.
+
+    🔴 호스트는 유튜브로 제한된다(download.check_url) — 임의 URL 을 서버가 받게 하면
+    내부망을 찌를 수 있다.
+    """
+    try:
+        download.check_url(body.url)
+    except download.DownloadError as exc:
+        # 잡을 띄우기 전에 막는다. 큐에 넣고 실패하면 사용자는 한참 뒤에야 이유를 안다.
+        raise HTTPException(400, str(exc)) from exc
+
+    def work() -> dict:
+        path, info = download.fetch(cfg, body.url)
+        with connect() as conn:
+            existing = media.find_source_id(conn, path.resolve())
+            if existing is not None:
+                return {"sourceId": existing, "reused": True, "title": info.title}
+            source_id = ingest.add_source(
+                conn, cfg, path.name, info.title, "LECTURE",
+                f"{info.url} ({info.uploader})", body.context,
+            )
+            if body.adminId is not None:
+                conn.execute(
+                    "update sources set created_by_admin_id = ? where id = ?", (body.adminId, source_id)
+                )
+                conn.commit()
+        return {"sourceId": source_id, "reused": False, "title": info.title}
+
+    return submit("download", body.url, work)
 
 
 @app.post("/api/sources/{source_id}/chunks", dependencies=[Depends(require_token)])
