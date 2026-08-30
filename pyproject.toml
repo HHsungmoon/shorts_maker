@@ -1,0 +1,26 @@
+[project]
+name = "shorts-maker"
+version = "0.1.0"
+description = "긴 영상에서 단독으로 성립하는 숏폼 클립을 뽑아내는 파이프라인"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "google-genai>=1.0.0",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.52.4",
+]
+
+# STT 는 A3 에서만 필요하고 ctranslate2/onnxruntime 를 끌고 와 무겁다.
+# 기본 설치에서 빼두고 `uv sync --extra stt` 로 그때 넣는다.
+[project.optional-dependencies]
+stt = ["faster-whisper>=1.1.0"]
+
+[project.scripts]
+sm = "shorts_maker.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/shorts_maker"]
