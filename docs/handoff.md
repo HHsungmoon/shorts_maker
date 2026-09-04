@@ -22,20 +22,13 @@
 
 ---
 
-## 2. 🔴 가장 먼저 할 일 — 커밋
+## 2. 커밋 · 푸시 상태
 
-**79개 파일이 커밋되지 않은 채 워킹트리에 있다**(VS Code 는 이름변경+수정을 둘로 세서 93개로 보인다). HEAD 는 아직 분리 전 `bc6f1d6` 이다.
-`git mv` 로 옮겨서 이력은 따라오지만, **커밋 전에 `git checkout .` 이나 `git stash` 를 잘못 치면
-이번 작업이 통째로 날아간다.**
+**전부 커밋되고 `HHsungmoon/shorts_maker` `main` 에 푸시됐다** (2026-09-04, `bc6f1d6` → `bf9e4f4`).
+5개 커밋으로 나눴다 — 구조 이동 / 백엔드 독립(인증·스키마 v8) / 프론트 / 빌드·배포 / 문서.
+`git log --oneline bc6f1d6..` 로 본다. 워킹트리는 깨끗하다.
 
-```sh
-cd ~/dev/shorts_maker
-git status --short | head        # R = 이름 변경(이력 유지), ?? = 신규
-git add -A && git commit -m "..."   # CLAUDE.md 규약: 사용자가 명시적으로 요청할 때만
-```
-
-커밋을 안 한 이유는 규약 때문이지(사용자 요청 시에만), 미완이라서가 아니다. 검증은 §5 대로
-전부 통과한 상태다.
+앞으로의 커밋은 `CLAUDE.md` 규약대로 — **사용자가 명시적으로 요청할 때만.**
 
 ---
 
@@ -173,7 +166,7 @@ DB 에는 원본 2건(니체 강연, 지혜의 향연)·발화 381·세그먼트
 
 | | 상태 | 비고 |
 |---|---|---|
-| **커밋** | ⛔ 79개 파일 미커밋 | §2. 규약상 사용자 요청 시에만 |
+| **커밋 · 푸시** | ✅ 완료 | 5개 커밋, `main` 푸시됨 (§2) |
 | **SWYP 레포 정리** | ⛔ 손대지 않음 | backend 의 `com.swyp.backend.shorts` Java 13개 · `application.properties` · `compose.yaml` · `DEPLOY.md` · `docs/make_shorts.md`(원본 삭제) / admin-web 의 숏폼 탭(ShortsPage · api/shorts.ts · 컴포넌트 4 · types · CSS · route · nav). **사용자가 다른 세션에서 한다고 했다** |
 | **원격 레포 이동** | ✅ 완료 (2026-09-04) | `SWYP-APP-S6` → `HHsungmoon/shorts_maker` 로 transfer. 옛 URL 은 리다이렉트. 로컬 origin 갱신됨 |
 | **운영 배포** | ⛔ 안 함 | Naver Cloud 4GB/2vCPU 예정. compose·nginx 설정은 준비됨. `deploy.env.example` 채우고 `deploy-sm` |
