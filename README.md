@@ -10,76 +10,84 @@ backend/   FastAPI + CLI. 파이프라인 본체
 docs/      설계 문서
 ```
 
-## 준비
+## 띄우기 — docker compose (기본)
+
+로컬도 운영과 **같은 이미지**로 띄운다. 데비안 ffmpeg(libass 포함)·나눔 폰트·whisper 모델이 이미지에
+들어 있어 맥에 따로 깔 게 없다. DB(SQLite)와 작업 파일은 `shorts-data` 볼륨에, 원본 영상은
+`backend/sources/` 바인드 마운트에 있다.
+
+```sh
+brew install --cask docker           # Docker Desktop
+cp backend/.env.example backend/.env # GEMINI_API_KEY, SHORTS_ADMIN_PASSWORD 를 채운다
+docker compose up -d --build         # 첫 빌드는 몇 분 걸린다 (whisper 모델 464MB 포함)
+open http://127.0.0.1:8100
+```
+
+🔴 `SHORTS_ADMIN_PASSWORD` 는 **필수**다. 컨테이너는 0.0.0.0 에 바인딩하므로 비어 있으면 기동을
+거부한다(`docker compose logs shorts` 에 이유가 찍힌다).
+
+```sh
+docker compose logs -f shorts                 # 로그
+docker compose exec shorts sm doctor          # 전제 확인 (컨테이너 안에서)
+docker compose exec shorts sm db status       # 테이블별 행 수
+docker compose down -v                        # 🔴 볼륨까지 지운다 = DB 리셋 (원본 영상은 남는다)
+```
+
+CLI 는 전부 `docker compose exec shorts sm <명령>` 으로 쓴다. 원본 영상을 직접 넣을 때는
+`backend/sources/` 에 파일을 두면 화면의 "새로 만들기 → 서버에 있는 영상" 에 바로 보인다.
+
+화면을 고치는 중이라면 vite 개발 서버를 따로 띄우는 쪽이 빠르다(HMR). 백엔드는 컨테이너 그대로:
+
+```sh
+cd web && npm install && npm run dev        # http://localhost:5173
+```
+
+🔴 **반드시 5173 으로 접속한다.** vite 가 `/api`·`/auth` 를 8100 으로 프록시해 동일 오리진을
+만들어 주므로 세션 쿠키가 실린다. 8100 을 직접 열면 이미지에 구워진 빌드를 보게 된다 — 화면
+변경을 이미지에 반영하려면 `docker compose up -d --build`.
+
+### 호스트에서 직접 띄우기 (테스트·디버깅용)
+
+테스트는 uv 로 호스트에서 돈다. 서버도 그렇게 띄울 수 있지만, 자막 렌더에는 libass 포함 ffmpeg
+(`brew install ffmpeg-full`)와 한글 폰트가 따로 필요하다.
 
 ```sh
 brew install uv ffmpeg node
 cd backend && uv sync --extra stt
-cp .env.example .env         # GEMINI_API_KEY 를 채운다
-uv run sm doctor             # 전제 확인 — 전부 ok 여야 다음 단계로 간다
+uv run sm doctor
+uv run sm serve                              # 127.0.0.1:8100. 비밀번호가 비어 있으면 무인증 로컬 모드
 ```
 
-## 띄우기
-
-```sh
-cd backend && uv run sm serve        # 127.0.0.1:8100
-```
-
-`http://127.0.0.1:8100` 을 연다. `web/` 을 빌드해두면 그 화면이 뜨고, 안 했으면
-개발용 단일 페이지로 폴백한다(API 확인용).
-
-```sh
-cd web && npm install && npm run build   # 한 번 해두면 backend 가 서빙한다
-```
-
-화면을 고치는 중이라면 vite 개발 서버를 따로 띄우는 쪽이 빠르다(HMR):
-
-```sh
-cd web && npm run dev                # http://localhost:5173
-```
-
-🔴 **반드시 5173 으로 접속한다.** vite 가 `/api`·`/auth` 를 8100 으로 프록시해 동일
-오리진을 만들어 주므로 세션 쿠키가 실린다. 8100 을 직접 열면 옛 빌드 결과를 보게 된다.
-
-### 로그인
-
-`SHORTS_ADMIN_PASSWORD` 가 **비어 있으면 로그인 화면이 뜨지 않는다** — 루프백 전용
-로컬 개발 모드다. 로그인 화면을 보려면 값을 넣고 다시 띄운다:
-
-```sh
-SHORTS_ADMIN_PASSWORD=dev1234 uv run sm serve
-```
-
-🔴 루프백이 아닌 주소(`SHORTS_API_HOST=0.0.0.0`)에 바인딩하려면 이 값이 **반드시**
-있어야 하고, 없으면 기동을 거부한다. 무인증 인스턴스가 외부에 열리는 경로를 코드가 막는다.
+이 경로는 `backend/work/` 에 DB 를 만든다 — 컨테이너의 볼륨과는 **다른 DB** 다. 원본 폴더
+(`backend/sources/`)는 둘이 공유하고, DB 에는 그 폴더 기준 상대경로만 들어가서 어느 쪽 DB 든
+서로 옮겨도 읽힌다.
 
 ## CLI
 
-화면 없이 돌릴 때. 인증과 무관하게 동작한다(같은 DB 를 직접 연다).
-
 ```sh
-cd backend
-uv run sm db init
-uv run sm source add <파일> --title T --origin URL --context "개요"
-uv run sm chunk add 1 --start 1200 --end 1500          # 16kHz wav 로 추출
-uv run sm stt run 1 --model small --prompt "칸트, 니체, 도덕법칙"
-uv run sm segment run 1                                 # [3] 주제 분할 (Gemini)
-uv run sm rank run 1 --criteria "핵심 논지"             # [5] 선정 (Gemini)
-uv run sm render 1                                      # [7] 9:16 렌더 + 자막 번인
-uv run sm render 1 --force --no-subtitles                # 자막 없이
+docker compose exec shorts sm db init
+docker compose exec shorts sm source add <파일> --title T --origin URL --context "개요"
+docker compose exec shorts sm chunk add 1 --start 1200 --end 1500     # 16kHz wav 로 추출
+docker compose exec shorts sm stt run 1 --model small --prompt "칸트, 니체, 도덕법칙"
+docker compose exec shorts sm segment run 1                           # [3] 주제 분할 (Gemini)
+docker compose exec shorts sm rank run 1 --criteria "핵심 논지"       # [5] 선정 (Gemini)
+docker compose exec shorts sm render 1                                # [7] 9:16 렌더 + 자막 번인
+docker compose exec shorts sm render 1 --force --no-subtitles         # 자막 없이
 ```
+
+`<파일>` 은 `backend/sources/` 기준 상대 경로다. 호스트 실행이면 `docker compose exec shorts` 를
+`uv run` 으로 바꾸면 된다.
 
 LLM 없이 손으로 구간을 지정하는 경로도 있다 — 직접 고를 때도 쓴다:
 
 ```sh
-uv run sm segment add 1 --from-utterance 0 --to-utterance 11 --summary "…"
-uv run sm run create 1
-uv run sm clip add --run 1 --segment 1 --from-utterance 3 --to-utterance 11
-uv run sm render 1
+sm segment add 1 --from-utterance 0 --to-utterance 11 --summary "…"
+sm run create 1
+sm clip add --run 1 --segment 1 --from-utterance 3 --to-utterance 11
+sm render 1
 ```
 
 조회: `sm source list` · `sm chunk list` · `sm stt show 1` · `sm segment list 1` · `sm clip list` · `sm db status`
-초기화: `sm db reset --yes`
 
 ## 테스트
 
@@ -117,7 +125,8 @@ chmod +x /usr/local/bin/deploy-sm
 ```
 
 원본 영상을 직접 넣을 때는 `scp 강연.mp4 deploy@<서버>:~/shorts_maker/backend/sources/`.
-(화면에서 유튜브 URL 로 등록하는 게 주 경로다.)
+(화면에서 유튜브 URL 로 등록하는 게 주 경로다.) 로컬과 서버가 같은 compose 파일을 쓴다 —
+차이는 앞에 nginx 가 서느냐뿐이다.
 
 ## 알아둘 것
 
@@ -125,4 +134,7 @@ chmod +x /usr/local/bin/deploy-sm
 - LLM 은 **인덱스만** 고르고 초는 `utterances` 에서 되찾는다 (설계 문서 §12)
 - 잡은 워커 1개로 처리한다 — **동시 1건이 구조적으로 보장**된다. 2vCPU 에서는 이게 특히
   중요하다: STT 와 ffmpeg 가 겹치면 API 응답까지 같이 느려진다
-- `backend/work/` 는 git 에서 제외된다 (원본 영상이 GB 단위)
+- DB 의 파일 경로는 **상대경로**다 — 원본은 `backend/sources/`(컨테이너 `/sources`) 기준,
+  파생물은 work 디렉터리(컨테이너 `/data/work`) 기준. 절대경로로 저장하던 시절 레포를 옮기자
+  전 행이 깨졌다(2026-09-04)
+- `backend/work/`·`backend/sources/*` 는 git 에서 제외된다 (원본 영상이 GB 단위)

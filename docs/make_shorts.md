@@ -290,8 +290,9 @@ Source                         # (구 Movie)
   origin                       # 어디서 가져왔나 (URL/설명). 권리 감사용 — 잃으면 못 되찾는다
   fingerprint                  # 원본 식별자. DB 유니크 제약 필수
   context                      # 줄거리/강연 개요 (rank 의 자립성 판단용)
-  created_by_admin_id          # 누가 등록했나. backend admins.id (FK 없는 숫자)
+  # (created_by_admin_id 는 v8 에서 삭제 — 독립 후 참조할 곳이 없다, §13)
   status, error                # ingest 잡 상태
+  # 🔴 path 는 SHORTS_SOURCE_DIR 기준 **상대경로**. 절대경로를 넣었다가 레포 이동으로 전 행이 깨졌다(2026-09-04)
 
 Chunk
   id, source_id, index, start_sec, end_sec, path
@@ -319,16 +320,15 @@ Run                            # ← 주관
   criteria_prompt              # §6-1 의 [가변] 부분만
   prompt                       # 실제로 보낸 프롬프트 전문 — [고정] 부분도 튜닝되므로 필수
   ranked                       # 순위·점수 원문 + 파싱 결과
-  requested_by_admin_id        # 누가 언제 돌렸나
-  status, error, created_at
+  status, error, created_at    # (requested_by_admin_id 는 v8 에서 삭제)
 
 Clip
   id, run_id, segment_id
   start_sec, end_sec, score, reason
   path, rendered                # 편당 재개용 플래그
 
-ClipReview                     # ← 품질 측정 (§11)
-  id, clip_id, admin_id, verdict, note
+ClipReview                     # ← 품질 측정 (§11). admin_id 는 v8 에서 삭제 — 운영자 1명
+  id, clip_id, verdict, note
 
 StageCall                      # ← 계측. 첫날부터 넣는다 (구 LLMCall)
   id, source_id, run_id, segment_id     # 셋 다 nullable — [3]은 run/segment 이전에 돈다
@@ -357,7 +357,7 @@ StageCall                      # ← 계측. 첫날부터 넣는다 (구 LLMCall
 없거나, ③ 지금 안 모으면 영영 복원 못 하는 관측 데이터거나.
 
 - `content_type` — ① 파이프라인 분기의 근거. 나중에 넣으면 전 쿼리 수정
-- `created_by_admin_id` / `requested_by_admin_id` — ① 나중에 넣으면 전 쿼리 수정
+- ~~`created_by_admin_id` / `requested_by_admin_id`~~ — ① 이었으나 독립(§13) 후 v8 에서 삭제. 운영자가 1명이라 답이 항상 같다
 - 원본 파일 식별자에 **DB 유니크 제약** — ② 중복 유입은 복구 불가한 데이터 오염
 - `excluded_by` enum — ② 빈 문자열로 사람/자동 구분하면 파싱 실패 시 영구히 안 풀림
 - `StageCall` 테이블 — ③ 토큰과 **소요 시간**. 지금 안 모으면 처음부터 다시 모아야 함
@@ -672,9 +672,13 @@ v1 에서 할 수 있는 최소한:
   앞에 두면 `/api/**` 가 전부 프론트로 빨려 들어가고, 없는 엔드포인트가 index.html 로
   200 을 받아 프론트가 HTML 을 JSON 으로 파싱하다 엉뚱한 곳에서 죽는다
 
-### 13-3. 배포
+### 13-3. 배포 — 그리고 로컬도 같은 compose
 
 Naver Cloud 단일 VM(4GB / 2vCPU). `docker compose` 한 스택이고 nginx 가 앞에 선다.
+**로컬 개발도 같은 `compose.yaml` 로 띄운다**(2026-09-04). 맥 ffmpeg 에 libass 가 없고 폰트가 다르고
+경로가 다른 문제가 한 번에 사라진다. DB 는 SQLite 파일이고 `shorts-data` 볼륨에 있다 — 별도 DB
+컨테이너는 없고 Postgres 는 여전히 C5 다. DB 안의 파일 경로는 `source_dir`/`work_dir` 기준 상대경로라
+볼륨을 서버로 옮겨도 그대로 읽힌다.
 
 | | 상한 | 비고 |
 |---|---|---|

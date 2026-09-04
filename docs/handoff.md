@@ -20,6 +20,10 @@
 실제 DB 마이그레이션(v7→v8)까지 통과했다. **다음 단계는 제품 피벗(TEASE)** — 시청자 질문 기반
 숏폼. 설계는 끝났고(`tease.md`) 구현은 시작 전이다.
 
+**2026-09-04 (2차):** 로컬 실행을 **docker compose 로 통일**했다. DB 의 파일 경로가 절대경로여서
+레포 이동으로 전 행이 깨진 것을 발견 → **상대경로 저장**으로 바꾸고 DB 는 새로 만들었다(옛 DB 삭제).
+v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
+
 ---
 
 ## 2. 커밋 · 푸시 상태
@@ -47,8 +51,8 @@
 │   │   ├── web.py             node 빌드 없이 보는 개발용 단일 페이지 (/debug)
 │   │   └── (ingest · stt · segmentation · ranking · cutting · render · jobs …)  파이프라인, 변경 없음
 │   ├── tests/                 128개. 🆕 test_auth.py · test_api_auth.py(인증 경계) · test_schema.py 확장
-│   ├── work/                  ⛔ git 제외. SQLite(v8) + 원본 영상 1.6GB + 백업 shorts.db.bak-before-v8
-│   ├── sources/               ⛔ git 제외. scp 로 넣는 원본
+│   ├── work/                  ⛔ git 제외. 호스트 실행(uv) 전용 작업 폴더. 컨테이너는 볼륨 /data/work 를 쓴다
+│   ├── sources/               ⛔ git 제외. **원본 영상은 여기**(니체 강연 2편, 1.5GB). 컨테이너의 /sources
 │   ├── .env                   ⛔ git 제외. GEMINI_API_KEY 있음, SHORTS_ADMIN_PASSWORD **없음**
 │   ├── .env.example           로컬용 템플릿 (인증 항목 추가됨)
 │   ├── deploy.env.example     서버용 템플릿
@@ -68,7 +72,7 @@
 │   ├── tease.md               🆕 제품·아키텍처·스키마 v9 (823줄)
 │   └── make_shorts.md         backend 레포에서 가져옴. §0·§10·§13 갱신
 ├── Dockerfile                 🆕 루트로 이동. node 빌드 → python → runtime, 한 이미지
-├── compose.yaml               backend_default 외부 네트워크 제거, 127.0.0.1:8100, mem 3000m
+├── compose.yaml               **로컬·운영 공용.** 127.0.0.1:8100, mem 3000m, `environment` 로 컨테이너 경로 고정
 ├── .dockerignore              🆕 work/ 1.6GB 가 빌드 컨텍스트에 안 들어가게
 ├── deploy/nginx-shorts.conf   🆕 nginx 예시 (range 요청, 2g 업로드)
 ├── scripts/deploy.sh          SHORTS_ADMIN_PASSWORD 검사로 변경
@@ -136,16 +140,36 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
 `tease.md` 신규(제품 피벗 통합 설계). `make_shorts.md` §0·§10·§13 을 독립 구조로 갱신.
 `CLAUDE.md`·`README.md` 재작성.
 
+### 4-7. (2차) 로컬을 docker 로, DB 경로를 상대경로로 — 그리고 왜
+
+- **레포를 옮기자 DB 의 경로 5행이 전부 깨져 있었다.** `sources.path`·`chunks.path`·`clips.path` 가
+  `~/dev/SWYP-APP-S6/...` 절대경로였다. 1차 handoff 는 스키마 마이그레이션만 확인하고 경로는 안 봤다.
+  클립 재생 404, 렌더 "원본이 없다", 그리고 삭제 시 파일만 지우고 행이 남는 최악 경로까지 열려 있었다.
+- **고침**: `Config.store_source/store_work` 가 `source_dir`/`work_dir` 기준 상대경로를 만들고,
+  `source_file/work_file` 이 되찾는다. 절대경로가 들어 있으면 그대로 쓴다(옛 DB 폴백).
+  `Path(row["path"])` 를 직접 쓰는 코드는 이제 틀린 것이다. `tests/test_paths.py`.
+- **왜 도커로 통일했나**: 호스트(`~/dev`)와 컨테이너(`/sources`, `/data/work`)는 경로가 다르고,
+  맥의 ffmpeg 엔 libass 가 없고 폰트도 다르다. 같은 이미지에서 돌리면 그 차이가 전부 사라진다.
+  compose 의 `environment` 가 컨테이너 경로를 고정한다 — `.env` 의 호스트용 값이 env_file 로
+  새어 들어와 덮는 걸 막기 위해서다. DB(SQLite)는 `shorts-data` 볼륨. **별도 DB 컨테이너는 없다**
+  (Postgres 는 여전히 C5).
+- 원본 영상은 `backend/work/sources/` → **`backend/sources/`** 로 옮겼다(compose 바인드 마운트 위치).
+  `SHORTS_SOURCE_DIR` 기본값도 `sources` 로. 옛 `work/shorts.db` 와 v8 백업은 지웠다 — 사용자 승인.
+- **`sm rank run` TypeError**: v8 에서 `requested_by_admin_id` 를 지울 때 CLI 만 인자 5개를 넘기고
+  있었다. `tests/test_cli.py` 가 `autospec=True` 로 시그니처를 강제한다.
+
 ---
 
 ## 5. 지금 동작하는 것 — 검증 방법
 
 ```sh
-cd ~/dev/shorts_maker/backend
-uv run python -m unittest discover -s tests -t .      # Ran 128 tests … OK
-uv run sm doctor                                      # ffmpeg · libass · sqlite v8 · Gemini 전부 ok
-uv run sm serve                                       # 127.0.0.1:8100 — 무인증 모드 (.env 에 비밀번호 없음)
-SHORTS_ADMIN_PASSWORD=dev1234 uv run sm serve         # 로그인 화면을 보려면
+cd ~/dev/shorts_maker
+docker compose up -d --build                          # 🔴 backend/.env 에 SHORTS_ADMIN_PASSWORD 필수
+docker compose exec shorts sm doctor                  # ffmpeg · libass · NanumGothic · sqlite v8 · Gemini
+docker compose exec shorts sm db status
+
+cd backend
+uv run python -m unittest discover -s tests -t .      # Ran 136 tests … OK (호스트, uv)
 
 cd ../web
 npm run build && npm run lint                         # tsc strict 통과. 경고 2개는 admin-web 에서 온 패턴
@@ -153,12 +177,14 @@ npm run build && npm run lint                         # tsc strict 통과. 경�
 
 | 주소 | 내용 |
 |---|---|
-| `http://127.0.0.1:8100` | React 화면 (`web/dist` 있을 때) · 없으면 개발용 단일 페이지로 폴백 |
-| `/debug` | 개발용 단일 페이지 (항상) |
+| `http://127.0.0.1:8100` | 컨테이너. 이미지에 구워진 React 화면 |
+| `/debug` | 개발용 단일 페이지 (비밀번호 모드에선 API 가 401 이라 못 쓴다) |
 | `/docs` | Swagger |
-| `npm run dev` → `:5173` | HMR. 🔴 **5173 으로 접속** — vite 프록시가 동일 오리진을 만들어야 쿠키가 실린다 |
+| `npm run dev` → `:5173` | HMR. 🔴 **5173 으로 접속** — vite 프록시가 컨테이너의 8100 으로 넘긴다 |
 
-DB 에는 원본 2건(니체 강연, 지혜의 향연)·발화 381·세그먼트 7·클립 2 가 있다. 개발용으로 그대로 쓴다.
+**DB 는 비어 있다** — 2차에서 새로 만들었다. 원본 영상 2편은 `backend/sources/` 에 있고 화면의
+"새로 만들기 → 서버에 있는 영상" 에서 등록한다. STT 는 컨테이너(리눅스 CPU)에서 다시 돌려야 한다 —
+30분에 4~5분.
 
 ---
 
@@ -170,7 +196,9 @@ DB 에는 원본 2건(니체 강연, 지혜의 향연)·발화 381·세그먼트
 | **SWYP 레포 정리** | ⛔ 손대지 않음 | backend 의 `com.swyp.backend.shorts` Java 13개 · `application.properties` · `compose.yaml` · `DEPLOY.md` · `docs/make_shorts.md`(원본 삭제) / admin-web 의 숏폼 탭(ShortsPage · api/shorts.ts · 컴포넌트 4 · types · CSS · route · nav). **사용자가 다른 세션에서 한다고 했다** |
 | **원격 레포 이동** | ✅ 완료 (2026-09-04) | `SWYP-APP-S6` → `HHsungmoon/shorts_maker` 로 transfer. 옛 URL 은 리다이렉트. 로컬 origin 갱신됨 |
 | **운영 배포** | ⛔ 안 함 | Naver Cloud 4GB/2vCPU 예정. compose·nginx 설정은 준비됨. `deploy.env.example` 채우고 `deploy-sm` |
-| `.env` 에 `SHORTS_ADMIN_PASSWORD` | 없음 | 의도된 로컬 무인증 모드. 외부 바인딩 시 기동 거부됨 |
+| `.env` 에 `SHORTS_ADMIN_PASSWORD` | **넣어야 함** | 도커 기본 경로가 되면서 필수가 됐다. 비어 있으면 컨테이너가 기동을 거부한다 |
+| `.env` 의 `SHORTS_SOURCE_DIR` | `sources` 로 바꿀 것 | 시크릿 파일이라 자동 수정 안 함. 컨테이너엔 영향 없고 호스트 `uv run sm` 만 이 값을 본다 |
+| STT 재실행 | 필요 | DB 를 새로 만들었다. 두 원본을 등록하고 청크·STT 부터 |
 | react-router | 뺐음 | tease.md §8 에서 다시 넣는다 |
 | 원티드 채널 사용 허락 | 대기 | 받으면 자막 품질·임베드 허용 확인 (tease.md §5-1, §8-3) |
 
@@ -208,8 +236,16 @@ backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_
 ## 8. 함정 — 반드시 읽을 것
 
 - **`.venv` 를 옮기면 깨진다.** 절대경로가 박혀 있다. 경로가 바뀌면 `rm -rf .venv && uv sync --extra stt`.
-- **`work/` 는 git 에 없다.** clone 하면 DB 도 영상도 없다. 이 맥에만 있다. 백업은 별도로.
-- **비밀번호가 비어 있으면 로그인 화면이 안 뜬다.** 버그가 아니라 로컬 모드다. 외부 바인딩은 막힌다.
+- **`sources/`·볼륨은 git 에 없다.** clone 하면 영상도 DB 도 없다. 영상은 이 맥 `backend/sources/`,
+  DB 는 도커 볼륨 `shorts-data`. `docker compose down -v` 는 DB 를 지운다.
+- **DB 경로는 상대경로다.** `Path(row["path"])` 를 직접 쓰지 말고 `cfg.source_file/work_file`.
+  절대경로로 저장했다가 레포 이동으로 전 행이 깨진 게 2차 작업의 출발점이다.
+- **`.env` 는 env_file 로 컨테이너에 통째로 들어간다.** 호스트용 값(ffmpeg 경로·폰트·work 경로)은
+  compose 의 `environment` 가 덮는다. 새 설정 키를 추가할 때 "컨테이너에서 다른 값이어야 하는가"를 묻고
+  그렇다면 compose 에도 넣는다.
+- **호스트 `uv run sm serve` 와 컨테이너는 다른 DB 를 본다.** 전자는 `backend/work/shorts.db`, 후자는 볼륨.
+  원본 폴더만 공유한다.
+- **비밀번호가 비어 있으면 컨테이너가 안 뜬다.** 0.0.0.0 바인딩이라 기동 거부. 호스트 uv 실행에서만 무인증 로컬 모드다.
 - **vite 개발 서버는 5173 으로 접속.** 8100 을 직접 열면 빌드된 옛 `dist` 를 본다.
 - **SPA catch-all 은 API 라우트 뒤에 등록돼야 한다.** 앞으로 올리면 `/api/**` 가 전부 index.html 을
   받는다. `test_api_auth.py::SpaRoutingTest` 가 잡는다.
@@ -218,8 +254,8 @@ backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_
   (tease.md §6-4). `MIGRATIONS` 가 문자열만 받으니 함수 스텝을 허용하게 넓혀야 한다.
 - **컨텍스트 캐싱 ↔ 검색은 겹친다.** 검색으로 후보가 줄면 캐싱 이득이 준다. 둘 다 켜지 말고 측정.
 - **좋아요 중복 방지는 쿠키 기반이라 완벽하지 않다** (tease.md §7-4). 데모용 절충. 문서에 적어라.
-- **세션 배경 서버.** Claude 세션이 띄운 `sm serve` 는 세션이 닫히면 죽는다. 직접 띄워라.
-- **DB 백업 `shorts.db.bak-before-v8`** — v9 전에도 하나 더 뜬다. `cp work/shorts.db work/shorts.db.bak-before-v9`.
+- **DB 백업은 볼륨에서.** v9 전에 `docker compose exec shorts cp /data/shorts.db /data/shorts.db.bak-before-v9`.
+  1차의 `work/shorts.db.bak-before-v8` 는 2차에서 지웠다(데이터 리셋 결정).
 
 ---
 
