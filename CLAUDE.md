@@ -1,10 +1,23 @@
 # shorts_maker
 
-긴 영상에서 **단독으로 성립하는 숏폼 클립**을 뽑아내는 파이프라인.
-SWYP 관리자 백오피스의 베타 기능으로 붙지만 **backend 레포와 별개의 서비스**다.
+긴 영상에서 **단독으로 성립하는 숏폼 클립**을 뽑아내는 파이프라인. **독립 서비스다.**
 
-설계 문서(전제·파이프라인·데이터 모델·미해결 과제)는 `SWYP-APP-S6/backend/docs/make_shorts.md`.
-**전제가 바뀌면 그 문서의 §1 부터 고친다.**
+원래는 SWYP 관리자 백오피스(admin-web)의 베타 탭이었고 backend(Spring)가 프록시했다.
+2026-09-03 에 분리했다 — 그 흔적(프록시 전제, `adminId`, `/admin/shorts/**` 경로)이
+남아 있으면 잘못된 것이다.
+
+```
+web/       React + Vite. 빌드 결과를 backend 가 같은 오리진에서 서빙한다
+backend/   FastAPI + CLI. 파이프라인 본체
+```
+
+**세션을 시작하면 `docs/handoff.md` 부터 읽는다** — 지금 상태 · 다음 할 일 · 함정.
+
+설계 문서는 둘이다:
+- `docs/tease.md` — **제품(TEASE)·아키텍처·스키마 v9.** 시청자 질문 → 숏폼 → 원본 유입.
+  기획과 기술을 한 문서에 담았고, 미결 사항은 §13. **새 기능은 여기서 시작한다.**
+- `docs/make_shorts.md` — 파이프라인 내부(STT·분할·rank·cut·render), 비용 기준선, 코딩 규약.
+두 문서가 충돌하면 tease.md 가 최신이다. **전제가 바뀌면 문서를 먼저 고친다.**
 
 ## 지금 단계
 
@@ -15,16 +28,22 @@ SWYP 관리자 백오피스의 베타 기능으로 붙지만 **backend 레포와
 ## Stack
 
 - Python 3.12 (`.python-version` 고정) · uv · pyproject
-- 웹: **FastAPI** (`sm serve`). 관리자 인증은 하지 않는다 — **backend(Spring)가 프록시**하며
-  이미 인증했다. 🔴 루프백이 아닌 주소에 바인딩하려면 `SHORTS_API_TOKEN` 이 있어야 기동된다
+- 웹: **FastAPI** (`sm serve`). 빌드된 프론트(`web/dist`)를 같은 오리진에서 서빙한다 —
+  그래서 CORS 설정이 없고 세션 쿠키가 그냥 실린다
+- 프론트: **React + Vite + TypeScript**, 라우터 없음. 화면이 로그인과 파이프라인 둘뿐이고
+  전환은 URL 이 아니라 인증 상태가 결정한다
+- 인증: **비밀번호 1개 + 서명된 httpOnly 세션 쿠키**(`auth.py`, stdlib hmac). 회원가입은 없다 —
+  운영자 1명이 쓰는 도구다. 사용자 개념을 넣으면 전 테이블에 소유자 스코프와 잡 큐 분리가
+  따라온다. 🔴 루프백이 아닌 주소에 바인딩하려면 `SHORTS_ADMIN_PASSWORD` 가 있어야 기동된다
 - CLI 는 **argparse**(stdlib). typer/click 은 쓰지 않는다 — 런타임 동작이 같다
 - LLM: Gemini (`google-genai`). Files API 는 FILM 단계에서 필요해진다
 - 영상: **ffmpeg/ffprobe 바이너리 + subprocess**. moviepy 계열 금지 — 느리고 옵션을 다 못 쓴다
 - 자막: ASS + libass. 🔴 Homebrew 기본 ffmpeg 엔 libass 가 없다 — `SHORTS_FFMPEG` 로
   libass 포함 빌드를 지정한다(`brew install ffmpeg-full`). `sm doctor` 가 확인한다
 - STT: faster-whisper (`uv sync --extra stt`). 기본 설치에서 빠져 있다
-- DB: SQLite → Postgres (C5). A 단계에서는 마이그레이션 도구 없이 통째로 날린다
-  (`sm db reset --yes`). 스키마 제약은 `tests/test_schema.py` 가 지킨다 — `uv run python -m unittest discover -s tests -t .`
+- DB: SQLite → Postgres (C5). 마이그레이션 도구는 안 쓰지만 **통째로 날리는 건 이제 최후수단**이다 —
+  STT 한 번에 수 분이 든다. 덧붙이기와 평범한 컬럼 삭제는 `store.MIGRATIONS` 로 제자리 처리한다.
+  스키마 제약은 `tests/test_schema.py` 가 지킨다
 
 ## 규약
 
@@ -39,6 +58,14 @@ SWYP 관리자 백오피스의 베타 기능으로 붙지만 **backend 레포와
 - **잡은 워커 1개.** 동시 1건은 정책이 아니라 구조다 — 영상 처리와 STT 가 겹치면 API 가 죽는다
 - **중립/주관을 섞지 않는다.** Segment(사실)는 캐시해 재사용하고 Run(기준)만 갈아끼운다.
   세그먼트 해설/요약에 특정 기준을 넣는 순간 그건 중립 자산이 아니다
+
+## 인증 경계 (여기서 틀리면 조용히 뚫린다)
+
+- `/health` 만 무인증이다. **설정값을 담지 않는다** — 도커 네트워크 뒤가 아니라 인터넷에 열려 있다
+- 나머지 `/api/**` 는 전부 `Depends(require_auth)`. 새 엔드포인트를 추가하면서 빠뜨리기 쉽다 —
+  `tests/test_api_auth.py` 가 이 경계를 지킨다
+- 비밀번호 비교는 `hmac.compare_digest`. `==` 는 일치 접두사 길이만큼 시간이 달라진다
+- 프론트 catch-all 라우트는 **반드시 API 라우트 뒤에** 등록한다. 앞에 두면 `/api/**` 를 전부 삼킨다
 
 ## Workflow
 
