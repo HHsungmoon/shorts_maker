@@ -1,0 +1,21 @@
+# 🔴 빌드 컨텍스트에서 빼는 게 아니라 **도커 데몬으로 전송되는 것**을 줄인다.
+# backend/work 는 원본 영상과 중간 산출물이라 로컬에서 GB 단위로 자란다 — 이게 없으면
+# `docker build` 가 시작 전에 그걸 통째로 복사하느라 몇 분을 쓴다(예전엔 컨텍스트가
+# 레포 루트였고 서버에는 work/ 가 볼륨이라 없어서 이 문제가 드러나지 않았다).
+backend/work/
+backend/sources/*
+!backend/sources/.gitkeep
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+
+# 이미지 안에서 다시 빌드한다. 로컬 산출물이 섞이면 무엇이 배포됐는지 알 수 없다.
+web/node_modules/
+web/dist/
+
+.git/
+.github/
+docs/
+**/.DS_Store
+# 🔴 시크릿. 이미지 레이어에 들어가면 이미지를 가진 사람이 전부 읽을 수 있다.
+**/.env
