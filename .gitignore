@@ -1,11 +1,23 @@
+# --- backend (python) ---
 .venv/
 __pycache__/
 *.pyc
-.env
-work/
 *.db
 *.db-journal
 
-# 원본 영상은 서버에 scp 로 올린다 — 레포에 넣지 않는다.
-sources/*
-!sources/.gitkeep
+# 중간 산출물(청크·프레임·렌더 결과)과 SQLite. 원본 영상이 GB 단위라 레포에 넣지 않는다.
+backend/work/
+
+# 원본 영상은 서버에 scp 로 올린다.
+backend/sources/*
+!backend/sources/.gitkeep
+
+# --- web (node) ---
+node_modules/
+web/dist/
+
+# --- 공통 ---
+# 🔴 시크릿(GEMINI_API_KEY·SHORTS_ADMIN_PASSWORD)이 들어간다. 절대 커밋하지 않는다.
+.env
+.env.local
+.DS_Store
