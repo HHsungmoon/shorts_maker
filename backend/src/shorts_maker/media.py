@@ -66,7 +66,7 @@ def listing(conn: sqlite3.Connection, cfg: config.Config) -> list[dict]:
     그 파일도 디스크를 먹는다.
     """
     registered = {
-        Path(row["path"]).name: dict(row)
+        cfg.source_file(row["path"]).name: dict(row)
         for row in conn.execute("select id, title, path, duration_sec, status from sources")
     }
 
@@ -90,7 +90,7 @@ def _derived_paths(conn: sqlite3.Connection, cfg: config.Config, source_id: int)
     paths: list[Path] = []
     for row in conn.execute("select path from chunks where source_id = ?", (source_id,)):
         if row["path"]:
-            paths.append(Path(row["path"]))
+            paths.append(cfg.work_file(row["path"]))
     for row in conn.execute(
         """select cl.path from clips cl
            join segments sg on sg.id = cl.segment_id
@@ -99,9 +99,10 @@ def _derived_paths(conn: sqlite3.Connection, cfg: config.Config, source_id: int)
         (source_id,),
     ):
         if row["path"]:
-            paths.append(Path(row["path"]))
+            clip_path = cfg.work_file(row["path"])
+            paths.append(clip_path)
             # 자막 파일은 DB 에 없다 — 클립 경로에서 유도한다.
-            paths.append(Path(row["path"]).with_suffix(".ass"))
+            paths.append(clip_path.with_suffix(".ass"))
     for row in conn.execute(
         """select sg.id from segments sg join chunks ch on ch.id = sg.chunk_id
            where ch.source_id = ?""",
@@ -111,15 +112,16 @@ def _derived_paths(conn: sqlite3.Connection, cfg: config.Config, source_id: int)
     return paths
 
 
-def find_source_id(conn: sqlite3.Connection, path: Path) -> int | None:
+def find_source_id(conn: sqlite3.Connection, cfg: config.Config, path: Path) -> int | None:
     """정규화한 경로로 대조한다.
 
     🔴 문자열 비교로 하면 심볼릭 링크나 상대경로 차이만으로 못 찾고, 그 경우 **DB 행은 남고
-    파일만 지워지는** 최악의 상태가 된다(테스트가 잡았다).
+    파일만 지워지는** 최악의 상태가 된다(테스트가 잡았다). 절대경로를 저장하던 시절엔 레포를
+    옮기는 것만으로 이 상태가 됐다 — 지금은 상대경로라 source_dir 기준으로 되찾는다.
     """
     for row in conn.execute("select id, path from sources"):
         try:
-            if Path(row["path"]).resolve() == path:
+            if cfg.source_file(row["path"]).resolve() == path:
                 return row["id"]
         except OSError:
             continue
@@ -128,7 +130,7 @@ def find_source_id(conn: sqlite3.Connection, path: Path) -> int | None:
 
 def delete(conn: sqlite3.Connection, cfg: config.Config, name: str) -> Removal:
     path = resolve(cfg, name)
-    source_id = find_source_id(conn, path)
+    source_id = find_source_id(conn, cfg, path)
 
     targets = [path]
     if source_id is not None:

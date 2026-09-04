@@ -62,7 +62,8 @@ def add_source(
             """insert into sources
                (title, content_type, path, duration_sec, origin, fingerprint, context, language)
                values (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (title, content_type, str(path), duration, origin, fingerprint(path), context, language),
+            # 🔴 source_dir 기준 상대경로로 저장한다(config.Config.store_source 주석).
+            (title, content_type, cfg.store_source(path), duration, origin, fingerprint(path), context, language),
         )
     except sqlite3.IntegrityError as exc:
         if "fingerprint" in str(exc):
@@ -93,12 +94,12 @@ def add_chunk(conn: sqlite3.Connection, cfg: config.Config, source_id: int, star
 
     out = cfg.work_dir / f"source{source_id}_chunk{idx}.wav"
     started = time.monotonic()
-    ffmpeg.extract_audio(row["path"], str(out), start, end)
+    ffmpeg.extract_audio(str(cfg.source_file(row["path"])), str(out), start, end)
     latency_ms = int((time.monotonic() - started) * 1000)
 
     cursor = conn.execute(
         "insert into chunks (source_id, idx, start_sec, end_sec, path) values (?, ?, ?, ?, ?)",
-        (source_id, idx, start, end, str(out)),
+        (source_id, idx, start, end, cfg.store_work(out)),
     )
     conn.execute(
         "insert into stage_calls (source_id, stage, latency_ms) values (?, 'chunk', ?)",

@@ -158,7 +158,7 @@ def run_for_chunk(
     if existing and not force:
         raise SttError(f"chunk {chunk_id} 에 이미 발화 {existing}개가 있다 — 다시 하려면 --force")
 
-    audio = Path(chunk["path"])
+    audio = cfg.work_file(chunk["path"])
     if not audio.is_file():
         raise SttError(f"청크 파일이 없다: {audio}")
 

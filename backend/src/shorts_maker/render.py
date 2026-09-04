@@ -53,7 +53,7 @@ def run_for_clip(
     if clip["rendered"] and not force:
         raise RenderError(f"clip {clip_id} 은 이미 렌더됐다 — 다시 하려면 --force")
 
-    source = Path(clip["source_path"])
+    source = cfg.source_file(clip["source_path"])
     if not source.is_file():
         raise RenderError(f"원본이 없다: {source}")
 
@@ -90,7 +90,7 @@ def run_for_clip(
     )
     latency_ms = int((time.monotonic() - started) * 1000)
 
-    conn.execute("update clips set path = ?, rendered = 1 where id = ?", (str(out), clip_id))
+    conn.execute("update clips set path = ?, rendered = 1 where id = ?", (cfg.store_work(out), clip_id))
     conn.execute(
         "insert into stage_calls (source_id, run_id, stage, latency_ms, params) values (?, ?, 'render', ?, ?)",
         (
