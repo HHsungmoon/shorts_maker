@@ -24,7 +24,9 @@ DEFAULTS = {
     "SHORTS_USD_KRW": "1400",
     "SHORTS_DB_PATH": "work/shorts.db",
     "SHORTS_WORK_DIR": "work",
-    "SHORTS_SOURCE_DIR": "work/sources",
+    # compose 가 `./backend/sources` 를 `/sources` 로 마운트한다. 호스트에서 uv 로 직접 띄워도
+    # 같은 디렉터리를 보게 기본값을 맞춘다 — 두 실행 방식이 다른 폴더를 보면 "등록했는데 없다"가 된다.
+    "SHORTS_SOURCE_DIR": "sources",
     # 세션 수명. 하루 작업을 한 번의 로그인으로 끝내되, 자리를 뜬 브라우저가 무기한
     # 열려 있지는 않을 만큼으로 잡았다.
     "SHORTS_SESSION_TTL_HOURS": "12",
@@ -74,6 +76,39 @@ class Config:
     db_path: Path
     work_dir: Path
     source_dir: Path
+
+    # ---- DB 에 저장되는 파일 경로 ------------------------------------------------
+    # 🔴 DB 에는 **상대경로**를 넣는다. 원본은 source_dir 기준, 파생물(청크·클립)은 work_dir 기준.
+    # 절대경로를 넣었다가 레포를 옮기자 다섯 행이 전부 깨졌고(2026-09-04), 호스트(`~/dev/...`)와
+    # 컨테이너(`/sources`, `/data/work`)는 애초에 경로가 다르다. 상대경로면 DB 파일을 어디로
+    # 들고 가도 그대로 읽힌다. 절대경로가 들어 있으면 그대로 쓴다 — 옛 DB 를 위한 폴백이다.
+
+    def source_file(self, stored: str) -> Path:
+        p = Path(stored)
+        return p if p.is_absolute() else self.source_dir / p
+
+    def work_file(self, stored: str) -> Path:
+        p = Path(stored)
+        return p if p.is_absolute() else self.work_dir / p
+
+    def store_source(self, path: Path) -> str:
+        return _relative_or_absolute(path, self.source_dir)
+
+    def store_work(self, path: Path) -> str:
+        return _relative_or_absolute(path, self.work_dir)
+
+
+def _relative_or_absolute(path: Path, root: Path) -> str:
+    """root 아래면 posix 상대경로, 아니면 절대경로 문자열.
+
+    root 밖 파일은 원래 가드(ingest.resolve_source_path·media.resolve)가 막으니 여기 오면
+    안 되지만, 왔을 때 조용히 잘못된 상대경로를 만드는 것보다 절대경로로 남기는 편이 낫다.
+    """
+    resolved = path.resolve()
+    root = root.resolve()
+    if resolved.is_relative_to(root):
+        return resolved.relative_to(root).as_posix()
+    return str(resolved)
 
 
 def load() -> Config:

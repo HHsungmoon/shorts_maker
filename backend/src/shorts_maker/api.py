@@ -314,7 +314,7 @@ def add_source_from_url(body: UrlIn) -> dict:
     def work() -> dict:
         path, info = download.fetch(cfg, body.url)
         with connect() as conn:
-            existing = media.find_source_id(conn, path.resolve())
+            existing = media.find_source_id(conn, cfg, path.resolve())
             if existing is not None:
                 return {"sourceId": existing, "reused": True, "title": info.title}
             source_id = ingest.add_source(
@@ -433,7 +433,7 @@ def get_clip_file(clip_id: int) -> Any:
         clip = conn.execute("select path, rendered from clips where id = ?", (clip_id,)).fetchone()
     if clip is None or not clip["rendered"] or not clip["path"]:
         raise HTTPException(404, "clip not rendered")
-    path = Path(clip["path"])
+    path = cfg.work_file(clip["path"])
     if not path.is_file():
         raise HTTPException(404, "clip file missing")
     return FileResponse(path, media_type="video/mp4", filename=path.name)
@@ -463,7 +463,7 @@ def get_segment_preview(segment_id: int) -> Any:
     if not out.is_file():
         try:
             ffmpeg.copy_segment(
-                segment["source_path"], str(out),
+                str(cfg.source_file(segment["source_path"])), str(out),
                 float(segment["start_sec"]), float(segment["end_sec"]), cfg.ffmpeg_bin,
             )
         except ffmpeg.FfmpegError as exc:

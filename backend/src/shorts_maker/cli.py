@@ -53,7 +53,7 @@ def _cmd_source_add(cfg: config.Config, args) -> int:
     print(f"source {source_id} 등록: {row['title']}")
     print(f"  type   {row['content_type']}")
     print(f"  길이   {minutes}분 {seconds}초")
-    print(f"  path   {row['path']}")
+    print(f"  path   {cfg.source_file(row['path'])}")
     print(f"  origin {row['origin'] or '-'}")
     return 0
 
@@ -80,7 +80,7 @@ def _cmd_chunk_add(cfg: config.Config, args) -> int:
             "select latency_ms from stage_calls where stage = 'chunk' order by id desc limit 1"
         ).fetchone()["latency_ms"]
     print(f"chunk {chunk_id} (idx {row['idx']}) 생성: {row['start_sec']:.0f}s ~ {row['end_sec']:.0f}s")
-    print(f"  path {row['path']}")
+    print(f"  path {cfg.work_file(row['path'])}")
     print(f"  추출 {latency / 1000:.1f}s")
     return 0
 
@@ -222,7 +222,7 @@ def _cmd_run_create(cfg: config.Config, args) -> int:
 
 def _cmd_rank_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.db_path) as conn:
-        run_id = ranking.run_for_source(conn, cfg, args.source_id, args.criteria, None)
+        run_id = ranking.run_for_source(conn, cfg, args.source_id, args.criteria)
         row = conn.execute("select ranked from runs where id = ?", (run_id,)).fetchone()
     data = json.loads(row["ranked"])
     print(f"run {run_id}")
