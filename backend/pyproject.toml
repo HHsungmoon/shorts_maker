@@ -16,6 +16,11 @@ dependencies = [
 [project.optional-dependencies]
 stt = ["faster-whisper>=1.1.0"]
 
+# fastapi.testclient 가 httpx 를 쓴다. 지금은 google-genai 의 전이 의존성으로 딸려 오는데,
+# 그쪽이 끊으면 테스트만 조용히 죽는다 — 쓰는 쪽에서 명시한다.
+[dependency-groups]
+dev = ["httpx>=0.28"]
+
 [project.scripts]
 sm = "shorts_maker.cli:main"
 

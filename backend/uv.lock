@@ -974,6 +974,11 @@ stt = [
     { name = "faster-whisper" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
@@ -984,6 +989,9 @@ requires-dist = [
     { name = "yt-dlp", specifier = ">=2026.8.19" },
 ]
 provides-extras = ["stt"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "httpx", specifier = ">=0.28" }]
 
 [[package]]
 name = "sniffio"

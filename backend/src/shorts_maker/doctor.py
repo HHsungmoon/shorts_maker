@@ -100,7 +100,7 @@ def _check_gemini(cfg: config.Config) -> bool:
 
 
 def run(cfg: config.Config) -> int:
-    print(f"repo   {config.REPO_ROOT}")
+    print(f"backend {config.BACKEND_ROOT}")
     print(f"work   {cfg.work_dir}")
     print(f"source {cfg.source_dir}\n")
 

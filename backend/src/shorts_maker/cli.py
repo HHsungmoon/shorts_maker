@@ -282,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("doctor", help="실행 전제(ffmpeg·Gemini·DB)가 갖춰졌는지 확인한다")
-    sub.add_parser("serve", help="내부 API 서버를 띄운다 (Spring 이 호출한다)")
+    sub.add_parser("serve", help="웹 서버를 띄운다 (API + 화면, 기본 127.0.0.1:8100)")
     sub.add_parser("models", help="쓸 수 있는 Gemini 모델을 나열한다")
 
     db = sub.add_parser("db", help="스키마 관리")

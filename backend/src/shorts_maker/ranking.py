@@ -155,7 +155,7 @@ def load_segments(conn: sqlite3.Connection, source_id: int) -> list[dict]:
 
 
 def run_for_source(
-    conn: sqlite3.Connection, cfg: config.Config, source_id: int, criteria: str | None, admin_id: int | None
+    conn: sqlite3.Connection, cfg: config.Config, source_id: int, criteria: str | None
 ) -> int:
     source = conn.execute("select * from sources where id = ?", (source_id,)).fetchone()
     if source is None:
@@ -165,9 +165,9 @@ def run_for_source(
     prompt = build_prompt(segments, source["context"], criteria)
 
     run = conn.execute(
-        """insert into runs (source_id, criteria_prompt, prompt, requested_by_admin_id, status)
-           values (?, ?, ?, ?, 'RUNNING')""",
-        (source_id, (criteria or "").strip() or None, prompt, admin_id),
+        """insert into runs (source_id, criteria_prompt, prompt, status)
+           values (?, ?, ?, 'RUNNING')""",
+        (source_id, (criteria or "").strip() or None, prompt),
     )
     run_id = run.lastrowid
     conn.commit()

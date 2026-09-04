@@ -1,7 +1,7 @@
-"""로컬 확인용 단일 페이지. 운영 화면은 관리자 페이지(admin-web)다.
+"""개발용 단일 페이지. 운영 화면은 `web/` 의 React 앱이다.
 
-여기 두는 이유는 API 가 실제로 도는지 브라우저로 바로 확인하기 위해서다 — Spring 과
-admin-web 을 다 띄우지 않고도 파이프라인 상태를 볼 수 있어야 디버깅이 된다.
+여기 두는 이유는 **node 빌드 없이** API 가 실제로 도는지 브라우저로 바로 확인하기
+위해서다. `web/dist` 가 있으면 `/` 는 React 앱이 가져가고 이 화면은 `/debug` 로 남는다.
 """
 
 INDEX_HTML = """<!doctype html>
@@ -28,7 +28,7 @@ code{background:var(--card);padding:1px 4px;border-radius:3px;font-size:12px}
 .scroll{max-height:320px;overflow:auto}
 </style></head><body>
 <h1>shorts_maker <span class="mut" id="health"></span></h1>
-<p class="mut">로컬 확인용 화면. 운영 화면은 관리자 페이지에 있다.</p>
+<p class="mut">개발용 화면. 운영 화면은 web/ 의 React 앱이다.</p>
 <div id="app">불러오는 중…</div>
 <script>
 const j = (u,o) => fetch(u,o).then(r => r.ok ? r.json() : r.json().then(e => {throw new Error(e.detail||r.status)}));
@@ -36,7 +36,7 @@ const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')
 let poll = null;
 
 async function health(){
-  const h = await j('/health');
+  const h = await j('/api/status');
   document.getElementById('health').textContent =
     `· schema v${h.schema} · whisper ${h.whisperModel} · Gemini ${h.geminiKey?'설정됨':'키 없음'}`;
   return h;
