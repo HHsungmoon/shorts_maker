@@ -28,6 +28,9 @@ backend/   FastAPI + CLI. 파이프라인 본체
 ## Stack
 
 - Python 3.12 (`.python-version` 고정) · uv · pyproject
+- 실행: **로컬도 `docker compose up`** 이 기본이다(2026-09-04 부터). 운영과 같은 이미지·경로·폰트.
+  DB 는 `shorts-data` 볼륨의 SQLite, 원본은 `backend/sources/` 바인드 마운트. CLI 는
+  `docker compose exec shorts sm …`. 호스트 `uv run sm serve` 는 테스트·디버깅용으로 남아 있다
 - 웹: **FastAPI** (`sm serve`). 빌드된 프론트(`web/dist`)를 같은 오리진에서 서빙한다 —
   그래서 CORS 설정이 없고 세션 쿠키가 그냥 실린다
 - 프론트: **React + Vite + TypeScript**, 라우터 없음. 화면이 로그인과 파이프라인 둘뿐이고
@@ -44,6 +47,9 @@ backend/   FastAPI + CLI. 파이프라인 본체
 - DB: SQLite → Postgres (C5). 마이그레이션 도구는 안 쓰지만 **통째로 날리는 건 이제 최후수단**이다 —
   STT 한 번에 수 분이 든다. 덧붙이기와 평범한 컬럼 삭제는 `store.MIGRATIONS` 로 제자리 처리한다.
   스키마 제약은 `tests/test_schema.py` 가 지킨다
+- 🔴 DB 에 들어가는 파일 경로는 **상대경로**다 — 원본은 `source_dir`, 파생물은 `work_dir` 기준
+  (`Config.store_source/store_work`, 읽기는 `source_file/work_file`). 절대경로를 넣었다가 레포를
+  옮기자 전 행이 깨졌다. `Path(row["path"])` 를 직접 쓰면 틀린 것이다
 
 ## 규약
 

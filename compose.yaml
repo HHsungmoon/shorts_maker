@@ -1,7 +1,12 @@
-# shorts_maker 단독 스택. 예전에는 backend(Spring) 의 `backend_default` 네트워크에 얹혀
-# 포트를 열지 않았지만, 독립하면서 그 의존이 사라졌다 — 이제 nginx 가 앞에 선다.
+# shorts_maker 단독 스택. **로컬 개발도 이 파일로 띄운다**(2026-09-04 부터) — 운영과 같은
+# 이미지·같은 경로·같은 폰트에서 돌려야 "내 맥에선 되는데"가 없다. 예전에는 backend(Spring) 의
+# `backend_default` 네트워크에 얹혀 포트를 열지 않았지만, 독립하면서 그 의존이 사라졌다.
 #
-#   인터넷 ──443──> nginx (VM) ──127.0.0.1:8100──> shorts 컨테이너
+#   로컬:  브라우저 ──127.0.0.1:8100──> shorts 컨테이너   (vite dev 는 :5173 → :8100 프록시)
+#   운영:  인터넷 ──443──> nginx (VM) ──127.0.0.1:8100──> shorts 컨테이너
+#
+# DB 는 SQLite 파일이고 `shorts-data` 볼륨 안에 있다. 별도 DB 컨테이너는 없다 — Postgres 전환은
+# 설계 문서의 C5 이고 아직이다. 볼륨을 지우면 DB 가 리셋된다(`docker compose down -v`).
 services:
   shorts:
     build: .
@@ -9,6 +14,19 @@ services:
     # 🔴 SHORTS_ADMIN_PASSWORD 와 GEMINI_API_KEY 가 여기서 온다.
     # 비밀번호가 없으면 컨테이너가 0.0.0.0 에 바인딩하므로 기동을 거부한다.
     env_file: ./backend/.env
+    # 🔴 env_file 은 .env 의 **모든** 키를 컨테이너에 넣는다. 로컬 .env 에는 호스트용 값
+    # (SHORTS_FFMPEG=/opt/homebrew/..., SHORTS_SOURCE_DIR=sources, 폰트 이름)이 있고, 그게 들어오면
+    # 이미지의 ENV 를 덮어 컨테이너 안에서 ffmpeg 를 못 찾거나 DB 가 볼륨 밖에 생긴다.
+    # `environment` 는 env_file 보다 우선하므로 컨테이너 전용 값은 여기서 고정한다.
+    environment:
+      SHORTS_API_HOST: 0.0.0.0
+      SHORTS_API_PORT: "8100"
+      SHORTS_DB_PATH: /data/shorts.db
+      SHORTS_WORK_DIR: /data/work
+      SHORTS_SOURCE_DIR: /sources
+      SHORTS_WEB_DIR: /app/web
+      SHORTS_FFMPEG: ffmpeg
+      SHORTS_SUBTITLE_FONT: NanumGothic
     # 🔴 루프백에만 바인딩한다. TLS 와 접근 로그는 nginx 가 맡고, 컨테이너를 인터넷에
     # 직접 노출하지 않는다 — 방화벽(ACG) 하나에만 의존하지 않게 된다.
     ports:
@@ -17,8 +35,9 @@ services:
       # DB 와 중간 산출물. 컨테이너를 다시 만들어도 전사 결과가 남아야 한다
       # (30분 STT 한 번에 4분 넘게 걸린다).
       - shorts-data:/data
-      # 원본 영상은 바인드 마운트다 — `scp` 로 서버에 올리면 바로 보인다.
+      # 원본 영상은 바인드 마운트다 — 로컬은 파일을 이 폴더에 두고, 서버는 `scp` 로 올리면 바로 보인다.
       # 화면의 유튜브 URL 등록이 주 경로이고, 이건 큰 파일을 직접 넣을 때 쓴다.
+      # DB 에는 이 디렉터리 기준 상대경로만 들어간다(config.Config.store_source).
       - ./backend/sources:/sources
     # 🔴 4GB VM 에서 이 서비스가 **유일한 워크로드**라는 전제다(backend 와 같은 VM 을 쓰던
     # 시절의 1400m 에서 올렸다). OS·nginx·빌드 순간에 ~1GB 를 남긴다.
