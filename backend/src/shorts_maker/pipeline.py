@@ -20,7 +20,6 @@ def run_all(
     cfg: config.Config,
     source_id: int,
     criteria: str | None,
-    admin_id: int | None,
     resegment: bool = False,
     burn_subtitles: bool = True,
 ) -> dict:
@@ -39,7 +38,7 @@ def run_all(
             continue
         segmented += len(segmentation.run_for_chunk(conn, cfg, chunk["id"], force=True))
 
-    run_id = ranking.run_for_source(conn, cfg, source_id, criteria, admin_id)
+    run_id = ranking.run_for_source(conn, cfg, source_id, criteria)
     ranked = json.loads(
         conn.execute("select ranked from runs where id = ?", (run_id,)).fetchone()["ranked"]
     )["ranked"]

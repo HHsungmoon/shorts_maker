@@ -7,13 +7,15 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 TABLES = ("sources", "chunks", "utterances", "segments", "runs", "clips", "clip_reviews", "stage_calls")
 
-# 버전별 제자리 업그레이드. **덧붙이기만 가능한 것**(테이블·인덱스·컬럼 추가)만 여기 넣는다.
-# 🔴 제약 변경은 SQLite 에서 테이블 재생성이 필요하고 조용히 어긋날 여지가 커서 넣지 않는다 —
+# 버전별 제자리 업그레이드. 테이블·인덱스·컬럼 **추가**와, 아래 조건을 만족하는 컬럼 **삭제**만
+# 여기 넣는다 — SQLite 3.35+ 의 `drop column` 은 인덱스·check·FK 에 걸리지 않은 평범한 컬럼만
+# 지울 수 있고, 그 경우 테이블 재생성이 없어 안전하다(안 되면 SQLite 가 거부한다).
+# 🔴 제약 변경은 여전히 넣지 않는다. 테이블 재생성이 필요하고 조용히 어긋날 여지가 커서다 —
 # 그래서 새로 넣는 컬럼에는 check 를 걸지 않는다(걸면 새 DB 와 마이그레이션한 DB 가 달라진다).
 # A 단계엔 통째로 날리는 게 정상 경로였지만, STT 한 번에 수 분이 드는 지금은 그 비용이 실제로 아프다.
 MIGRATIONS: dict[int, list[str]] = {
@@ -22,6 +24,13 @@ MIGRATIONS: dict[int, list[str]] = {
     7: [
         "alter table stage_calls add column total_tokens integer",
         "alter table stage_calls add column cached_tokens integer",
+    ],
+    # backend(Spring) 의 admins.id 를 담던 세 컬럼. 서비스가 독립하면서 그 id 는 참조할 곳이
+    # 없는 숫자가 됐다(§13). 운영자가 1명이라 "누가 했나"는 항상 같은 답이므로 되살릴 이유도 없다.
+    8: [
+        "alter table sources drop column created_by_admin_id",
+        "alter table runs drop column requested_by_admin_id",
+        "alter table clip_reviews drop column admin_id",
     ],
 }
 
@@ -47,17 +56,22 @@ class SchemaError(RuntimeError):
     pass
 
 
+# 이미 적용된 ALTER 를 다시 돌렸을 때 SQLite 가 내는 말. 추가는 "duplicate column name",
+# 삭제는 "no such column" 이다.
+_ALREADY_APPLIED = ("duplicate column name", "no such column")
+
+
 def _apply_once(conn: sqlite3.Connection, statement: str) -> None:
     """이미 적용된 문장은 넘어간다.
 
-    🔴 SQLite 에는 `add column if not exists` 가 없다. ALTER 는 성공했는데 버전 기록 직전에
-    죽으면, 다시 돌릴 때 `duplicate column name` 으로 막혀 손으로 고쳐야 한다 —
-    마이그레이션은 몇 번을 돌려도 같은 결과여야 한다.
+    🔴 SQLite 에는 `add/drop column if [not] exists` 가 없다. ALTER 는 성공했는데 버전
+    기록 직전에 죽으면, 다시 돌릴 때 막혀서 손으로 고쳐야 한다 — 마이그레이션은 몇 번을
+    돌려도 같은 결과여야 한다.
     """
     try:
         conn.execute(statement)
     except sqlite3.OperationalError as exc:
-        if "duplicate column name" not in str(exc):
+        if not any(msg in str(exc) for msg in _ALREADY_APPLIED):
             raise
 
 

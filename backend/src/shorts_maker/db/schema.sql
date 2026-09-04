@@ -33,9 +33,6 @@ create table if not exists sources (
     -- 여기에만 걸면 새로 만든 DB 와 마이그레이션한 DB 의 스키마가 달라진다. 검증은 코드에서 한다.
     language            text,
 
-    -- backend admins.id. 서비스가 분리돼 있으므로 FK 가 아니라 숫자만 들고 있는다(§13).
-    created_by_admin_id integer,
-
     status              text    not null default 'PENDING'
                                 check (status in ('PENDING', 'RUNNING', 'DONE', 'FAILED')),
     error               text,
@@ -148,7 +145,6 @@ create table if not exists runs (
     -- 순위·점수 원문 + 파싱 결과 JSON. 원문을 함께 남겨야 파싱 실패를 사후에 고칠 수 있다.
     ranked                text,
 
-    requested_by_admin_id integer,
     status                text    not null default 'PENDING'
                                   check (status in ('PENDING', 'RUNNING', 'DONE', 'FAILED')),
     error                 text,
@@ -187,13 +183,11 @@ create unique index if not exists uq_clips_run_segment on clips (run_id, segment
 -- ============================================================
 -- clip_reviews — 품질 측정 (§11)
 -- ============================================================
--- append-only 로그다. (clip_id, admin_id) 유니크를 걸지 않는 이유: CLI 단계에서는
--- admin_id 가 null 인데 SQLite 는 유니크에서 null 을 서로 다르게 보므로 제약이 헛돈다.
--- 판정 이력이 남는 게 §11 목적에도 맞다 — 읽을 때 최신 행을 쓴다.
+-- append-only 로그다. 판정 이력이 남는 게 §11 목적에 맞다 — 읽을 때 최신 행을 쓴다.
+-- 누가 판정했는지는 담지 않는다: 운영자가 1명이라 항상 같은 값이 된다(§13).
 create table if not exists clip_reviews (
     id         integer primary key,
     clip_id    integer not null references clips (id) on delete cascade,
-    admin_id   integer,
     verdict    text    not null check (verdict in ('OK', 'NG')),
     note       text,
     created_at text    not null default (datetime('now'))

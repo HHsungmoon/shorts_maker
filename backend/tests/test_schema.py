@@ -87,6 +87,32 @@ class ApplySchemaTest(SchemaTestCase):
     def test_is_idempotent_at_current_version(self):
         self.assertEqual(store.apply_schema(self.conn), store.SCHEMA_VERSION)
 
+    def test_drops_the_backend_admin_columns_without_losing_rows(self):
+        # v8 은 backend(Spring) 의 admins.id 를 담던 컬럼 3개를 지운다. 서비스가 독립하면서
+        # 참조할 곳이 없어진 값이지만, 그걸 지우자고 전사(수 분짜리)를 날릴 수는 없다.
+        self.insert_source()
+        for table, column in (
+            ("sources", "created_by_admin_id"),
+            ("runs", "requested_by_admin_id"),
+            ("clip_reviews", "admin_id"),
+        ):
+            self.conn.execute(f"alter table {table} add column {column} integer")
+        self.conn.execute("delete from schema_version")
+        self.conn.execute("insert into schema_version (version) values (7)")
+        self.conn.commit()
+
+        self.assertEqual(store.apply_schema(self.conn), 8)
+        self.assertEqual(store.row_counts(self.conn)["sources"], 1)
+        for table in ("sources", "runs", "clip_reviews"):
+            columns = [r[1] for r in self.conn.execute(f"pragma table_info({table})")]
+            self.assertEqual([c for c in columns if "admin" in c], [], table)
+
+    def test_a_fresh_db_has_no_admin_columns_either(self):
+        # 새로 만든 DB 와 마이그레이션한 DB 의 스키마가 갈리면 한쪽에서만 나는 버그가 생긴다.
+        for table in ("sources", "runs", "clip_reviews"):
+            columns = [r[1] for r in self.conn.execute(f"pragma table_info({table})")]
+            self.assertEqual([c for c in columns if "admin" in c], [], table)
+
 
 class ContentTypeTest(SchemaTestCase):
     def test_accepts_known_types(self):
