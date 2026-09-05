@@ -7,6 +7,7 @@
 |---|---|
 | 지금 상태 · 다음 할 일 · 함정 | **이 문서** |
 | 제품(TEASE) · 아키텍처 · 스키마 v9 · 미결 사항 | [`tease.md`](tease.md) |
+| **개발 순서 · 마일스톤별 완료 조건 · 상태 관리 방식** | [`update_plan.md`](update_plan.md) |
 | 파이프라인 내부 · 비용 기준선 · 코딩 규약 | [`make_shorts.md`](make_shorts.md) |
 | 실행 · 테스트 · 배포 명령 | [`../README.md`](../README.md) |
 | 작업 규약(커밋 정책, 주석, 언어) | [`../CLAUDE.md`](../CLAUDE.md) — 새 세션이 자동으로 읽는다 |
@@ -70,6 +71,7 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 ├── docs/
 │   ├── handoff.md             이 문서
 │   ├── tease.md               🆕 제품·아키텍처·스키마 v9 (823줄)
+│   ├── update_plan.md         🆕 (9/5) TEASE 실행 계획 — M0~M9, 상태 전이표, 불변식, 결정 D1~D10
 │   └── make_shorts.md         backend 레포에서 가져옴. §0·§10·§13 갱신
 ├── Dockerfile                 🆕 루트로 이동. node 빌드 → python → runtime, 한 이미지
 ├── compose.yaml               **로컬·운영 공용.** 127.0.0.1:8100, mem 3000m, `environment` 로 컨테이너 경로 고정
@@ -206,7 +208,8 @@ npm run build && npm run lint                         # tsc strict 통과. 경�
 
 ## 7. 다음에 만들 것
 
-**`tease.md` §12 가 순서다.** 요약:
+**`update_plan.md` 가 실행 순서다** — tease.md §12 를 마일스톤 M0~M9 로 자르고 완료 조건과 테스트를 붙였다.
+**M0(정리·결정)부터.** 아래는 tease.md §12 의 원래 요약이고, update_plan.md 와 다르면 그쪽이 맞다:
 
 1. **스키마 v9** (§6) — 6 테이블 신규 · 컬럼 10개 · `stage_calls` 재생성(🔴 규칙 예외, §6-4)
 2. **임베딩 레이어** (§5-3) — 질문 묶기 + 세그먼트 검색. θ 튜닝
