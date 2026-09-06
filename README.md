@@ -13,24 +13,26 @@ docs/      설계 문서
 ## 띄우기 — docker compose (기본)
 
 로컬도 운영과 **같은 이미지**로 띄운다. 데비안 ffmpeg(libass 포함)·나눔 폰트·whisper 모델이 이미지에
-들어 있어 맥에 따로 깔 게 없다. DB(SQLite)와 작업 파일은 `shorts-data` 볼륨에, 원본 영상은
-`backend/sources/` 바인드 마운트에 있다.
+들어 있어 맥에 따로 깔 게 없다. 서비스는 둘이다 — `db`(Postgres 17, 데이터는 `shorts-pg` 볼륨)와
+`shorts`(앱, 청크·클립은 `shorts-data` 볼륨). 원본 영상은 `backend/sources/` 바인드 마운트.
 
 ```sh
 brew install --cask docker           # Docker Desktop
-cp backend/.env.example backend/.env # GEMINI_API_KEY, SHORTS_ADMIN_PASSWORD 를 채운다
+cp backend/.env.example backend/.env # GEMINI_API_KEY, SHORTS_ADMIN_PASSWORD, POSTGRES_PASSWORD 를 채운다
 docker compose up -d --build         # 첫 빌드는 몇 분 걸린다 (whisper 모델 464MB 포함)
 open http://127.0.0.1:8100
 ```
 
-🔴 `SHORTS_ADMIN_PASSWORD` 는 **필수**다. 컨테이너는 0.0.0.0 에 바인딩하므로 비어 있으면 기동을
-거부한다(`docker compose logs shorts` 에 이유가 찍힌다).
+🔴 `SHORTS_ADMIN_PASSWORD` 와 `POSTGRES_PASSWORD` 는 **필수**다. 앞은 컨테이너가 0.0.0.0 에 바인딩하므로
+비어 있으면 기동을 거부하고, 뒤는 `db` 컨테이너가 계정을 만들 때 쓴다(`docker compose logs` 에 이유가 찍힌다).
+스키마는 앱이 뜰 때 `db/migrations/` 를 순서대로 적용한다 — 따로 할 일이 없다.
 
 ```sh
 docker compose logs -f shorts                 # 로그
 docker compose exec shorts sm doctor          # 전제 확인 (컨테이너 안에서)
-docker compose exec shorts sm db status       # 테이블별 행 수
-docker compose down -v                        # 🔴 볼륨까지 지운다 = DB 리셋 (원본 영상은 남는다)
+docker compose exec shorts sm db status       # 스키마 버전 · 테이블별 행 수
+docker compose exec db psql -U shorts shorts  # SQL 직접
+docker compose down -v                        # 🔴 볼륨까지 지운다 = DB·산출물 리셋 (원본 영상은 남는다)
 ```
 
 CLI 는 전부 `docker compose exec shorts sm <명령>` 으로 쓴다. 원본 영상을 직접 넣을 때는
@@ -48,19 +50,21 @@ cd web && npm install && npm run dev        # http://localhost:5173
 
 ### 호스트에서 직접 띄우기 (테스트·디버깅용)
 
-테스트는 uv 로 호스트에서 돈다. 서버도 그렇게 띄울 수 있지만, 자막 렌더에는 libass 포함 ffmpeg
-(`brew install ffmpeg-full`)와 한글 폰트가 따로 필요하다.
+테스트와 CLI 는 uv 로 호스트에서 돌 수 있다. DB 는 컨테이너의 것을 그대로 쓴다 — `db` 서비스가
+127.0.0.1:5432 를 열어 두고, `.env` 의 `SHORTS_DB_HOST=127.0.0.1` 이 거기를 가리킨다. 서버도 이렇게 띄울 수
+있지만 자막 렌더에는 libass 포함 ffmpeg(`brew install ffmpeg-full`)와 한글 폰트가 따로 필요하다.
 
 ```sh
 brew install uv ffmpeg node
+docker compose up -d db                      # DB 만
 cd backend && uv sync --extra stt
 uv run sm doctor
 uv run sm serve                              # 127.0.0.1:8100. 비밀번호가 비어 있으면 무인증 로컬 모드
 ```
 
-이 경로는 `backend/work/` 에 DB 를 만든다 — 컨테이너의 볼륨과는 **다른 DB** 다. 원본 폴더
-(`backend/sources/`)는 둘이 공유하고, DB 에는 그 폴더 기준 상대경로만 들어가서 어느 쪽 DB 든
-서로 옮겨도 읽힌다.
+호스트 실행과 컨테이너는 **같은 DB**(`db` 컨테이너의 `shorts`)를 본다. 산출물 폴더만 다르다 — 호스트는
+`backend/work/`, 컨테이너는 `/data/work`. DB 에는 폴더 기준 상대경로만 들어가서 어느 쪽에서 만든 행이든
+자기 폴더에 파일이 있으면 읽힌다.
 
 ## CLI
 
@@ -92,6 +96,7 @@ sm render 1
 ## 테스트
 
 ```sh
+docker compose up -d db                                   # DB 테스트는 shorts_test 데이터베이스를 쓴다(자동 생성)
 cd backend && uv run python -m unittest discover -s tests -t .
 cd web && npm run build && npm run lint
 ```

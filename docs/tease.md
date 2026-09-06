@@ -287,7 +287,7 @@ ep.45 에 **한국어 자동자막**이 있다. whisper `small` 로 21분을 돌
 
 **저장·연산.** `embeddings` 테이블(§6-2)에 float32 blob. **벡터 DB 는 넣지 않는다** — 세그먼트
 수백 개면 numpy 코사인 브루트포스가 1ms 밑이다. "N<1000 이라 벡터 DB 를 안 썼다" 는 문장이
-벡터 DB 를 쓴 것보다 기술 심사에서 좋게 읽힌다. 수만 개가 되면 sqlite-vec 를 본다.
+벡터 DB 를 쓴 것보다 기술 심사에서 좋게 읽힌다. 수만 개가 되면 pgvector 를 켠다(DB 는 Postgres, 2026-09-06).
 
 **모델.** Gemini 임베딩(`gemini-embedding-001` 계열). 문서/쿼리 비대칭 `task_type` 을 쓴다.
 비용은 rank 보다 한 자릿수 싸다. `stage_calls.stage='embed'`.
@@ -528,7 +528,10 @@ alter table clip_reviews add column reviewer text;    -- 'human' | 'llm' (§5-7)
 
 `utterances.words` 는 이미 있다. 채우기만 한다(§5-8).
 
-### 6-4. 🔴 `stage_calls` 재생성 — 규칙의 유일한 예외
+### 6-4. 🔴 `stage_calls` 재생성 — 규칙의 유일한 예외 **[Postgres 전환으로 해당 없음, 2026-09-06]**
+
+> 아래는 SQLite 시절의 판단이다. Postgres 는 CHECK 를 `alter table … drop/add constraint` 로 바꾸므로 재생성이
+> 필요 없고, 새 stage(`download`·`preview` 포함)는 `001_baseline.sql` 에 처음부터 들어 있다. 기록으로 남긴다.
 
 새 stage: `'caption'`(자막 파싱) · `'embed'` · `'retrieve'` · `'cluster'`(대표문장 재작성) ·
 `'judge'` · `'classify'`(라우팅). 기존 CHECK `stage in ('ping', …, 'render')` 에 없다.
