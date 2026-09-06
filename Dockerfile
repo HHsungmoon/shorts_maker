@@ -55,6 +55,9 @@ COPY --from=build /opt/venv /opt/venv
 COPY --from=build /opt/hf /opt/hf
 COPY --from=build /app/src /app/src
 COPY --from=web /web/dist /app/web
+# θ 튜닝용 질문 세트. `docker compose exec shorts sm answers eval-cluster` 가 읽는다 —
+# CLI 를 컨테이너 안에서 쓰는 게 기본 경로라(README) 이미지에 있어야 한다. 몇 KB 다.
+COPY backend/eval /app/eval
 
 # 🔴 컨테이너에서는 호스트(nginx)가 붙어야 하므로 루프백으로는 안 된다.
 # 루프백이 아닌 주소에 바인딩하려면 SHORTS_ADMIN_PASSWORD 가 있어야 기동된다(api.check_binding).
