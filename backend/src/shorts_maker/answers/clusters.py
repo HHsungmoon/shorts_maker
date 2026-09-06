@@ -132,6 +132,38 @@ def questions_of(conn: psycopg.Connection, cluster_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def clip_of(conn: psycopg.Connection, cluster_id: int) -> dict | None:
+    """이 묶음에 답한 클립 하나 + 최신 judge 소견.
+
+    묶음당 클립은 하나다(다시 답하면 새 run 이 생기고 최신 것을 본다). judge 판정을 함께 주는
+    이유는 크리에이터가 **발행 전에** 그걸 보고 판단해야 하기 때문이다 — 자립하지 않는다고
+    판정된 클립이 조용히 발행되면 시청자가 먼저 발견한다.
+    """
+    clip = conn.execute(
+        """select c.id, c.rendered, c.published_at, c.total_sec, c.reason, c.score, c.run_id
+           from clips c where c.question_cluster_id = %s order by c.id desc limit 1""",
+        (cluster_id,),
+    ).fetchone()
+    if clip is None:
+        return None
+    clip = dict(clip)
+    review = conn.execute(
+        """select verdict, note from clip_reviews
+           where clip_id = %s and reviewer = 'llm' order by id desc limit 1""",
+        (clip["id"],),
+    ).fetchone()
+    clip["llmVerdict"] = review["verdict"] if review else None
+    clip["llmNote"] = review["note"] if review else None
+    # 조각이 몇 개인지 — 조합 클립이면 화면에서 그렇게 알려준다.
+    clip["parts"] = [
+        dict(r) for r in conn.execute(
+            "select ordinal, start_sec, end_sec from clip_parts where clip_id = %s order by ordinal",
+            (clip["id"],),
+        )
+    ]
+    return clip
+
+
 def unclustered(conn: psycopg.Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
         """select q.id, q.text, q.created_at, count(l.id) as likes
