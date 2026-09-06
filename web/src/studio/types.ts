@@ -192,6 +192,31 @@ export interface ShortsCluster {
 	question_count: number;
 	like_count: number;
 	questions: ShortsClusterQuestion[];
+	/** 이 묶음에 답한 클립. 아직 [답하기] 를 안 눌렀거나 컷이 안 나왔으면 null 이다. */
+	clip: ShortsClusterClip | null;
+}
+
+/**
+ * 묶음 하나에 답한 클립 + judge 소견(answers/clusters.clip_of). 묶음당 하나이며, 다시 답하면
+ * 새 run 의 클립으로 갈린다.
+ *
+ * 🔴 `llmVerdict`/`llmNote` 가 여기 실린 이유는 크리에이터가 **발행 전에** 봐야 하기 때문이다 —
+ * 자립하지 않는다고 판정된 클립이 조용히 발행되면 시청자가 먼저 발견한다.
+ */
+export interface ShortsClusterClip {
+	id: number;
+	rendered: boolean;
+	/** 발행 시각. null 이면 아직 시청자에게 안 보인다. */
+	published_at: string | null;
+	total_sec: number | null;
+	reason: string | null;
+	score: number | null;
+	run_id: number;
+	// clip_reviews 의 최신 llm 행을 파이썬이 두 필드로 접어 만든 값이라 카멜이다.
+	llmVerdict: "OK" | "NG" | null;
+	llmNote: string | null;
+	/** 조각이 둘 이상이면 흩어진 구간을 이어붙인 클립이다 — 이 제품의 눈에 보이는 차별점. */
+	parts: { ordinal: number; start_sec: number; end_sec: number }[];
 }
 
 export interface ShortsClusterList {

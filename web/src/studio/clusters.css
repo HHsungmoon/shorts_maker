@@ -126,3 +126,68 @@
 	border-color: #f0cfcd;
 	color: var(--danger);
 }
+
+/* 만들어진 클립 — 발행 전 검토 ------------------------------------------- */
+
+.sm-cluster__clip {
+	display: flex;
+	gap: 14px;
+	align-items: flex-start;
+	margin: 10px 0 2px;
+	padding: 12px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+/* 🔴 judge 가 NG 를 준 클립. 발행 버튼이 바로 옆에 있으므로 블록 자체가 달라 보여야 한다 —
+   배지 하나로는 스크롤 중에 그냥 지나친다. */
+.sm-cluster__clip--ng {
+	border-color: var(--danger);
+}
+
+.sm-cluster__clipbody {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sm-verdict {
+	border: 1px solid var(--accent);
+	border-radius: 999px;
+	padding: 1px 9px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--accent);
+	white-space: nowrap;
+}
+
+.sm-verdict--ng {
+	background: var(--danger);
+	border-color: var(--danger);
+	color: #fff;
+}
+
+/* 이어붙인 조각들. <ol> 이라 번호는 브라우저가 붙인다 — clip_parts.ordinal 이 0 부터인지
+   1 부터인지에 화면이 매달리지 않게 한다. */
+.sm-cluster__parts {
+	margin: 0;
+	padding-left: 22px;
+	color: var(--text-muted);
+	font-size: 13px;
+	line-height: 1.7;
+}
+
+.sm-cluster__note {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.6;
+	max-width: 76ch;
+	color: var(--text-muted);
+}
+
+.sm-cluster__note--ng {
+	color: var(--danger);
+}

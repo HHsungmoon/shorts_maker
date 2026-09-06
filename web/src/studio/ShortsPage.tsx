@@ -49,6 +49,8 @@ const STAGE_LABEL: Record<string, string> = {
 	cut: "클립 만들기",
 	render: "렌더",
 	pipeline: "전체 실행",
+	cluster: "질문 집계",
+	answer: "질문에 답하기",
 };
 
 function time(seconds: number): string {
@@ -285,7 +287,23 @@ export function ShortsPage() {
 				))}
 			{data?.source.channel && <p className="sm-meta">{data.source.channel}</p>}
 
-			<h2 className="section-title">진행 단계</h2>
+			{/* 질문이 맨 위인 건 제품 정의 그대로다(tease §3) — 시청자가 묻고, 크리에이터가 묶고,
+			    답하고, 발행한다. 아래 준비 단계는 그 앞에 한 번 해두는 일이라 매일 보는 자리를
+			    차지하면 안 된다. */}
+			{data && (
+				<ClusterPanel
+					sourceId={data.source.id}
+					published={data.source.published}
+					busy={jobBusy}
+					reloadToken={reloadToken}
+					onJob={submit}
+					onChanged={() => setReloadToken((n) => n + 1)}
+				/>
+			)}
+
+			<h2 className="section-title">
+				영상 준비 <span className="page-count">— 영상당 한 번만 하면 됩니다</span>
+			</h2>
 
 			<Step
 				no={1}
@@ -691,17 +709,6 @@ export function ShortsPage() {
 						</section>
 					))}
 				</>
-			)}
-
-			{data && (
-				<ClusterPanel
-					sourceId={data.source.id}
-					published={data.source.published}
-					busy={jobBusy}
-					reloadToken={reloadToken}
-					onAggregate={submit}
-					onChanged={() => setReloadToken((n) => n + 1)}
-				/>
 			)}
 
 			{data && (
