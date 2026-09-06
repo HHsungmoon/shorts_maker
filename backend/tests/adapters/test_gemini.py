@@ -44,5 +44,41 @@ class IsTransientTest(unittest.TestCase):
         self.assertLess(sum(waits), 60)
 
 
+
+class DailyQuotaTest(unittest.TestCase):
+    """🔴 429 라고 다 같은 429 가 아니다.
+
+    분당 한도는 몇 초 기다리면 풀리지만 **일일 한도는 내일까지 안 풀린다.** 거기에 백오프
+    재시도를 걸면 14초를 버리고 요청 3번을 더 쓰고도 똑같이 실패한다 — 무료 등급은 하루
+    20회라 그 3번이 아깝다(2026-09-06에 겪었다).
+    """
+
+    class Failure(Exception):
+        code = 429
+
+    def test_a_daily_quota_error_is_not_retried(self):
+        exc = self.Failure(
+            "429 RESOURCE_EXHAUSTED ... quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+        )
+        self.assertTrue(gemini.is_daily_quota(exc))
+        self.assertFalse(gemini.is_transient(exc))
+
+    def test_a_burst_limit_is_still_retried(self):
+        exc = self.Failure("429 RESOURCE_EXHAUSTED ... quotaId: GenerateRequestsPerMinutePerProject")
+        self.assertFalse(gemini.is_daily_quota(exc))
+        self.assertTrue(gemini.is_transient(exc))
+
+    def test_other_statuses_are_never_daily_quota(self):
+        class ServerError(Exception):
+            code = 503
+
+        self.assertFalse(gemini.is_daily_quota(ServerError("503 per day something")))
+
+    def test_the_daily_quota_error_explains_what_to_do(self):
+        # 재시도해도 소용없다는 걸 사람이 읽고 알아야 한다 — 모델 교체·결제·대기 셋 중 하나다.
+        for hint in ("모델", "결제", "자정"):
+            self.assertIn(hint, gemini.DAILY_QUOTA_HINT)
+
+
 if __name__ == "__main__":
     unittest.main()

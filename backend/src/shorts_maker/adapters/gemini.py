@@ -80,8 +80,31 @@ def _status_of(exc: Exception) -> int | None:
     return int(found.group(1)) if found else None
 
 
+# 🔴 429 라고 다 같은 429 가 아니다. 분당 한도(잠깐 기다리면 풀림)와 **일일 한도**(내일까지 안 풀림)가
+# 같은 코드로 온다. 일일 한도에 백오프 재시도를 걸면 14초를 버리고 요청 3번을 더 쓰고도 똑같이 실패한다.
+# 구글은 quotaId 에 `PerDay` 를 넣어 구분해 준다(2026-09-06에 겪었다: 무료 등급 하루 20회).
+_DAILY_QUOTA_MARKS = ("PerDay", "per day", "free_tier_requests")
+
+
+def is_daily_quota(exc: Exception) -> bool:
+    if _status_of(exc) != 429:
+        return False
+    text = str(exc)
+    return any(mark in text for mark in _DAILY_QUOTA_MARKS)
+
+
 def is_transient(exc: Exception) -> bool:
+    if is_daily_quota(exc):
+        return False
     return _status_of(exc) in TRANSIENT_STATUS
+
+
+DAILY_QUOTA_HINT = (
+    "Gemini 일일 할당량을 다 썼다. 재시도해도 오늘은 풀리지 않는다.\n"
+    "  · 다른 모델로 바꾼다 — 모델마다 할당량이 따로다 (SHORTS_GEMINI_MODEL, `sm models` 로 목록)\n"
+    "  · 결제를 붙여 유료 등급으로 올린다 (무료 등급은 모델당 하루 수십 회다)\n"
+    "  · 태평양시 자정에 초기화될 때까지 기다린다"
+)
 
 
 def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tuple[str, dict, int]:
@@ -112,6 +135,8 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
             )
             break
         except Exception as exc:
+            if is_daily_quota(exc):
+                raise GeminiError(f"{DAILY_QUOTA_HINT}\n\n원문: {exc}") from exc
             if attempt == MAX_ATTEMPTS or not is_transient(exc):
                 raise
             wait = BASE_BACKOFF_SEC * (2 ** (attempt - 1))
@@ -204,6 +229,8 @@ def embed_texts(
                 )
                 break
             except Exception as exc:
+                if is_daily_quota(exc):
+                    raise GeminiError(f"{DAILY_QUOTA_HINT}\n\n원문: {exc}") from exc
                 if attempt == MAX_ATTEMPTS or not is_transient(exc):
                     raise
                 import logging
