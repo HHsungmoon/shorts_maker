@@ -35,6 +35,7 @@ import type {
 	ShortsStatus,
 	ShortsUtterance,
 } from "./types";
+import "./source.css";
 
 const DEFAULT_CRITERIA = "한 문장으로 인용할 만한 핵심 논지";
 
@@ -67,12 +68,15 @@ export function ShortsPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
 	const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
-	const [fromMin, setFromMin] = useState(0);
-	const [toMin, setToMin] = useState(30);
 	const [openPreview, setOpenPreview] = useState<number | null>(null);
 	const [transcript, setTranscript] = useState<ShortsUtterance[] | null>(null);
 	const [language, setLanguage] = useState<string | null>(null);
 	const [modalOpen, setModalOpen] = useState(false);
+	// 2단계에서 분석할 범위(초). null 이면 아직 손대지 않은 상태라 기본값을 그때그때 파생한다 —
+	// 영상 길이는 소스를 읽고 나서야 오기 때문에 상태에 미리 복사해 두면 0 으로 굳는다.
+	const [range, setRange] = useState<{ start: number; end: number } | null>(null);
+	// 조각이 이미 있는데도 범위를 다시 고르는 중인가("다시 추출" 을 누른 뒤).
+	const [rangeOpen, setRangeOpen] = useState(false);
 	const pollRef = useRef<number | null>(null);
 
 	const status = useAsync<ShortsStatus>(fetchStatus, [reloadToken]);
@@ -84,10 +88,10 @@ export function ShortsPage() {
 		[sourceId, reloadToken],
 	);
 
-	const busy = job !== null && job.status !== "DONE" && job.status !== "FAILED";
+	const jobBusy = job !== null && job.status !== "DONE" && job.status !== "FAILED";
 
 	useEffect(() => {
-		if (!job || !busy) {
+		if (!job || !jobBusy) {
 			return;
 		}
 		pollRef.current = window.setTimeout(async () => {
@@ -107,7 +111,7 @@ export function ShortsPage() {
 				window.clearTimeout(pollRef.current);
 			}
 		};
-	}, [job, busy]);
+	}, [job, jobBusy]);
 
 	const submit = useCallback(async (start: () => Promise<ShortsJob>) => {
 		setError(null);
@@ -155,9 +159,35 @@ export function ShortsPage() {
 
 	const data = detail.data;
 	const geminiReady = status.data?.geminiKey === true;
-	const chunk = data?.chunks[0] ?? null;
-	const utterances = data ? data.chunks.reduce((n, c) => n + c.utteranceCount, 0) : 0;
-	const segments: ShortsSegment[] = data ? data.chunks.flatMap((c) => c.segments) : [];
+	// 🔴 서버가 이 소스에 잠금을 걸고 긴 작업을 돌리는 중. 이 탭이 띄운 잡(jobBusy)과 다르다 —
+	// 다른 탭이나 CLI 가 돌린 것도 여기 잡힌다. 전사 중에 조각을 지우면 그 전사가 외래키 위반으로
+	// 죽어서(2026-09-06에 당했다) 소스를 건드리는 버튼은 이 값으로도 잠근다.
+	const sourceBusy = data?.busy === true;
+
+	// 🔴 원본이 몇 조각으로 나뉘는지는 사용자의 선택이 아니라 **메모리 상한**이다 — 95분을 한 번에
+	// 전사하면 컨테이너 한도를 넘어 죽어서, 서버가 길이를 보고 25분 안팎으로 자른다. 그래서 화면은
+	// 조각을 단위로 다루지 않고 전부 소스 하나로 합쳐 보여준다. 조각은 구현 사정일 뿐이다.
+	const chunks = data?.chunks ?? [];
+	const hasChunks = chunks.length > 0;
+	const utterances = chunks.reduce((n, c) => n + c.utteranceCount, 0);
+	// 전사가 조각 하나에서 끊길 수 있다. 다 됐을 때만 3단계를 끝난 것으로 본다.
+	const sttDone = hasChunks && chunks.every((c) => c.utteranceCount > 0);
+	// 준비된 분량. 조각 경계는 겹치지 않으므로 합이 곧 영상 전체 길이다.
+	const coveredSec = chunks.reduce((n, c) => n + (c.end_sec - c.start_sec), 0);
+	// 초 단위로 다룬다 — duration_sec 은 소수점이 붙어 올 수 있고, 그대로 두면 "0분 0.4초" 가 뜬다.
+	const duration = Math.round(data?.source.duration_sec ?? 0);
+	// 추출된 범위. 조각 경계는 겹치지 않으므로 처음과 끝만 보면 원래 고른 범위가 나온다.
+	const chunkStart = hasChunks ? Math.min(...chunks.map((c) => c.start_sec)) : 0;
+	const chunkEnd = hasChunks ? Math.max(...chunks.map((c) => c.end_sec)) : 0;
+	// 조각이 없으면 편집이 기본 상태다 — 첫 추출은 범위를 정하는 일 그 자체다.
+	const editingRange = !hasChunks || rangeOpen;
+	const rangeStart = Math.round(range?.start ?? 0);
+	// 끝의 기본값은 영상 전체다. 대부분은 이대로 한 번 누르면 끝난다.
+	const rangeEnd = Math.round(range?.end ?? duration);
+	// 길이를 아직 모르면(0) 상한을 걸지 않는다 — 모르는 값으로 사용자를 막지 않는다.
+	const rangeValid = rangeStart < rangeEnd && (duration === 0 || rangeEnd <= duration);
+	// 구간 번호(idx)는 소스 안에서 연속이라(segmentation) 조각을 넘어서도 idx 순이 곧 시간 순이다.
+	const segments: ShortsSegment[] = chunks.flatMap((c) => c.segments).sort((a, b) => a.idx - b.idx);
 	const latestRun = data?.runs[0] ?? null;
 	const ranked = latestRun?.ranked?.ranked ?? [];
 	const excluded = latestRun?.ranked?.excluded ?? [];
@@ -170,7 +200,7 @@ export function ShortsPage() {
 	}
 
 	// 다음에 눌러야 할 단계 하나만 강조한다.
-	const nextStep = !data ? 1 : !chunk ? 2 : utterances === 0 ? 3 : segments.length === 0 ? 4 : 5;
+	const nextStep = !data ? 1 : !hasChunks ? 2 : !sttDone ? 3 : segments.length === 0 ? 4 : 5;
 
 	return (
 		<div className="page">
@@ -207,7 +237,7 @@ export function ShortsPage() {
 			)}
 			{error && <p className="state state--error">{error}</p>}
 			{notice && <div className="notice">{notice}</div>}
-			{busy && job && (
+			{jobBusy && job && (
 				<div className="notice">
 					{STAGE_LABEL[job.kind] ?? job.kind} 진행 중… ({elapsed(job.createdAt)} 경과) · 끝날
 					때까지 다른 실행은 대기합니다
@@ -230,11 +260,30 @@ export function ShortsPage() {
 						setPicked(id);
 						setTranscript(null);
 						setOpenPreview(null);
+						setRange(null);
+						setRangeOpen(false);
 					}}
 					onDelete={remove}
-					busy={busy}
+					busy={jobBusy}
 				/>
 			)}
+
+			{/* 무엇을 뽑을지 정하려면 원본을 봐야 한다. 자체 <video> 가 아니라 유튜브 임베드다 —
+			    여기서의 시청도 실제 유튜브 시청 시간이 된다(tease §8-3). */}
+			{data &&
+				(data.source.youtube_id ? (
+					<div className="sm-player">
+						<iframe
+							src={`https://www.youtube.com/embed/${data.source.youtube_id}`}
+							title={data.source.title}
+							allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+							allowFullScreen
+						/>
+					</div>
+				) : (
+					<p className="sm-meta">임베드할 수 없는 영상입니다</p>
+				))}
+			{data?.source.channel && <p className="sm-meta">{data.source.channel}</p>}
 
 			<h2 className="section-title">진행 단계</h2>
 
@@ -262,7 +311,7 @@ export function ShortsPage() {
 							<button
 								type="button"
 								className="button button--small"
-								disabled={busy || data.source.status !== "DONE"}
+								disabled={jobBusy || data.source.status !== "DONE"}
 								onClick={() =>
 									act(async () => {
 										await publishSource(data.source.id, !data.source.published);
@@ -290,59 +339,121 @@ export function ShortsPage() {
 			<Step
 				no={2}
 				title="구간 추출"
-				done={chunk !== null}
+				done={hasChunks}
 				next={nextStep === 2}
 				detail={
-					chunk
-						? `${time(chunk.start_sec)} ~ ${time(chunk.end_sec)}`
-						: "분석할 구간의 오디오를 뽑습니다"
+					editingRange ? (
+						<span className={`sm-range${rangeValid ? "" : " sm-range--invalid"}`}>
+							<TimeField
+								label="시작"
+								seconds={rangeStart}
+								onChange={(value) => setRange({ start: value, end: rangeEnd })}
+							/>
+							<span>~</span>
+							<TimeField
+								label="끝"
+								seconds={rangeEnd}
+								onChange={(value) => setRange({ start: rangeStart, end: value })}
+							/>
+							<span className="sm-meta">
+								{duration > 0 ? `영상 전체 ${time(duration)}` : "길이를 아직 모릅니다"}
+							</span>
+						</span>
+					) : (
+						`${time(chunkStart)} ~ ${time(chunkEnd)} · 총 ${Math.round(coveredSec / 60)}분 · 분석 준비됨`
+					)
 				}
 				actions={
 					data && (
 						<>
-							<input
-								className="field__input"
-								style={{ width: 56 }}
-								type="number"
-								min={0}
-								value={fromMin}
-								onChange={(e) => setFromMin(Number(e.target.value))}
-								aria-label="시작 분"
-							/>
-							<span className="sm-meta">~</span>
-							<input
-								className="field__input"
-								style={{ width: 56 }}
-								type="number"
-								min={1}
-								value={toMin}
-								onChange={(e) => setToMin(Number(e.target.value))}
-								aria-label="끝 분"
-							/>
-							<span className="sm-meta">분</span>
-							<button
-								type="button"
-								className={`button button--small${nextStep === 2 ? " sm-go" : ""}`}
-								disabled={busy || toMin <= fromMin}
-								onClick={() =>
-									submit(() => createChunk(data.source.id, fromMin * 60, toMin * 60, chunk !== null))
-								}
-							>
-								{chunk ? "다시 추출" : "추출"}
-							</button>
+							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
+							{editingRange && !rangeValid && (
+								<span className="sm-meta">시작이 끝보다 앞서고, 끝이 영상 길이 안이어야 합니다</span>
+							)}
+							{editingRange ? (
+								<>
+									<button
+										type="button"
+										className={`button button--small${nextStep === 2 ? " sm-go" : ""}`}
+										disabled={jobBusy || sourceBusy || !rangeValid}
+										onClick={() => {
+											setRangeOpen(false);
+											// 영상 전체면 범위를 아예 빼고 보낸다 — 화면의 끝값은 초 단위로 반올림한
+											// 값이라 실으면 마지막 1초 미만이 잘린다. 비우면 서버가 실제 길이를 쓴다.
+											const whole = rangeStart === 0 && rangeEnd === duration;
+											submit(() =>
+												createChunk(data.source.id, {
+													...(whole ? {} : { startSec: rangeStart, endSec: rangeEnd }),
+													replace: hasChunks,
+												}),
+											);
+										}}
+									>
+										추출
+									</button>
+									{hasChunks && (
+										<button
+											type="button"
+											className="button button--small"
+											onClick={() => {
+												setRangeOpen(false);
+												setRange(null);
+											}}
+										>
+											취소
+										</button>
+									)}
+								</>
+							) : (
+								/* 누르면 바로 다시 뽑지 않는다. 범위를 먼저 펼쳐 사람이 확인하게 한다 —
+								   이 버튼 하나로 전사·구간·클립이 통째로 날아가기 때문이다. */
+								<button
+									type="button"
+									className="button button--small"
+									disabled={jobBusy || sourceBusy}
+									onClick={() => {
+										setRange({ start: chunkStart, end: chunkEnd });
+										setRangeOpen(true);
+									}}
+								>
+									다시 추출
+								</button>
+							)}
 						</>
 					)
 				}
 			/>
 
+			{/* 조각 수는 고를 수 있는 값이 아니라 처리 방식이다(메모리 상한). 평소엔 접어 두고,
+			    전사가 한 조각에서 멈췄을 때 어디서 멈췄는지 여기서 확인한다. */}
+			{hasChunks && (
+				<details className="sm-fold sm-chunks">
+					<summary>{chunks.length}조각으로 나눠 처리 · 상세</summary>
+					<ul>
+						{chunks.map((chunk) => (
+							<li key={chunk.id}>
+								<span className="sm-chunks__idx">#{chunk.idx + 1}</span>
+								<span>
+									{time(chunk.start_sec)} ~ {time(chunk.end_sec)}
+								</span>
+								<span className="sm-meta">
+									{Math.round((chunk.end_sec - chunk.start_sec) / 60)}분 · 발화 {chunk.utteranceCount}개
+								</span>
+							</li>
+						))}
+					</ul>
+				</details>
+			)}
+
 			<Step
 				no={3}
 				title="음성 인식"
-				done={utterances > 0}
+				done={sttDone}
 				next={nextStep === 3}
 				detail={utterances > 0 ? `발화 ${utterances}개` : "몇 분 걸립니다"}
 				actions={
-					chunk && (
+					data &&
+					hasChunks && (
 						<>
 							<select
 								className="field__input"
@@ -360,15 +471,20 @@ export function ShortsPage() {
 								)}
 								<option value="">자동 감지</option>
 							</select>
+							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
+							{/* 전사가 중간에 끊겼으면 force 를 끄고 부른다 — 서버가 끝난 데를 건너뛰고 이어서 간다.
+							    여기서 force 를 켜면 이미 몇 분씩 걸려 끝낸 전사를 통째로 다시 돌린다. */}
 							<button
 								type="button"
 								className={`button button--small${nextStep === 3 ? " sm-go" : ""}`}
-								disabled={busy}
+								disabled={jobBusy || sourceBusy}
 								onClick={() =>
-									submit(() => runStt(chunk.id, language ?? data?.source.language ?? null))
+									submit(() =>
+										runStt(data.source.id, language ?? data.source.language ?? null, sttDone),
+									)
 								}
 							>
-								{utterances > 0 ? "다시" : "실행"}
+								{sttDone ? "다시" : utterances > 0 ? "이어서" : "실행"}
 							</button>
 						</>
 					)
@@ -382,15 +498,18 @@ export function ShortsPage() {
 				next={nextStep === 4}
 				detail={segments.length > 0 ? `구간 ${segments.length}개` : "전사를 주제 단위로 나눕니다"}
 				actions={
-					chunk && (
-						<button
-							type="button"
-							className={`button button--small${nextStep === 4 ? " sm-go" : ""}`}
-							disabled={busy || utterances === 0 || !geminiReady}
-							onClick={() => submit(() => runSegment(chunk.id))}
-						>
-							{segments.length > 0 ? "다시" : "실행"}
-						</button>
+					data && (
+						<>
+							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
+							<button
+								type="button"
+								className={`button button--small${nextStep === 4 ? " sm-go" : ""}`}
+								disabled={jobBusy || sourceBusy || utterances === 0 || !geminiReady}
+								onClick={() => submit(() => runSegment(data.source.id))}
+							>
+								{segments.length > 0 ? "다시" : "실행"}
+							</button>
+						</>
 					)
 				}
 			/>
@@ -415,7 +534,7 @@ export function ShortsPage() {
 							<button
 								type="button"
 								className={`button button--small${nextStep === 5 ? " sm-go" : ""}`}
-								disabled={busy || segments.length === 0 || !geminiReady}
+								disabled={jobBusy || segments.length === 0 || !geminiReady}
 								onClick={() => submit(() => runRank(data.source.id, criteria.trim() || null))}
 							>
 								{ranked.length > 0 ? "다시 선정" : "실행"}
@@ -470,7 +589,7 @@ export function ShortsPage() {
 											<button
 												type="button"
 												className={clip ? "button button--small" : "button button--small sm-go"}
-												disabled={busy || !geminiReady}
+												disabled={jobBusy || !geminiReady}
 												onClick={() =>
 													submit(() => runCut(latestRun.id, segment.id, Boolean(clip)))
 												}
@@ -531,7 +650,7 @@ export function ShortsPage() {
 								<button
 									type="button"
 									className="button button--small sm-go"
-									disabled={busy}
+									disabled={jobBusy}
 									onClick={() => submit(() => renderClip(clip.id))}
 								>
 									7. 렌더하기
@@ -578,7 +697,7 @@ export function ShortsPage() {
 				<ClusterPanel
 					sourceId={data.source.id}
 					published={data.source.published}
-					busy={busy}
+					busy={jobBusy}
 					reloadToken={reloadToken}
 					onAggregate={submit}
 					onChanged={() => setReloadToken((n) => n + 1)}
@@ -591,15 +710,21 @@ export function ShortsPage() {
 
 					<details className="sm-fold">
 						<summary>전사 {utterances}발화</summary>
-						{chunk && (
+						{hasChunks && (
 							<div className="sm-actions" style={{ margin: "12px 0" }}>
+								{/* 조각별로 읽어 idx 순으로 잇는다. 발화 타임스탬프는 이미 원본 기준이라
+								    이어 붙이는 것만으로 영상 하나의 전사가 된다. */}
 								<button
 									type="button"
 									className="button button--small"
 									onClick={() =>
 										transcript
 											? setTranscript(null)
-											: act(async () => setTranscript(await fetchUtterances(chunk.id)))
+											: act(async () =>
+													setTranscript(
+														(await Promise.all(chunks.map((c) => fetchUtterances(c.id)))).flat(),
+													),
+												)
 									}
 								>
 									{transcript ? "닫기" : "불러오기"}
@@ -611,7 +736,8 @@ export function ShortsPage() {
 								<table className="table">
 									<tbody>
 										{transcript.map((u) => (
-											<tr key={u.idx}>
+											// idx 는 조각 안에서만 0 부터라 조각을 넘으면 겹친다. 시작 초로 구분한다.
+											<tr key={`${u.start_sec}-${u.idx}`}>
 												<td style={{ width: 56 }} className="sm-meta">
 													{time(u.start_sec)}
 												</td>
@@ -669,6 +795,45 @@ export function ShortsPage() {
 				</>
 			)}
 		</div>
+	);
+}
+
+// 분·초를 따로 받는다. mm:ss 한 칸보다 오타가 적고(콜론 빠뜨림), 숫자 필드라 모바일에서
+// 숫자 키패드가 뜬다. 상태는 항상 초 하나라서 분·초로 갈랐다 합쳐도 값이 그대로 돌아온다.
+function TimeField({
+	label,
+	seconds,
+	onChange,
+}: {
+	label: string;
+	seconds: number;
+	onChange: (seconds: number) => void;
+}) {
+	const min = Math.floor(seconds / 60);
+	const sec = seconds % 60;
+	// 지우는 도중의 빈 칸은 0 으로 읽는다 — NaN 이 들어가면 그 뒤로 입력이 통째로 멈춘다.
+	const read = (raw: string) => Math.max(0, Math.floor(Number(raw) || 0));
+	return (
+		<span className="sm-range__field">
+			<span className="sm-meta">{label}</span>
+			<input
+				type="number"
+				min={0}
+				value={min}
+				aria-label={`${label} 분`}
+				onChange={(e) => onChange(read(e.target.value) * 60 + sec)}
+			/>
+			<span className="sm-meta">분</span>
+			<input
+				type="number"
+				min={0}
+				max={59}
+				value={sec}
+				aria-label={`${label} 초`}
+				onChange={(e) => onChange(min * 60 + Math.min(59, read(e.target.value)))}
+			/>
+			<span className="sm-meta">초</span>
+		</span>
 	);
 }
 
