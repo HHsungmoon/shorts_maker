@@ -5,14 +5,21 @@ Source = 원본 영상 전체. Chunk = 그 안에서 실제로 처리할 조각.
 
 🔴 시간 축은 전부 **소스 절대 초**로 통일한다. 청크 로컬 시간으로 저장하면 [7] 에서
 원본을 다시 자를 때(§4-[7]) 매번 변환해야 하고, 한 번만 빠뜨려도 조용히 어긋난다.
+
+원본 등록은 두 단계다 — `begin_source`(행을 RUNNING 으로 먼저 만든다) → `finish_source`
+(파일이 준비되면 길이·지문을 채우고 DONE). 다운로드는 수 분이 걸리는데, 그동안 행이 없으면
+화면에는 아무것도 안 보이고 서버가 죽었을 때 `api.serve` 의 "RUNNING 정리" 도 할 일이 없다.
+`add_source` 는 파일이 이미 있을 때(CLI·동기 API) 둘을 이어 부르는 편의 함수다.
 """
 
 import hashlib
 import sqlite3
 import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
-from . import config, ffmpeg
+from . import config, ffmpeg, media
 
 
 class IngestError(RuntimeError):
@@ -45,6 +52,91 @@ def resolve_source_path(cfg: config.Config, raw: str) -> Path:
     return path
 
 
+@dataclass
+class Begun:
+    source_id: int
+    # DONE 행이 이미 그 경로에 있어서 새로 만들지 않았다. 호출자는 finish 를 부르지 않는다.
+    reused: bool
+
+
+def begin_source(
+    conn: sqlite3.Connection,
+    cfg: config.Config,
+    path: Path,
+    title: str,
+    content_type: str,
+    origin: str | None,
+    context: str | None,
+    language: str | None = None,
+) -> Begun:
+    """원본 행을 **파일이 준비되기 전에** RUNNING 으로 만든다.
+
+    같은 경로의 행이 이미 있으면: DONE 이면 그대로 재사용(`reused=True`), 그 외(FAILED · 죽은
+    RUNNING · PENDING)는 이전 시도의 잔해라 같은 행을 다시 쓴다 — 지우고 새로 만들면 id 가
+    바뀌어 화면이 가리키던 곳이 사라진다.
+
+    지문은 파일이 있어야 계산되므로 여기서는 `pending:` 임시값을 넣는다. not null unique 제약을
+    지키면서 자리를 잡아두는 용도고, finish_source 가 진짜 값으로 바꾼다.
+    """
+    existing_id = media.find_source_id(conn, cfg, path.resolve())
+    if existing_id is not None:
+        status = conn.execute("select status from sources where id = ?", (existing_id,)).fetchone()["status"]
+        if status == "DONE":
+            return Begun(existing_id, reused=True)
+        conn.execute(
+            """update sources set title = ?, content_type = ?, origin = ?, context = ?, language = ?,
+               status = 'RUNNING', error = null, updated_at = datetime('now') where id = ?""",
+            (title, content_type, origin, context, language, existing_id),
+        )
+        conn.commit()
+        return Begun(existing_id, reused=False)
+
+    cursor = conn.execute(
+        """insert into sources (title, content_type, path, origin, fingerprint, context, language, status)
+           values (?, ?, ?, ?, ?, ?, ?, 'RUNNING')""",
+        # 🔴 source_dir 기준 상대경로로 저장한다(config.Config.store_source 주석).
+        (title, content_type, cfg.store_source(path), origin, f"pending:{uuid.uuid4().hex}", context, language),
+    )
+    conn.commit()
+    return Begun(cursor.lastrowid, reused=False)
+
+
+def fail_source(conn: sqlite3.Connection, source_id: int, error: str) -> None:
+    conn.execute(
+        "update sources set status = 'FAILED', error = ?, updated_at = datetime('now') where id = ?",
+        (error[:1000], source_id),
+    )
+    conn.commit()
+
+
+def finish_source(conn: sqlite3.Connection, cfg: config.Config, source_id: int, path: Path) -> None:
+    """파일이 준비된 뒤 길이·지문을 채우고 DONE 으로. 실패하면 FAILED 로 남기고 다시 던진다.
+
+    예외: 지문이 이미 다른 행에 있으면(같은 내용을 다른 파일명으로 두 번 넣었다) 이 행은 존재할
+    이유가 없어 **지운다**. FAILED 로 남기면 목록에 실체 없는 행이 생기고, 그 파일을 지우려는
+    순간 정상 행의 파생물까지 헷갈린다.
+    """
+    try:
+        duration = ffmpeg.duration_sec(str(path))
+        digest = fingerprint(path)
+        conn.execute(
+            """update sources set duration_sec = ?, fingerprint = ?, status = 'DONE', error = null,
+               updated_at = datetime('now') where id = ?""",
+            (duration, digest, source_id),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        if "fingerprint" in str(exc):
+            conn.execute("delete from sources where id = ?", (source_id,))
+            conn.commit()
+            raise IngestError("같은 내용의 원본이 이미 등록돼 있다") from exc
+        fail_source(conn, source_id, f"{type(exc).__name__}: {exc}")
+        raise
+    except Exception as exc:
+        fail_source(conn, source_id, f"{type(exc).__name__}: {exc}")
+        raise
+
+
 def add_source(
     conn: sqlite3.Connection,
     cfg: config.Config,
@@ -55,36 +147,36 @@ def add_source(
     context: str | None,
     language: str | None = None,
 ) -> int:
+    """이미 있는 파일을 한 번에 등록한다 — begin + finish."""
     path = resolve_source_path(cfg, raw_path)
-    duration = ffmpeg.duration_sec(str(path))
-    try:
-        cursor = conn.execute(
-            """insert into sources
-               (title, content_type, path, duration_sec, origin, fingerprint, context, language)
-               values (?, ?, ?, ?, ?, ?, ?, ?)""",
-            # 🔴 source_dir 기준 상대경로로 저장한다(config.Config.store_source 주석).
-            (title, content_type, cfg.store_source(path), duration, origin, fingerprint(path), context, language),
-        )
-    except sqlite3.IntegrityError as exc:
-        if "fingerprint" in str(exc):
-            raise IngestError("같은 내용의 원본이 이미 등록돼 있다") from exc
-        raise
-    conn.commit()
-    return cursor.lastrowid
+    begun = begin_source(conn, cfg, path, title, content_type, origin, context, language)
+    if begun.reused:
+        raise IngestError(f"이미 등록된 원본이다 (source {begun.source_id})")
+    finish_source(conn, cfg, begun.source_id, path)
+    return begun.source_id
 
 
-def add_chunk(conn: sqlite3.Connection, cfg: config.Config, source_id: int, start: float, end: float) -> int:
+def add_chunk(
+    conn: sqlite3.Connection,
+    cfg: config.Config,
+    source_id: int,
+    start: float,
+    end: float,
+    replace: bool = False,
+) -> int:
+    """구간의 오디오를 뽑아 청크로 만든다.
+
+    🔴 LECTURE 는 **소스당 청크 1개**다(schema.sql chunks 주석). 이미 있으면 거부하고,
+    `replace=True` 면 기존 청크와 그 아래 전부(발화·구간·클립, 그리고 그 구간을 가리키는 run)를
+    지우고 **같은 idx** 로 다시 만든다. 예전엔 idx 를 올려 옆에 하나 더 만들었는데, 화면은
+    첫 청크만 보고 파이프라인은 전 청크를 봐서 "다시 추출" 뒤에 둘이 서로 다른 것을 봤다.
+    """
     row = conn.execute("select path, content_type, duration_sec from sources where id = ?", (source_id,)).fetchone()
     if row is None:
         raise IngestError(f"source {source_id} 없음")
     if row["duration_sec"] and end > row["duration_sec"]:
         raise IngestError(f"end={end} 가 원본 길이 {row['duration_sec']:.0f}s 를 넘는다")
 
-    idx = conn.execute(
-        "select coalesce(max(idx) + 1, 0) as next from chunks where source_id = ?", (source_id,)
-    ).fetchone()["next"]
-
-    cfg.work_dir.mkdir(parents=True, exist_ok=True)
     # LECTURE 는 화면을 보지 않는다(§4-1) — STT 입력만 있으면 되므로 오디오만 뽑는다.
     # 부수 효과가 하나 더 있다: 영상 복사는 키프레임에 스냅돼 시작이 최대 몇 초 밀리는데,
     # 오디오 재인코딩은 샘플 단위로 정확해서 청크 시작 초가 요청값과 일치한다(§12).
@@ -92,10 +184,36 @@ def add_chunk(conn: sqlite3.Connection, cfg: config.Config, source_id: int, star
     if row["content_type"] != "LECTURE":
         raise IngestError(f"{row['content_type']} 청크 추출은 아직 구현 안 됨 (2단계)")
 
+    existing = conn.execute(
+        "select id, idx from chunks where source_id = ? order by idx", (source_id,)
+    ).fetchall()
+    if existing and not replace:
+        raise IngestError(
+            f"source {source_id} 에 청크가 이미 있다 — LECTURE 는 청크 1개다. 다시 뽑으려면 replace"
+        )
+    idx = existing[0]["idx"] if existing else 0
+
+    cfg.work_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.work_dir / f"source{source_id}_chunk{idx}.wav"
+
+    # 파생물 목록은 행을 지우기 전에 뽑아야 한다. 새 wav 는 옛것과 같은 이름이라 목록에서 뺀다 —
+    # 아래에서 ffmpeg 가 덮어쓴 파일을 도로 지우게 된다.
+    stale_files = [
+        p for p in media.derived_paths(conn, cfg, source_id) if p.resolve() != out.resolve()
+    ] if existing else []
+
+    # 추출을 먼저 한다. 실패하면 옛 청크·전사가 그대로 남는다 — 몇 분짜리 STT 를 실패한 재추출
+    # 때문에 잃지 않는다.
     started = time.monotonic()
     ffmpeg.extract_audio(str(cfg.source_file(row["path"])), str(out), start, end)
     latency_ms = int((time.monotonic() - started) * 1000)
+
+    if existing:
+        # chunks → utterances·segments → clips 는 cascade. runs 는 source 에 매달려 있어 따로 지운다:
+        # runs.ranked 가 사라진 구간 idx 를 가리키게 되고, 화면은 그걸 새 구간에 겹쳐 그린다.
+        conn.execute("delete from chunks where source_id = ?", (source_id,))
+        conn.execute("delete from runs where source_id = ?", (source_id,))
+        media.remove_files(cfg, stale_files)
 
     cursor = conn.execute(
         "insert into chunks (source_id, idx, start_sec, end_sec, path) values (?, ?, ?, ?, ?)",

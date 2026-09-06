@@ -85,8 +85,12 @@ def listing(conn: sqlite3.Connection, cfg: config.Config) -> list[dict]:
     return items
 
 
-def _derived_paths(conn: sqlite3.Connection, cfg: config.Config, source_id: int) -> list[Path]:
-    """그 원본에서 파생된 파일 경로를 모은다. **DB 행을 지우기 전에** 불러야 한다."""
+def derived_paths(conn: sqlite3.Connection, cfg: config.Config, source_id: int) -> list[Path]:
+    """그 원본에서 파생된 파일 경로를 모은다. **DB 행을 지우기 전에** 불러야 한다.
+
+    원본 삭제(delete) 와 청크 교체(ingest.add_chunk replace) 가 같이 쓴다 — 청크를 갈아끼우면
+    발화·구간·클립이 전부 무효라 파일도 함께 치운다.
+    """
     paths: list[Path] = []
     for row in conn.execute("select path from chunks where source_id = ?", (source_id,)):
         if row["path"]:
@@ -128,17 +132,12 @@ def find_source_id(conn: sqlite3.Connection, cfg: config.Config, path: Path) -> 
     return None
 
 
-def delete(conn: sqlite3.Connection, cfg: config.Config, name: str) -> Removal:
-    path = resolve(cfg, name)
-    source_id = find_source_id(conn, cfg, path)
+def remove_files(cfg: config.Config, targets: list[Path]) -> tuple[list[str], int]:
+    """목록의 파일을 지우고 (지운 경로들, 확보한 바이트) 를 돌려준다.
 
-    targets = [path]
-    if source_id is not None:
-        targets += _derived_paths(conn, cfg, source_id)
-        # DB 는 cascade 로 chunks·utterances·segments·runs·clips 까지 지운다.
-        conn.execute("delete from sources where id = ?", (source_id,))
-        conn.commit()
-
+    🔴 source_dir·work_dir 밖은 건드리지 않는다. DB 에 이상한 경로가 들어 있어도 여기서 막힌다.
+    없는 파일은 조용히 건너뛴다 — 렌더 전 클립처럼 파일이 아직 없는 행이 정상적으로 있다.
+    """
     removed: list[str] = []
     freed = 0
     work_root = cfg.work_dir.resolve()
@@ -148,7 +147,6 @@ def delete(conn: sqlite3.Connection, cfg: config.Config, name: str) -> Removal:
             resolved = target.resolve()
         except OSError:
             continue
-        # 🔴 작업 디렉토리 밖은 건드리지 않는다. DB 에 이상한 경로가 들어 있어도 여기서 막힌다.
         if not (resolved.is_relative_to(work_root) or resolved.is_relative_to(source_root)):
             continue
         if not resolved.is_file():
@@ -156,4 +154,19 @@ def delete(conn: sqlite3.Connection, cfg: config.Config, name: str) -> Removal:
         freed += resolved.stat().st_size
         resolved.unlink()
         removed.append(str(resolved))
+    return removed, freed
+
+
+def delete(conn: sqlite3.Connection, cfg: config.Config, name: str) -> Removal:
+    path = resolve(cfg, name)
+    source_id = find_source_id(conn, cfg, path)
+
+    targets = [path]
+    if source_id is not None:
+        targets += derived_paths(conn, cfg, source_id)
+        # DB 는 cascade 로 chunks·utterances·segments·runs·clips 까지 지운다.
+        conn.execute("delete from sources where id = ?", (source_id,))
+        conn.commit()
+
+    removed, freed = remove_files(cfg, targets)
     return Removal(files=removed, freed_bytes=freed, source_id=source_id)
