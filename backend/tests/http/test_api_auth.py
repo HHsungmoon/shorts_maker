@@ -3,6 +3,11 @@
 이 파일이 지키는 것은 하나다: **backend(Spring) 프록시가 사라진 뒤에도 /api/** 가 닫혀
 있는가.** 예전에는 도커 네트워크가 울타리였고 코드는 열려 있어도 괜찮았다. 지금은
 코드가 유일한 울타리다.
+
+라우터가 둘이 되면서(2026-09-06) 규칙이 하나 늘었다 — 앱의 모든 `/api/**` 는 스튜디오
+라우터(인증 있음) **또는** 시청자 라우터(인증 없음) 소속이어야 하고, 시청자 라우터의 경로는
+전부 `/api/watch/` 로 시작해야 한다. 스튜디오 엔드포인트를 실수로 시청자 라우터에 넣으면
+무인증으로 새는데, 경로 접두사 검사가 그걸 잡는다.
 """
 
 import dataclasses
@@ -14,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from fastapi.routing import APIRoute
 
-from shorts_maker.http import server, auth, deps, studio
+from shorts_maker.http import server, auth, deps, studio, watch
 
 from ..support import make_config, reset_db
 
@@ -127,17 +132,40 @@ class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
                     response = self.client.request(method, _fill(route.path), json={})
                     self.assertEqual(response.status_code, 401, response.text)
 
-    def test_every_api_route_of_the_app_belongs_to_the_studio_router(self):
+    def test_every_api_route_of_the_app_belongs_to_one_of_the_two_routers(self):
         # server.py 에 `/api/...` 를 직접 등록하면 라우터 레벨 인증이 안 걸린다. 그 실수를 잡는다.
-        studio_paths = {(r.path, m) for r in studio.router.routes for m in r.methods}
+        known = {(r.path, m) for router in (studio.router, watch.router) for r in router.routes for m in r.methods}
         for route in server.app.routes:
             if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
                 continue
             for method in route.methods:
                 with self.subTest(method=method, path=route.path):
-                    self.assertIn((route.path, method), studio_paths)
+                    self.assertIn((route.path, method), known)
 
-    def test_the_only_public_routes_are_health_auth_and_the_frontend(self):
+    def test_the_public_router_only_owns_the_watch_prefix(self):
+        # 🔴 스튜디오 엔드포인트를 시청자 라우터에 잘못 넣으면 무인증으로 샌다. 경로가 그 실수를 막는다 —
+        # `/api/watch/` 밖의 경로가 저기 있으면 여기서 걸린다.
+        for route in watch.router.routes:
+            assert isinstance(route, APIRoute)
+            with self.subTest(path=route.path):
+                self.assertTrue(route.path.startswith("/api/watch/"), route.path)
+
+    def test_the_two_routers_do_not_overlap(self):
+        studio_paths = {r.path for r in studio.router.routes}
+        watch_paths = {r.path for r in watch.router.routes}
+        self.assertEqual(studio_paths & watch_paths, set())
+
+    def test_the_public_router_is_reachable_without_credentials(self):
+        # 반대 방향의 실수: 시청자 엔드포인트를 스튜디오 라우터에 넣으면 인증이 걸려 시청자가 못 쓴다.
+        # 401 만 아니면 된다 — 404(없는 id)나 422(본문 없음)는 정상이다.
+        for route in watch.router.routes:
+            assert isinstance(route, APIRoute)
+            for method in route.methods:
+                with self.subTest(method=method, path=route.path):
+                    response = self.client.request(method, _fill(route.path), json={})
+                    self.assertNotEqual(response.status_code, 401, response.text)
+
+    def test_the_only_routes_outside_api_are_health_auth_and_the_frontend(self):
         public = sorted(
             r.path for r in server.app.routes
             if isinstance(r, APIRoute) and not r.path.startswith("/api/")
