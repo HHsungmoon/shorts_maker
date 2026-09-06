@@ -5,7 +5,10 @@
   [가변] criteria_prompt          ← Run 마다 바뀌는 유일한 부분
 
 🔴 자립성은 **감점이 아니라 후보 제외**다(§1 EchoCut 교훈 4). 감점으로 두면 모델이 실제로
-안 뺀다. 제외된 구간은 segments.excluded_by='auto' 로 표시된다.
+안 뺀다. 제외 목록은 `runs.ranked` JSON 안에만 남는다 — 예전엔 `segments.excluded_by='auto'`
+에도 썼는데, 그건 **run 의 판정을 중립 자산에 영구 기록**하는 것이라 뺐다(2026-09-06, M0).
+기준을 바꿔 다시 돌린 run 이 다른 판정을 내도 segments 에는 첫 판정이 그대로 남았다.
+`excluded_by` 컬럼은 사람이 손으로 빼는 'human' 용도로 남겨둔다.
 """
 
 import json
@@ -203,12 +206,6 @@ def run_for_source(
         conn.commit()
         raise
 
-    by_idx = {s["idx"]: s for s in segments}
-    for item in excluded:
-        conn.execute(
-            "update segments set excluded_by = 'auto', excluded_reason = ? where id = ?",
-            (item.reason, by_idx[item.idx]["id"]),
-        )
     conn.execute(
         "update runs set status = 'DONE', ranked = ?, updated_at = datetime('now') where id = ?",
         (
