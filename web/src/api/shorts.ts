@@ -42,10 +42,17 @@ export function createSourceFromUrl(url: string, language: string | null): Promi
 	return request<ShortsJob>("/api/sources/from-url", { method: "POST", body: { url, language } });
 }
 
-export function createChunk(sourceId: number, startSec: number, endSec: number): Promise<ShortsJob> {
+// 🔴 replace: 기존 청크와 그 아래 전부(발화·구간·클립·run)를 서버가 지우고 다시 만든다.
+// LECTURE 는 소스당 청크 1개라 "다시 추출"은 추가가 아니라 교체다.
+export function createChunk(
+	sourceId: number,
+	startSec: number,
+	endSec: number,
+	replace = false,
+): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/chunks`, {
 		method: "POST",
-		body: { startSec, endSec },
+		body: { startSec, endSec, replace },
 	});
 }
 

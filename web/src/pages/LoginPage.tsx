@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { PRODUCT_NAME } from "../shared/brand";
 
 export function LoginPage() {
 	const { signIn } = useAuth();
@@ -25,7 +26,7 @@ export function LoginPage() {
 	return (
 		<div className="login">
 			<form className="login__card" onSubmit={submit}>
-				<h1 className="login__title">shorts_maker</h1>
+				<h1 className="login__title">{PRODUCT_NAME}</h1>
 				<p className="sm-meta" style={{ textAlign: "center", marginTop: -8 }}>
 					긴 영상에서 숏폼 클립을 뽑아냅니다
 				</p>
