@@ -367,12 +367,16 @@ def run_stt(source_id: int, body: SttIn) -> dict:
 
 
 @router.post("/sources/{source_id}/segment")
-def run_segment(source_id: int) -> dict:
-    """영상 전체를 주제 단위로 나눈다. 🔴 구간 번호는 소스 안에서 연속이다(segmentation 주석)."""
+def run_segment(source_id: int, force: bool = False) -> dict:
+    """영상 전체를 주제 단위로 나눈다. 🔴 구간 번호는 소스 안에서 연속이다(segmentation 주석).
+
+    이미 끝난 조각은 건너뛴다 — 중간에 실패했을 때 다시 눌러도 앞부분을 새로 하지 않는다.
+    `force` 면 전부 다시 만든다.
+    """
 
     def work() -> dict:
         with connect() as conn:
-            segments = segmentation.run_for_source(conn, deps.cfg, source_id)
+            segments = segmentation.run_for_source(conn, deps.cfg, source_id, force)
         return {"segments": len(segments)}
 
     return submit("segment", f"source {source_id}", work)
@@ -457,6 +461,8 @@ def list_clusters(source_id: int) -> dict:
         found = clusters.demand(conn, source_id)
         for cluster in found:
             cluster["questions"] = clusters.questions_of(conn, cluster["id"])
+            # 이 묶음에 답한 클립과 judge 소견. 크리에이터가 발행 전에 봐야 하는 것들이다.
+            cluster["clip"] = clusters.clip_of(conn, cluster["id"])
         return {"clusters": found, "unclustered": clusters.unclustered(conn, source_id)}
 
 
