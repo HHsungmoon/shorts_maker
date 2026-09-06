@@ -91,6 +91,9 @@ def get_source(source_id: int) -> dict:
             conn, "select * from stage_calls where source_id = %s order by id desc", (source_id,)
         )
         return {
+            # 🔴 긴 작업이 도는 중인지. 화면이 "다시 추출" 을 잠그는 근거다 — 전사 중에 청크를
+            # 지우면 그 전사가 외래키 위반으로 죽는다(2026-09-06에 당했다).
+            "busy": store.source_is_busy(conn, source_id),
             "source": dict(found),
             "chunks": chunks,
             "runs": runs,
@@ -142,8 +145,10 @@ class SttIn(BaseModel):
 
 
 class ChunkIn(BaseModel):
-    startSec: float
-    endSec: float
+    """분석할 **범위**. 비우면 영상 전체다 — 조각을 몇 개로 나눌지는 코드가 정한다."""
+
+    startSec: float | None = None
+    endSec: float | None = None
     # 🔴 기존 청크와 그 아래 전부(발화·구간·클립·run)를 지우고 다시 만든다. 화면의 "다시 추출".
     replace: bool = False
 
@@ -319,43 +324,58 @@ def add_source_from_url(body: UrlIn) -> dict:
 
 
 @router.post("/sources/{source_id}/chunks")
-def add_chunk(source_id: int, body: ChunkIn) -> dict:
+def add_chunks(source_id: int, body: ChunkIn) -> dict:
+    """영상을 통째로 나눠 분석용 오디오를 뽑는다. 화면의 "구간 추출" 한 번.
+
+    사용자가 정하는 건 **범위**(어디부터 어디까지 분석할까)다. 그 안을 몇 조각으로 나눌지는
+    코드가 정한다 — 청크는 취향이 아니라 **메모리 상한**이기 때문이다(ingest.plan_chunks).
+    """
     # 이미 있는데 replace 가 아니면 큐에 넣기 전에 거절한다 — 기다린 뒤에 알면 늦다.
     with connect() as conn:
         exists = conn.execute("select 1 from chunks where source_id = %s", (source_id,)).fetchone()
     if exists and not body.replace:
-        raise HTTPException(409, "청크가 이미 있습니다. 다시 뽑으려면 replace 를 켭니다")
+        raise HTTPException(409, "구간이 이미 추출돼 있습니다. 다시 뽑으려면 replace 를 켭니다")
 
     def work() -> dict:
         with connect() as conn:
-            chunk_id = ingest.add_chunk(
+            made = ingest.add_chunks(
                 conn, deps.cfg, source_id, body.startSec, body.endSec, replace=body.replace
             )
-        return {"chunkId": chunk_id}
+        return {"chunks": len(made)}
 
     return submit("chunk", f"source {source_id}", work)
 
 
-@router.post("/chunks/{chunk_id}/stt")
-def run_stt(chunk_id: int, body: SttIn) -> dict:
+@router.post("/sources/{source_id}/stt")
+def run_stt(source_id: int, body: SttIn) -> dict:
+    """영상 전체를 전사한다. 청크가 여럿이면 순서대로 — 화면에는 하나의 작업으로 보인다."""
+    language = _language(body.language)
+
     def work() -> dict:
         with connect() as conn:
-            result = stt.run_for_chunk(
-                conn, deps.cfg, chunk_id, body.model, body.force, body.initialPrompt, body.language
+            results = stt.run_for_source(
+                conn, deps.cfg, source_id, body.model, body.force, body.initialPrompt, language
             )
-        return {"utterances": len(result.rows), "transcribeMs": result.transcribe_ms, "model": result.model}
+        return {
+            "chunks": len(results),
+            "utterances": sum(len(r.rows) for r in results),
+            "transcribeMs": sum(r.transcribe_ms for r in results),
+            "model": results[0].model if results else None,
+        }
 
-    return submit("stt", f"chunk {chunk_id}", work)
+    return submit("stt", f"source {source_id}", work)
 
 
-@router.post("/chunks/{chunk_id}/segment")
-def run_segment(chunk_id: int, force: bool = False) -> dict:
+@router.post("/sources/{source_id}/segment")
+def run_segment(source_id: int) -> dict:
+    """영상 전체를 주제 단위로 나눈다. 🔴 구간 번호는 소스 안에서 연속이다(segmentation 주석)."""
+
     def work() -> dict:
         with connect() as conn:
-            specs = segmentation.run_for_chunk(conn, deps.cfg, chunk_id, force)
-        return {"segments": len(specs)}
+            segments = segmentation.run_for_source(conn, deps.cfg, source_id)
+        return {"segments": len(segments)}
 
-    return submit("segment", f"chunk {chunk_id}", work)
+    return submit("segment", f"source {source_id}", work)
 
 
 @router.post("/sources/{source_id}/rank")
