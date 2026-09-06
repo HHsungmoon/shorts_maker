@@ -6,6 +6,9 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
     "google-genai>=1.0.0",
+    # 임베딩 코사인 top-k 용(update_plan D3). 질문 수백 × 세그먼트 수백의 내적을 순수 파이썬으로
+    # 돌리면 이미 수십 ms 인데 numpy 는 행렬곱 한 줄에 1ms 밑이다. 벡터 DB 는 쓰지 않는다(tease §5-3).
+    "numpy>=2.5.2",
     "python-multipart>=0.0.32",
     "uvicorn[standard]>=0.52.4",
     "yt-dlp>=2026.8.19",
