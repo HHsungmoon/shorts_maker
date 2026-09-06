@@ -12,6 +12,8 @@ backend/   FastAPI + CLI. 파이프라인 본체
   src/shorts_maker/
     http/        FastAPI 앱·라우터·인증 (server · deps · studio · auth · debug_page). 도메인 로직 없음
     pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate)
+                 🔴 긴 영상은 **청크 여러 개**로 나뉜다 — 메모리 상한 때문이다(아래 Stack). 화면·CLI 는
+                 소스 단위로만 말한다(`add_chunks` · `stt.run_for_source` · `segmentation.run_for_source`)
     answers/     시청자 질문 → 답 클립. 제품명 TEASE 는 코드에 안 쓴다 — 여기가 그 기능이다
                  viewers(익명 쿠키·레이트리밋) · events(퍼널). M3 부터 embeddings · clusters · judge
     adapters/    프로세스 밖과 말하는 것만: ffmpeg · gemini · ytdlp
@@ -57,7 +59,21 @@ backend/   FastAPI + CLI. 파이프라인 본체
 - 영상: **ffmpeg/ffprobe 바이너리 + subprocess**. moviepy 계열 금지 — 느리고 옵션을 다 못 쓴다
 - 자막: ASS + libass. 🔴 Homebrew 기본 ffmpeg 엔 libass 가 없다 — `SHORTS_FFMPEG` 로
   libass 포함 빌드를 지정한다(`brew install ffmpeg-full`). `sm doctor` 가 확인한다
-- STT: faster-whisper (`uv sync --extra stt`). 기본 설치에서 빠져 있다
+- STT: faster-whisper (`uv sync --extra stt`). 기본 설치에서 빠져 있다.
+  🔴 **메모리가 전사 길이에 비례한다.** 실측(2026-09-06): 30분 = 1.4GB, 95분을 한 번에 돌리자 컨테이너
+  한도 2.93GB 를 넘겨 OOM(exit 137). 그래서 `SHORTS_CHUNK_MAX_SEC`(기본 25분) 로 잘라 청크마다 전사한다 —
+  최대 사용량이 영상 길이가 아니라 청크 길이에 묶인다. **한도를 올리는 건 답이 아니다**: 운영은 4GB VM 이다.
+  청크 경계는 무음 지점으로 당긴다(`ingest.plan_chunks`) — 고정 길이로 자르면 문장 한복판에서 끊긴다.
+  🔴 나누는 규칙은 둘이다: ① 상한을 넘지 않는 **최소 개수**로 ② **균등 분할**. 95분/30분 상한이면
+  30·30·30·5 가 아니라 24×4 다 — 마지막만 짧으면 그 조각만 빨리 끝나 진행률이 거짓말을 한다.
+  사용자가 정하는 건 **범위**(어디부터 어디까지 분석할까)뿐이고, 조각 수는 코드가 정한다
+- 🔴 같은 원본에 긴 작업(분할·전사·구간 분할)은 **한 번에 하나만** 돈다 — `store.source_lock`
+  (Postgres 어드바이저리 락). 전사 중에 재분할이 들어오면 청크가 사라져 그 전사가 외래키 위반으로
+  죽는다(2026-09-06에 당했다). API 는 잡 큐가 워커 하나라 안전하지만 **CLI 가 그 큐를 우회**해서 DB 에 건다.
+  화면은 `GET /api/sources/{id}` 의 `busy` 로 버튼을 미리 잠근다
+- 🔴 **구간 번호(`segments.idx`)는 소스 안에서 연속이다.** rank 프롬프트가 `[번호]` 로 지목하는데 청크마다
+  0부터 다시 시작하면 같은 번호가 둘이 된다. `segmentation.run_for_source` 가 이어 붙인다 —
+  청크 하나만 다시 나누는 경로는 두지 않는다
 - DB: **Postgres 17** (2026-09-06, SQLite 에서 전환 — 이유는 `db/store.py` 머리 주석). psycopg 3 + 풀,
   **SQL 은 직접 쓴다. ORM 없음.** 마이그레이션은 `db/migrations/NNN_*.sql` 번호 순, 파일 하나가 트랜잭션
   하나. 🔴 적용된 파일은 고치지 않고 새 번호로 덧붙인다. 스키마 제약은 `tests/db/test_schema.py` 가 지킨다.
