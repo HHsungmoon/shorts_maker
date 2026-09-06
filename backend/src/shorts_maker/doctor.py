@@ -6,7 +6,10 @@ A0 에 이걸 먼저 두는 이유: 파이프라인을 몇 시간 짜고 나서 
 
 from pathlib import Path
 
-from . import config, ffmpeg, gemini
+import psycopg
+
+from . import config
+from .adapters import ffmpeg, gemini
 from .db import store
 
 OK = "  ok"
@@ -48,20 +51,43 @@ def _check_ffmpeg(cfg: config.Config) -> bool:
     return ok
 
 
-def _check_db(cfg: config.Config) -> bool:
-    # doctor 는 확인만 한다 — 스키마를 만드는 건 `sm db init` 의 일이다.
+def _db_label(url: str) -> str:
+    """로그에 찍어도 되는 접속 대상 — host/dbname 만. 🔴 URL 전체는 비밀번호를 담고 있어 절대 출력하지 않는다."""
     try:
-        with store.connect(cfg.db_path) as conn:
+        info = psycopg.conninfo.conninfo_to_dict(url)
+        host = info.get("host") or "localhost"
+        port = info.get("port")
+        name = info.get("dbname") or ""
+        return f"{host}{':' + str(port) if port else ''}/{name}"
+    except Exception:
+        return "Postgres"
+
+
+def _check_db(cfg: config.Config) -> bool:
+    # doctor 는 확인만 한다 — 스키마를 만드는 건 `sm db init`(과 서버 기동)의 일이다.
+    where = _db_label(cfg.database_url)
+    try:
+        with store.connect(cfg.database_url) as conn:
             version = store.schema_version(conn)
-            missing = [t for t in store.TABLES if t not in set(store.existing_tables(conn))]
+            tables = store.existing_tables(conn)
+    except psycopg.OperationalError as exc:
+        # 거의 항상 db 컨테이너가 안 떠 있거나 비밀번호가 다른 경우다. exc 에는 URL 이 안 들어간다.
+        _line(FAIL, "postgres", f"{where}: 접속 실패 — docker compose up -d db ({exc})")
+        return False
     except Exception as exc:
-        _line(FAIL, "sqlite", f"{cfg.db_path}: {exc}")
+        _line(FAIL, "postgres", f"{where}: {exc}")
         return False
 
-    if missing:
-        _line(FAIL, "sqlite", f"schema v{version} · 테이블 {len(missing)}개 없음 — `sm db init` 실행")
+    missing = [t for t in store.TABLES if t not in set(tables)]
+    if version < store.SCHEMA_VERSION or missing:
+        _line(FAIL, "postgres",
+              f"{where} · schema v{version} (코드 v{store.SCHEMA_VERSION}) · 테이블 {len(missing)}개 없음 — `sm db init` 실행")
         return False
-    _line(OK, "sqlite", f"{cfg.db_path} (schema v{version}, 테이블 {len(store.TABLES)}개)")
+    if version > store.SCHEMA_VERSION:
+        # apply_schema 도 같은 이유로 거부한다(store.SchemaError). 코드가 DB 보다 오래됐다.
+        _line(FAIL, "postgres", f"{where} · schema v{version} 인데 코드는 v{store.SCHEMA_VERSION} — 코드가 오래됐다")
+        return False
+    _line(OK, "postgres", f"{where} (schema v{version}, 테이블 {len(tables)}개)")
     return True
 
 
