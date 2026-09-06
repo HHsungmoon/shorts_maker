@@ -1,10 +1,14 @@
 import argparse
+import dataclasses
+import json
 import sys
+from pathlib import Path
 
 import psycopg
 
 from .. import config, doctor
 from ..adapters import ffmpeg, gemini
+from ..answers import clusters, embeddings
 from ..pipeline import cutting, ingest, ranking, render, segmentation, stt
 from ..db import store
 
@@ -378,6 +382,23 @@ def main(argv: list[str] | None = None) -> int:
     render_p.add_argument("--no-subtitles", action="store_true", dest="no_subtitles",
                           help="자막 번인을 끈다 (기본: 켬 — 문서 §9-9)")
 
+    answers_p = sub.add_parser("answers", help="시청자 질문 묶기 (update_plan M3)")
+    answers_sub = answers_p.add_subparsers(dest="answers_command", required=True)
+    agg = answers_sub.add_parser("aggregate", help="[집계] — 미분류 질문을 묶는다 (LLM 1회 + 임베딩)")
+    agg.add_argument("source_id", type=int)
+    agg_list = answers_sub.add_parser("list", help="클러스터와 수요를 본다")
+    agg_list.add_argument("source_id", type=int)
+    index_p = answers_sub.add_parser("index", help="구간 설명을 검색용으로 임베딩한다 (M5 준비)")
+    index_p.add_argument("source_id", type=int)
+    ev = answers_sub.add_parser(
+        "eval-cluster",
+        help="eval/questions.json 을 넣고 집계를 돌려 θ 를 튜닝한다 (🔴 실제 API 호출이 나간다)",
+    )
+    ev.add_argument("source_id", type=int)
+    ev.add_argument("--theta", type=float, help="이번 실행에만 쓸 임계값 (기본: SHORTS_CLUSTER_THETA)")
+    ev.add_argument("--keep", action="store_true",
+                    help="끝나고 넣은 질문·클러스터를 지우지 않는다 (화면으로 확인할 때)")
+
     args = parser.parse_args(argv)
     cfg = config.load()
 
@@ -393,6 +414,8 @@ def main(argv: list[str] | None = None) -> int:
         cutting.CuttingError,
         render.RenderError,
         store.SchemaError,
+        clusters.ClusterError,
+        embeddings.EmbeddingError,
     ) as exc:
         # 예상된 실패는 트레이스백 없이 한 줄로 알린다 — 사용자가 고칠 수 있는 종류다.
         print(f"오류: {exc}", file=sys.stderr)
@@ -402,6 +425,142 @@ def main(argv: list[str] | None = None) -> int:
         # 🔴 exc 문자열에 URL 은 안 들어가지만 그래도 database_url 은 찍지 않는다.
         print(f"오류: {DB_DOWN_HINT} ({exc})", file=sys.stderr)
         return 1
+
+
+EVAL_PATH = Path(__file__).resolve().parents[3] / "eval" / "questions.json"
+
+
+def _cmd_answers_aggregate(cfg: config.Config, args) -> int:
+    with store.connect(cfg.database_url) as conn:
+        result = clusters.aggregate(conn, cfg, args.source_id)
+    print(f"미분류 {result['pending']}개 → 배정 {result['assigned']}개 · 새 클러스터 {result['newClusters']}개 (θ={result['theta']})")
+    # 목록은 보여주기만 한다. 🔴 그 반환값을 그대로 쓰면 "묶을 게 없어서 0개" 일 때 집계가 성공했는데도
+    # 종료 코드가 1이 된다 — 스크립트에서 실패로 읽힌다.
+    _cmd_answers_list(cfg, args)
+    return 0
+
+
+def _cmd_answers_list(cfg: config.Config, args) -> int:
+    with store.connect(cfg.database_url) as conn:
+        found = clusters.demand(conn, args.source_id)
+        loose = clusters.unclustered(conn, args.source_id)
+        if not found and not loose:
+            print(f"source {args.source_id} 에 질문이 없다 — 시청자 화면(/watch)에서 남기거나 `sm answers eval-cluster`")
+            return 1
+        for cluster in found:
+            print(f"\n[{cluster['id']}] {cluster['canonical_text']}")
+            print(f"     질문 {cluster['question_count']} · 좋아요 {cluster['like_count']} · {cluster['status']}")
+            for question in clusters.questions_of(conn, cluster["id"]):
+                print(f"       ♥{question['likes']} {question['text']}")
+        if loose:
+            print(f"\n아직 안 묶인 질문 {len(loose)}개 — `sm answers aggregate {args.source_id}`")
+            for question in loose:
+                print(f"       {question['text']}")
+    return 0
+
+
+def _cmd_answers_index(cfg: config.Config, args) -> int:
+    with store.connect(cfg.database_url) as conn:
+        added = embeddings.index_segments(conn, cfg, args.source_id)
+    print(f"구간 임베딩 {added}개 새로 만듦 (이미 있던 것은 건너뜀)")
+    return 0
+
+
+def _cmd_answers_eval(cfg: config.Config, args) -> int:
+    """θ 튜닝. eval/questions.json 을 넣고 집계한 뒤 "붙어야 할 것이 붙었나"를 표로 본다.
+
+    🔴 실제 API 호출이 나간다(LLM 1회 + 임베딩). 그리고 기본값은 **끝나고 지운다** — 평가용
+    질문이 진짜 시청자 질문과 섞이면 수요 순위가 거짓이 된다.
+    """
+    if not EVAL_PATH.is_file():
+        print(f"오류: 평가 세트가 없다: {EVAL_PATH}", file=sys.stderr)
+        return 1
+    payload = json.loads(EVAL_PATH.read_text(encoding="utf-8"))
+    rows = payload["questions"]
+    if args.theta is not None:
+        cfg = dataclasses.replace(cfg, cluster_theta=args.theta)
+
+    with store.connect(cfg.database_url) as conn:
+        if conn.execute("select 1 from sources where id = %s", (args.source_id,)).fetchone() is None:
+            print(f"source {args.source_id} 없음", file=sys.stderr)
+            return 1
+        # 🔴 이 소스에 이미 진짜 질문이 있으면 집계가 그것도 함께 묶는다. 평가가 끝나면 원래대로
+        # 되돌려야 한다 — 안 그러면 평가용 문장에 맞춰 지어진 대표 문장에 실제 질문이 남는다.
+        before = {
+            r["id"]: r["cluster_id"]
+            for r in conn.execute(
+                "select id, cluster_id from questions where source_id = %s", (args.source_id,)
+            )
+        }
+        cluster_watermark = conn.execute(
+            "select coalesce(max(id), 0) as m from question_clusters"
+        ).fetchone()["m"]
+        if before:
+            print(f"⚠ 이 소스에 실제 질문 {len(before)}개가 있다 — 평가 뒤 원래 소속으로 되돌린다"
+                  f"{' (--keep 이라 되돌리지 않는다)' if args.keep else ''}")
+        inserted = []
+        for index, row in enumerate(rows):
+            got = conn.execute(
+                "insert into questions (source_id, text, viewer_id) values (%s, %s, %s) returning id",
+                (args.source_id, row["text"], f"eval-{index:03d}"),
+            ).fetchone()["id"]
+            inserted.append((got, row["group"]))
+        conn.commit()
+
+        result = clusters.aggregate(conn, cfg, args.source_id)
+        placed = {
+            r["id"]: r["cluster_id"]
+            for r in conn.execute("select id, cluster_id from questions where id = any(%s)",
+                                  ([qid for qid, _ in inserted],))
+        }
+        names = {
+            r["id"]: r["canonical_text"]
+            for r in conn.execute("select id, canonical_text from question_clusters where source_id = %s",
+                                  (args.source_id,))
+        }
+
+        groups: dict[str, list[int | None]] = {}
+        for (qid, group) in inserted:
+            groups.setdefault(group, []).append(placed.get(qid))
+
+        print(f"\nθ={cfg.cluster_theta} · 질문 {len(rows)} → 클러스터 {result['newClusters']}개\n")
+        print(f"{'기대 그룹':<12} {'뭉침':<6} 배정된 클러스터")
+        split = merged = 0
+        cluster_to_groups: dict[int, set[str]] = {}
+        for group, cluster_ids in sorted(groups.items()):
+            unique = {c for c in cluster_ids if c is not None}
+            for cid in unique:
+                cluster_to_groups.setdefault(cid, set()).add(group)
+            mark = "OK" if len(unique) == 1 else f"쪼개짐{len(unique)}"
+            if len(unique) != 1:
+                split += 1
+            labels = " / ".join(f"[{cid}] {names.get(cid, '?')[:24]}" for cid in sorted(unique))
+            print(f"{group:<12} {mark:<6} {labels}")
+        for cid, owners in sorted(cluster_to_groups.items()):
+            if len(owners) > 1:
+                merged += 1
+                print(f"\n🔴 [{cid}] {names.get(cid, '?')} ← 서로 다른 그룹이 섞였다: {', '.join(sorted(owners))}")
+        print(f"\n쪼개진 그룹 {split} · 섞인 클러스터 {merged}  (둘 다 0 이면 이 θ 가 맞다)")
+
+        if not args.keep:
+            # 순서가 중요하다: 질문 삭제 → 클러스터 삭제 → 소속 복원.
+            # 클러스터를 지우면 남은 질문의 cluster_id 가 null 이 되므로(on delete set null)
+            # 복원을 먼저 하면 그게 도로 지워진다.
+            conn.execute("delete from questions where id = any(%s)", ([qid for qid, _ in inserted],))
+            conn.execute(
+                """delete from question_clusters where id > %s and source_id = %s and status = 'OPEN'""",
+                (cluster_watermark, args.source_id),
+            )
+            for question_id, cluster_id in before.items():
+                conn.execute(
+                    "update questions set cluster_id = %s where id = %s", (cluster_id, question_id)
+                )
+            conn.commit()
+            after = conn.execute(
+                "select count(*) as n from questions where source_id = %s", (args.source_id,)
+            ).fetchone()["n"]
+            print(f"평가용 질문과 이번에 만든 클러스터를 지웠다 (남은 질문 {after}개 = 원래 {len(before)}개). 남기려면 --keep")
+    return 0
 
 
 def _dispatch(parser: argparse.ArgumentParser, cfg: config.Config, args) -> int:
@@ -450,6 +609,15 @@ def _dispatch(parser: argparse.ArgumentParser, cfg: config.Config, args) -> int:
             return _cmd_clip_add(cfg, args)
         if args.clip_command == "list":
             return _cmd_clip_list(cfg, args)
+    if args.command == "answers":
+        if args.answers_command == "aggregate":
+            return _cmd_answers_aggregate(cfg, args)
+        if args.answers_command == "list":
+            return _cmd_answers_list(cfg, args)
+        if args.answers_command == "index":
+            return _cmd_answers_index(cfg, args)
+        if args.answers_command == "eval-cluster":
+            return _cmd_answers_eval(cfg, args)
     if args.command == "render":
         return _cmd_render(cfg, args)
     if args.command == "stt":
