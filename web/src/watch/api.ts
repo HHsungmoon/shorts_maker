@@ -33,6 +33,18 @@ export interface WatchClip {
 	total_sec: number | null;
 	published_at: string;
 	question_cluster_id: number | null;
+	/** 이 숏폼이 답하는 질문(클러스터 대표 문장). 클러스터 없이 발행된 클립은 null 이다. */
+	question: string | null;
+	/** 그 클러스터에 묶인 질문 수. 1 이면 "몇 명이 물어봤다"를 말할 이유가 없다. */
+	asked_by: number;
+}
+
+/** 답할 구간이 없다고 판정된 질문 클러스터. 다른 편을 가리킬 수 있으면 그 영상도 함께 온다. */
+export interface WatchUnanswerable {
+	id: number;
+	question: string;
+	suggested_source_id: number | null;
+	suggested_title: string | null;
 }
 
 export interface WatchDetail {
@@ -47,6 +59,18 @@ export interface WatchDetail {
 	};
 	questions: WatchQuestion[];
 	clips: WatchClip[];
+	unanswerable: WatchUnanswerable[];
+}
+
+/**
+ * 발행된 숏폼 파일.
+ *
+ * 🔴 `/api/clips/{id}/file` 이 아니다. 그쪽은 스튜디오 라우트라 세션 인증 뒤에 있고 미발행
+ * 클립도 프리뷰로 내준다 — 시청자 브라우저에서는 401 이 난다. 이 경로는 무인증이지만
+ * `published_at is not null` 인 클립만 준다(backend `http/watch.py:get_clip_file`).
+ */
+export function clipFileUrl(clipId: number): string {
+	return `/api/watch/clips/${clipId}/file`;
 }
 
 export function fetchWatchSources(): Promise<WatchSource[]> {

@@ -217,6 +217,56 @@
 	color: var(--danger);
 }
 
+/* 답변 숏폼 ------------------------------------------------------------- */
+
+/* 9:16 세로 영상이라 가로로 늘어놓고 스크롤한다. 스크롤바 자리를 미리 비워 두지 않는 이유는
+   카드가 하나뿐일 때 아래가 뜬 것처럼 보이기 때문이다. */
+.watch-clips {
+	list-style: none;
+	margin: 0;
+	padding: 0 0 4px;
+	display: flex;
+	gap: 12px;
+	overflow-x: auto;
+	/* 카드가 화면을 넘을 때 손가락이 한 장 단위로 멈추게 한다. */
+	scroll-snap-type: x proximity;
+	-webkit-overflow-scrolling: touch;
+}
+
+.watch-clip {
+	flex: 0 0 auto;
+	/* 폭 고정 — 세로 영상 한 장이 가로의 절반을 먹으면 옆 카드가 보이지 않아 스크롤을 눈치채지 못한다. */
+	width: 200px;
+	scroll-snap-align: start;
+}
+
+.watch-clip__video {
+	display: block;
+	width: 100%;
+	aspect-ratio: 9 / 16;
+	border-radius: var(--radius);
+	border: 1px solid var(--border);
+	background: #000;
+	/* 컨트롤 막대 때문에 세로가 조금 남아도 영상은 잘리지 않게. */
+	object-fit: contain;
+}
+
+.watch-clip__question {
+	margin: 8px 0 4px;
+	font-size: 14px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.watch-clip__meta {
+	margin: 0;
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
 /* 질문 목록 -------------------------------------------------------------- */
 
 .watch-questions {
@@ -282,6 +332,36 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* 답하지 못한 질문 ------------------------------------------------------ */
+
+/* 실패를 알리는 자리가 아니라 "다음은 저기"를 알려주는 자리다 — 테두리도 색도 주지 않는다. */
+.watch-missings {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.watch-missing__question {
+	margin: 0 0 2px;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--text-muted);
+	overflow-wrap: anywhere;
+}
+
+.watch-missing__note {
+	margin: 0;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.watch-missing__link {
+	color: var(--accent);
+}
+
 @media (max-width: 600px) {
 	.watch {
 		padding: 16px 14px 56px;
@@ -289,5 +369,11 @@
 
 	.watch-grid {
 		grid-template-columns: 1fr;
+	}
+
+	/* 좁은 화면에서는 카드 하나가 화면을 다 먹지 않게 — 옆 카드가 살짝 보여야 넘길 생각을 한다. */
+	.watch-clip {
+		width: 62vw;
+		max-width: 200px;
 	}
 }

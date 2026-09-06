@@ -1,10 +1,55 @@
 import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAsync } from "../shared/useAsync";
-import { fetchWatchSource, postQuestion, recordEvent, toggleLike } from "./api";
-import type { WatchQuestion } from "./api";
+import { clipFileUrl, fetchWatchSource, postQuestion, recordEvent, toggleLike } from "./api";
+import type { WatchClip, WatchQuestion, WatchUnanswerable } from "./api";
 
 const MAX_LENGTH = 200;
+
+function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
+	return (
+		<li className="watch-clip">
+			{/* preload="metadata" — 한 줄에 카드가 여럿이라 자동 재생분까지 받아오면 첫 화면이 느려진다.
+			    첫 프레임(포스터)조차 없이 검은 칸만 보이는 것보다는 메타데이터까지가 낫다. */}
+			<video
+				className="watch-clip__video"
+				src={clipFileUrl(clip.id)}
+				controls
+				preload="metadata"
+				playsInline
+				onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
+				onEnded={() => recordEvent("short_complete", sourceId, { clipId: clip.id })}
+			/>
+			{clip.question && <p className="watch-clip__question">{clip.question}</p>}
+			<p className="watch-clip__meta">
+				{/* 1명이면 "1명이 물어봤어요"가 오히려 초라하다 — 여럿일 때만 말한다. */}
+				{clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
+				{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
+			</p>
+		</li>
+	);
+}
+
+function UnanswerableRow({ item }: { item: WatchUnanswerable }) {
+	return (
+		<li className="watch-missing">
+			<p className="watch-missing__question">{item.question}</p>
+			<p className="watch-missing__note">
+				{item.suggested_source_id !== null && item.suggested_title ? (
+					<>
+						이 영상엔 없어요 ·{" "}
+						<Link to={`/watch/${item.suggested_source_id}`} className="watch-missing__link">
+							“{item.suggested_title}”
+						</Link>{" "}
+						편에서 다룹니다
+					</>
+				) : (
+					"이 영상에서는 답을 찾지 못했어요"
+				)}
+			</p>
+		</li>
+	);
+}
 
 function QuestionRow({
 	question,
@@ -115,7 +160,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		);
 	}
 
-	const { source } = detail.data;
+	const { source, clips, unanswerable } = detail.data;
 	const remaining = MAX_LENGTH - text.length;
 	const questions = [...added, ...detail.data.questions].map((question) => {
 		const mine = likeOverrides[question.id];
@@ -154,6 +199,22 @@ function SourceView({ sourceId }: { sourceId: number }) {
 				>
 					유튜브에서 보기
 				</a>
+			)}
+
+			{/* 이 제품의 값이 여기서 갚아진다 — "물어봤더니 답이 왔다". 그래서 질문 폼보다 위다.
+			    발행된 클립이 없으면 빈 껍데기를 두지 않고 통째로 감춘다. */}
+			{clips.length > 0 && (
+				<section>
+					<h2 className="watch-section">
+						질문에 대한 답 <span className="watch-count">{clips.length}</span>
+					</h2>
+					{/* 9:16 세로 영상이라 세로로 쌓으면 한 화면에 한 개도 안 들어간다. 가로 스크롤. */}
+					<ul className="watch-clips">
+						{clips.map((clip) => (
+							<ClipCard key={clip.id} clip={clip} sourceId={sourceId} />
+						))}
+					</ul>
+				</section>
 			)}
 
 			<section className="watch-ask">
@@ -200,6 +261,19 @@ function SourceView({ sourceId }: { sourceId: number }) {
 					</ul>
 				)}
 			</section>
+
+			{/* 크리에이터가 "이 영상엔 답이 없다"고 판정한 질문. 실패 통보가 아니라 안내라서
+			    조용히 둔다 — 질문 목록 아래, 흐린 글씨로. */}
+			{unanswerable.length > 0 && (
+				<section>
+					<h2 className="watch-section">여기서는 답하지 못한 질문</h2>
+					<ul className="watch-missings">
+						{unanswerable.map((item) => (
+							<UnanswerableRow key={item.id} item={item} />
+						))}
+					</ul>
+				</section>
+			)}
 		</article>
 	);
 }
