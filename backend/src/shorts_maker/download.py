@@ -84,12 +84,17 @@ def probe(url: str) -> VideoInfo:
     )
 
 
-def fetch(cfg: config.Config, url: str) -> tuple[Path, VideoInfo]:
-    info = probe(url)
+def target_path(cfg: config.Config, info: VideoInfo) -> Path:
+    """받을 파일의 자리. 다운로드 **전에** 알아야 한다 — 원본 행을 RUNNING 으로 먼저 만들 때
+    경로가 필요하다(ingest.begin_source)."""
     cfg.source_dir.mkdir(parents=True, exist_ok=True)
-    target = cfg.source_dir / f"{info.video_id}.mp4"
+    return cfg.source_dir / f"{info.video_id}.mp4"
+
+
+def fetch_video(cfg: config.Config, info: VideoInfo) -> Path:
+    target = target_path(cfg, info)
     if target.is_file():
-        return target, info
+        return target
 
     # 1080p 를 넘기지 않는다. 결과가 9:16 1080 폭이라 그 위는 렌더에 쓰이지 않고 디스크만 먹는다.
     _run(
@@ -104,4 +109,10 @@ def fetch(cfg: config.Config, url: str) -> tuple[Path, VideoInfo]:
     )
     if not target.is_file():
         raise DownloadError("받았지만 파일이 없다")
-    return target, info
+    return target
+
+
+def fetch(cfg: config.Config, url: str) -> tuple[Path, VideoInfo]:
+    """probe + fetch_video. 행을 먼저 만들 필요가 없는 호출자(CLI 등)용."""
+    info = probe(url)
+    return fetch_video(cfg, info), info

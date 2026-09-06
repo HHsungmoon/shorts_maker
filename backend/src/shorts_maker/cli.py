@@ -74,7 +74,7 @@ def _cmd_source_list(cfg: config.Config) -> int:
 
 def _cmd_chunk_add(cfg: config.Config, args) -> int:
     with store.connect(cfg.db_path) as conn:
-        chunk_id = ingest.add_chunk(conn, cfg, args.source_id, args.start, args.end)
+        chunk_id = ingest.add_chunk(conn, cfg, args.source_id, args.start, args.end, replace=args.replace)
         row = conn.execute("select * from chunks where id = ?", (chunk_id,)).fetchone()
         latency = conn.execute(
             "select latency_ms from stage_calls where stage = 'chunk' order by id desc limit 1"
@@ -309,6 +309,10 @@ def main(argv: list[str] | None = None) -> int:
     chunk_add.add_argument("source_id", type=int)
     chunk_add.add_argument("--start", type=float, required=True, help="소스 절대 초")
     chunk_add.add_argument("--end", type=float, required=True, help="소스 절대 초")
+    chunk_add.add_argument(
+        "--replace", action="store_true",
+        help="기존 청크와 그 아래(발화·구간·클립·run)를 지우고 같은 idx 로 다시 만든다",
+    )
     chunk_list = chunk_sub.add_parser("list", help="청크 목록")
     chunk_list.add_argument("source_id", type=int, nargs="?")
 
