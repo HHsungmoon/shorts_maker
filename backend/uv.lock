@@ -964,6 +964,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "google-genai" },
+    { name = "numpy" },
     { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yt-dlp" },
@@ -984,6 +985,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "faster-whisper", marker = "extra == 'stt'", specifier = ">=1.1.0" },
     { name = "google-genai", specifier = ">=1.0.0" },
+    { name = "numpy", specifier = ">=2.5.2" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
     { name = "yt-dlp", specifier = ">=2026.8.19" },
