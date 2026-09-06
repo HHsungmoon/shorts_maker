@@ -102,15 +102,35 @@ def get_source(source_id: int, viewer: str = Depends(viewers.viewer_id)) -> dict
         for question in questions:
             # bool_or 은 좋아요가 하나도 없으면 null 을 준다.
             question["liked_by_me"] = bool(question["liked_by_me"])
+        # 🔴 클립에 **그 질문**을 붙여 준다. 시청자에게 클립만 보여주면 "이게 왜 여기 있지" 가 된다 —
+        # 이 제품의 요지는 "당신이 물어본 것에 대한 답" 이고, 그 연결이 화면에 보여야 한다.
         clips = rows(
             conn,
-            """select c.id, c.total_sec, c.published_at, c.question_cluster_id
-               from clips c join runs r on r.id = c.run_id
+            """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
+                      qc.canonical_text as question,
+                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
+               from clips c
+               join runs r on r.id = c.run_id
+               left join question_clusters qc on qc.id = c.question_cluster_id
                where r.source_id = %s and c.published_at is not null
                order by c.published_at desc""",
             (source_id,),
         )
-        return {"source": source, "questions": questions, "clips": clips}
+        # 답할 구간이 없다고 판정된 질문. 다른 편을 가리킬 수 있으면 그 영상도 함께(발행된 것만).
+        unanswerable = rows(
+            conn,
+            """select qc.id, qc.canonical_text as question,
+                      s.id as suggested_source_id, s.title as suggested_title
+               from question_clusters qc
+               left join sources s on s.id = qc.suggested_source_id and s.published
+               where qc.source_id = %s and qc.status = 'UNANSWERABLE'
+               order by qc.id desc""",
+            (source_id,),
+        )
+        return {
+            "source": source, "questions": questions, "clips": clips,
+            "unanswerable": unanswerable,
+        }
 
 
 @router.post("/sources/{source_id}/questions")

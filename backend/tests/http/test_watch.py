@@ -294,3 +294,93 @@ class EventTest(WatchTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublishedClipTest(WatchTestCase):
+    """발행된 클립이 시청자에게 어떻게 보이는가."""
+
+    def make_clip(self, source_id: int, question: str | None = "마케터 인재상은?",
+                  published: bool = True, asked: int = 1) -> int:
+        with store.connect(self.url) as conn:
+            run_id = conn.execute(
+                "insert into runs (source_id) values (%s) returning id", (source_id,)
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 30, 0, 3) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            cluster_id = None
+            if question:
+                cluster_id = conn.execute(
+                    "insert into question_clusters (source_id, canonical_text, status)"
+                    " values (%s, %s, 'PUBLISHED') returning id", (source_id, question)
+                ).fetchone()["id"]
+                for n in range(asked):
+                    conn.execute(
+                        "insert into questions (source_id, text, viewer_id, cluster_id)"
+                        " values (%s, %s, %s, %s)", (source_id, f"원문 {n}", f"v{n}", cluster_id)
+                    )
+            clip_id = conn.execute(
+                """insert into clips (run_id, segment_id, start_sec, end_sec, path, rendered,
+                                      total_sec, question_cluster_id, published_at)
+                   values (%s, %s, 0, 30, 'clips/clip001.mp4', true, 28.5, %s, %s) returning id""",
+                (run_id, segment_id, cluster_id, "now()" if published else None),
+            ).fetchone()["id"]
+            if published:
+                conn.execute("update clips set published_at = now() where id = %s", (clip_id,))
+            conn.commit()
+        return clip_id
+
+    def test_a_published_clip_carries_the_question_it_answers(self):
+        # 🔴 클립만 주면 시청자가 "이게 왜 여기 있지" 가 된다. 이 제품의 요지는 "당신이 물어본 것에
+        # 대한 답" 이고, 그 연결이 응답에 있어야 화면이 그릴 수 있다.
+        source_id = self.source()
+        self.make_clip(source_id, question="마케터 인재상은?", asked=3)
+        clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertEqual(clip["question"], "마케터 인재상은?")
+        self.assertEqual(clip["asked_by"], 3)
+        self.assertEqual(clip["total_sec"], 28.5)
+
+    def test_an_unpublished_clip_is_absent_from_the_detail(self):
+        source_id = self.source()
+        self.make_clip(source_id, published=False)
+        self.assertEqual(self.client.get(f"/api/watch/sources/{source_id}").json()["clips"], [])
+
+    def test_unanswerable_questions_are_listed_with_their_suggestion(self):
+        source_id = self.source()
+        other = self.source(title="ep.2", fingerprint="sha256:b")
+        with store.connect(self.url) as conn:
+            conn.execute(
+                """insert into question_clusters (source_id, canonical_text, status, suggested_source_id)
+                   values (%s, '면접 준비는요?', 'UNANSWERABLE', %s)""",
+                (source_id, other),
+            )
+            conn.commit()
+        entry = self.client.get(f"/api/watch/sources/{source_id}").json()["unanswerable"][0]
+        self.assertEqual(entry["question"], "면접 준비는요?")
+        self.assertEqual((entry["suggested_source_id"], entry["suggested_title"]), (other, "ep.2"))
+
+    def test_an_unpublished_suggestion_is_not_advertised(self):
+        # 🔴 발행하지 않은 영상을 가리키면 시청자가 404 로 간다.
+        source_id = self.source()
+        hidden = self.source(title="비공개편", published=False, fingerprint="sha256:c")
+        with store.connect(self.url) as conn:
+            conn.execute(
+                """insert into question_clusters (source_id, canonical_text, status, suggested_source_id)
+                   values (%s, '면접 준비는요?', 'UNANSWERABLE', %s)""",
+                (source_id, hidden),
+            )
+            conn.commit()
+        entry = self.client.get(f"/api/watch/sources/{source_id}").json()["unanswerable"][0]
+        self.assertIsNone(entry["suggested_source_id"])
+        self.assertIsNone(entry["suggested_title"])
+
+    def test_a_clip_from_another_source_does_not_leak_in(self):
+        mine = self.source()
+        theirs = self.source(title="다른 영상", fingerprint="sha256:d")
+        self.make_clip(theirs)
+        self.assertEqual(self.client.get(f"/api/watch/sources/{mine}").json()["clips"], [])
