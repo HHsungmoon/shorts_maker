@@ -134,13 +134,18 @@ def load_utterances(conn: psycopg.Connection, chunk_id: int) -> list[dict]:
 
 
 def run_for_source(
-    conn: psycopg.Connection, cfg: config.Config, source_id: int, force: bool = True
+    conn: psycopg.Connection, cfg: config.Config, source_id: int, force: bool = False
 ) -> list[dict]:
     """소스의 **모든 청크**를 순서대로 나눈다. 화면에서 "주제 분할" 한 번이 이것이다.
 
     🔴 구간 번호(`segments.idx`)는 **소스 안에서 연속**이어야 한다. rank 프롬프트가 `[번호]` 로
     구간을 지목하는데, 청크마다 0부터 다시 시작하면 같은 번호가 둘이 되어 모델이 지목한 게
     어느 것인지 알 수 없다. 그래서 청크별로 돌리되 번호는 이어 붙인다.
+
+    🔴 **이미 끝난 청크는 건너뛴다.** LLM 호출이 청크당 한 번인데 무료 등급은 하루 수십 회다 —
+    중간에 할당량이 떨어져 멈췄을 때 처음부터 다시 하면 남은 할당량을 앞부분에 다 쓴다
+    (2026-09-06에 4조각 중 2조각에서 멈췄다). 앞에서부터 이어가되, **빈 청크를 만나면 그
+    뒤는 전부 다시 만든다** — 중간이 비면 번호를 이어 붙일 수 없기 때문이다.
     """
     chunks = conn.execute(
         "select id from chunks where source_id = %s order by idx", (source_id,)
@@ -148,18 +153,30 @@ def run_for_source(
     if not chunks:
         raise SegmentationError(f"source {source_id} 에 청크가 없다 — 먼저 구간을 추출한다")
     with store.source_lock(conn, source_id, "구간 분할"):
-        return _segment_chunks(conn, cfg, source_id, chunks)
+        return _segment_chunks(conn, cfg, source_id, chunks, force)
 
 
-def _segment_chunks(conn, cfg, source_id: int, chunks) -> list[dict]:
-    # 전부 다시 만든다. 청크 하나만 다시 나누면 번호가 어긋나므로 부분 재분할은 두지 않는다.
-    conn.execute(
-        "delete from segments where chunk_id in (select id from chunks where source_id = %s)",
-        (source_id,),
-    )
-    conn.commit()
+def _segment_chunks(conn, cfg, source_id: int, chunks, force: bool) -> list[dict]:
+    done = {
+        r["chunk_id"]: r["n"]
+        for r in conn.execute(
+            """select sg.chunk_id, count(*) as n, max(sg.idx) as top from segments sg
+               join chunks ch on ch.id = sg.chunk_id where ch.source_id = %s group by sg.chunk_id""",
+            (source_id,),
+        )
+    }
     offset = 0
+    resuming = not force
     for chunk in chunks:
+        if resuming and done.get(chunk["id"]):
+            # 이 청크는 이미 끝났다. 번호만 이어받고 넘어간다.
+            offset = conn.execute(
+                "select max(idx) + 1 as next from segments where chunk_id = %s", (chunk["id"],)
+            ).fetchone()["next"]
+            continue
+        # 여기서부터는 번호가 달라지므로 뒤쪽 청크의 구간은 전부 무효다.
+        resuming = False
+        conn.execute("delete from segments where chunk_id = %s", (chunk["id"],))
         specs = run_for_chunk(conn, cfg, chunk["id"], force=True, idx_offset=offset)
         offset += len(specs)
     rows = conn.execute(
