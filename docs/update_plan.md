@@ -378,52 +378,39 @@ M0 에서 내가 "LECTURE 는 소스당 청크 1개" 로 못박은 게 20분 강
 겹침(overlap) + 중복 제거는 필요해지면 그때. 그리고 CLI 가 잡 큐를 우회하는 구조는 그대로다 —
 락으로 파괴적 동시 실행만 막았고, 워커를 별도 프로세스로 빼는 건 서비스 전환의 일이다.
 
-### M5 — [답하기] 파이프라인
+### M5 — [답하기] 파이프라인 — **코드 완료 2026-09-06, 실데이터 검증 남음**
 
-#### M5a — 라우팅 + 검색 + 단일 part 관통 (M) 🔴 컷 라인 안쪽의 핵심
+**계획을 하나 바꿨다: bounded retry → best-of-3.** 원래는 "하나 만들고 judge 가 떨어뜨리면 최고점 part
+하나로 줄여 1회 재시도" 였다. 순차라 느리고, 두 번째 시도가 첫 번째보다 낫다는 보장도 없었다.
+지금은 **rank 가 후보 3개를 한 번에 내고 judge 가 병렬로 판정해 고른다.** judge 가 영상이 아니라
+**텍스트**를 보기 때문에 가능하다 — 렌더 없이 셋을 판정하고 이긴 것 하나만 렌더한다.
+비용은 LLM 4회(rank 1 + judge 3), 체감 시간은 judge 1회와 같다.
 
-- [ ] `routing.classify()` — LLM 1회(수십 토큰) `[stage=classify]` → `runs.route`. 결과 스키마 강제
-- [ ] `retrieval.candidates()` — 클러스터 임베딩 vs 세그먼트 임베딩 코사인, top-k(=5), **같은 `channel`** 의 다른
-      영상까지. 최대 유사도 < `SHORTS_RETRIEVAL_MIN_SIM`(초기 0.5) 이면 답변 불가 1차 신호 `[stage=retrieve]`
-- [ ] `ranking` 확장: 출력 `{answerable, reason, parts:[{segment_idx, start_utterance_idx, end_utterance_idx}]}`.
-      **이번 단계에서는 parts 를 1개로 제한**해서 관통한다(프롬프트에 "하나만"). 기존 `rank` 경로(전 세그먼트,
-      기준 프롬프트)는 그대로 살아 있어야 한다 — `POST /api/sources/{id}/rank` 회귀 테스트
-- [ ] `cutting`: `clip_parts` 행 생성(part 1개). `clips.total_sec`. `enforce_budget()` (I4)
-- [ ] `answer.run(cluster_id)`: transition(IN_PROGRESS) → classify → retrieve/skip → rank → cut → render →
-      transition(REVIEW). 실패 시 transition(OPEN) + 에러를 클러스터에 표시(컬럼 `last_error` 는 v9 에 없다 —
-      `runs.error` 를 보여준다)
-- [ ] `studio_ext.py`: `POST /api/sources/{id}/aggregate`(잡, M2 의 aggregate) · `GET /api/sources/{id}/clusters` ·
-      `POST /api/clusters/{id}/answer`(잡) ·
-      `POST /api/clips/{id}/publish|unpublish` · `PATCH /api/clusters/{id}`
-- [ ] 테스트: `test_answer.py` — Gemini 를 mock 으로 갈아 DAG 를 1회 돌리고 `stage_calls` 에 `classify·retrieve·rank·cut·render`
-      가 순서대로 있는지(I8), 실패 주입 시 OPEN 으로 돌아오는지
+- [x] `answers/routing.classify()` — LLM 1회 `[stage=classify]` → `runs.route`. 규칙 기반 판정도 `params` 에
+      함께 남겨 "규칙만으로 충분했나" 를 나중에 데이터로 답한다. 판정 실패는 검색 경로로 떨어뜨린다
+- [x] `answers/retrieval.candidates()` — 클러스터 대표 문장을 **검색어로 다시 임베딩**(`RETRIEVAL_QUERY`,
+      묶기용 벡터와 다르다 — 마이그레이션 002 가 갈라 둔 이유) → 세그먼트 코사인 top-k `[stage=retrieve]`.
+      🔴 같은 채널의 다른 영상은 **안내용**으로만 본다(`suggested_source_id`). 다른 영상에서 클립을 만들면
+      "이 클립은 어느 영상 것인가" 가 어디서도 답이 안 된다
+- [x] `ranking.plan_answer()` — 기존 `run_for_source`(기준 rank)는 **그대로 살아 있다**. 답하기용은 별도 함수다.
+      🔴 프롬프트 전용 **연속 번호**를 새로 매긴다 — `utterances.idx` 는 청크 안에서 0부터라 청크가 여럿이면
+      같은 번호가 둘이 된다. 검증: 존재하는 번호 · 같은 구간 안(조각은 시간상 연속) · 순서 · 겹침 없음 · 1~3개
+- [x] `cutting.enforce_budget()` — 뒤 조각부터 떨어뜨리고, 하나만 남아도 넘으면 **발화 단위로** 뒤를 자른다.
+      🔴 초 단위로 자르면 말 중간에서 끊긴다. `create_answer_clip()` 이 `clip_parts` 와 `total_sec` 을 쓴다
+- [x] `answers/judge.judge()` — 자립 + 답변 + 점수. 🔴 **DB 를 만지지 않는다** → 스레드로 병렬 판정 가능.
+      조합 클립에는 "조각 사이에 안내가 뜬다" 를 알려준다(모르면 점프를 자립성 실패로 읽는다)
+- [x] `ffmpeg.render_parts()` — **한 번의 인코딩**으로 concat. 조각별로 렌더해 데뮤서로 붙이면 코덱
+      파라미터가 하나라도 어긋날 때 `-c copy` 가 조용히 싱크 틀어진 파일을 만든다. 브릿지 카드는
+      검은 화면 0.4초 + 자막. `subtitles.build_part_cues()` 가 이어붙인 타임라인 기준으로 오프셋한다
+- [x] `answers/answer.run()` — 고정 DAG. 실패하면 `transition(OPEN)` + `runs.error`
+- [x] 스튜디오 API: `POST /api/clusters/{id}/answer` · `POST /api/clips/{id}/publish|unpublish`
+- [x] 테스트 45개: DAG 순서 · 승자 선택(합격 우선, 그중 최고점) · 전부 불합격이면 REVIEW + llm NG ·
+      실패 시 OPEN 복귀 · 예산이 judge **전에** 적용되는가 · 계획 검증 10건 · 자막 오프셋 5건
+- [x] 합성 영상으로 concat 필터 실측: 4초 + 브릿지 0.4초 + 3초 = **7.40초**, 1080x1920, 48kHz 스테레오.
+      브릿지 카드에 한글이 정상 렌더(두부 아님)
 
-**완료 조건**: `/watch` 에서 적은 질문이 `/studio` 에 보이고 [답하기] → 수십 초 → [발행] → `/watch` 에 숏폼이 붙는다.
-**루프가 처음 닫히는 지점이다.** 여기서 데모 리허설 1회를 해 본다.
-
-#### M5b — 조합 cut + 브릿지 + judge (L)
-
-- [ ] `ranking` parts 1~3 허용. 프롬프트에 30초 예산 명시. 검증은 part 마다(I5)
-- [ ] `cutting.enforce_budget()`: 합이 넘으면 점수 낮은 part 부터 자르고, 그래도 넘으면 최고점 하나
-- [ ] `render`: part 별 `-ss/-t` 입력 → `concat` 필터. 사이에 **브릿지 카드 0.4초** — `color=black` 소스 위에
-      "…41분에서 이어집니다" 를 **ASS 로** 얹는다(libass 는 확실히 있다. `drawtext` 는 데비안 빌드에 있는지
-      `sm doctor` 로 확인 후 선택). 자막 큐는 part 별 상대 초 → 이어붙인 타임라인으로 오프셋
-- [ ] `judge.judge()` — 조합된 발화 텍스트 순서대로 + 질문 → `{standalone, answers, reason}` `[stage=judge]`.
-      결과 `clip_reviews(reviewer='llm', verdict=OK|NG, note=reason)`
-- [ ] `answer.run()`: judge 실패 → 최고점 part 하나로 재cut·재judge **1회** → 또 실패면 REVIEW + 경고 플래그
-      (경고는 `clip_reviews` 의 llm NG 로 표현 — 컬럼 추가 없음)
-- [ ] 테스트: budget 강제 경계값 · 3 part concat 의 자막 오프셋 · judge 파싱 · bounded retry 가 정확히 1회
-
-**완료 조건**: "지금 이직해야 하는 상태인지" 류 질문에서 2 part 클립이 나오고, 재생하면 브릿지 카드가 읽히고,
-judge 소견이 스튜디오에 보인다. **사람이 보고 O/X 를 기록**한다(llm vs human 일치율의 첫 데이터).
-
-#### M5c — 답변 불가 + 채널 검색 안내 (S)
-
-- [ ] `answerable=false` → transition(UNANSWERABLE). `retrieval` 이 다른 영상에서 후보를 찾았으면 `suggested_source_id`
-- [ ] `/watch` 질문 패널에 "이 영상엔 없어요 · ep.N 에서 다룹니다" 표시(발행된 영상일 때만 링크)
-- [ ] 테스트: rank mock 이 `answerable=false` 를 주면 UNANSWERABLE + suggested 세팅
-
-**완료 조건**: 두 영상이 등록된 상태에서 "면접 준비는요?" 가 다른 편을 가리킨다. 🔴 영상이 하나면 이 장면은 없다.
+**남은 것**: 실제 영상으로 관통. 사용자가 전사를 돌린 뒤 [집계] → [답하기] → [발행] → `/watch` 확인.
+**M5c(답변 불가 안내)** 는 코드가 들어갔지만(`suggested_source_id`) 화면은 M6 이고, 영상이 둘이어야 보인다.
 
 ### M6 — 스튜디오 확장 + insights (L)
 
