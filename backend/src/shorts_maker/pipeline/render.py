@@ -169,7 +169,12 @@ def _finish(
             Jsonb(
                 {
                     "clip_id": clip["id"],
-                    "duration_sec": round(clip["end_sec"] - clip["start_sec"], 2),
+                    # 🔴 조합 클립에서 start/end 는 **봉투**다(첫 조각 시작 ~ 마지막 조각 끝). 12:30 과
+                    # 41:00 을 이은 30초짜리를 28분으로 기록하면 §7 의 시간 실측이 통째로 거짓이 된다.
+                    "duration_sec": round(
+                        float(clip["total_sec"]) if clip["total_sec"]
+                        else clip["end_sec"] - clip["start_sec"], 2
+                    ),
                     "subtitles": had_subtitles,
                     "cues": cue_count,
                     "parts": parts,
