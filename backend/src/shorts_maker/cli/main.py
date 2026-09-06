@@ -88,14 +88,18 @@ def _cmd_source_list(cfg: config.Config) -> int:
 
 def _cmd_chunk_add(cfg: config.Config, args) -> int:
     with store.connect(cfg.database_url) as conn:
-        chunk_id = ingest.add_chunk(conn, cfg, args.source_id, args.start, args.end, replace=args.replace)
-        row = conn.execute("select * from chunks where id = %s", (chunk_id,)).fetchone()
-        latency = conn.execute(
-            "select latency_ms from stage_calls where stage = 'chunk' order by id desc limit 1"
-        ).fetchone()["latency_ms"]
-    print(f"chunk {chunk_id} (idx {row['idx']}) 생성: {row['start_sec']:.0f}s ~ {row['end_sec']:.0f}s")
-    print(f"  path {cfg.work_file(row['path'])}")
-    print(f"  추출 {latency / 1000:.1f}s")
+        made = ingest.add_chunks(
+            conn, cfg, args.source_id, args.start, args.end, replace=args.replace
+        )
+        rows = conn.execute(
+            "select idx, start_sec, end_sec from chunks where source_id = %s order by idx",
+            (args.source_id,),
+        ).fetchall()
+    # 🔴 청크 개수는 메모리 상한이 정한다 — 사용자가 고르는 값이 아니다(ingest.plan_chunks).
+    print(f"조각 {len(made)}개 생성")
+    for row in rows:
+        print(f"  [{row['idx']}] {row['start_sec']:.0f}s ~ {row['end_sec']:.0f}s"
+              f" ({(row['end_sec'] - row['start_sec']) / 60:.0f}분)")
     return 0
 
 
@@ -119,20 +123,21 @@ def _cmd_chunk_list(cfg: config.Config, source_id: int | None) -> int:
 
 def _cmd_stt_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.database_url) as conn:
-        result = stt.run_for_chunk(
-            conn, cfg, args.chunk_id, args.model, args.force, args.prompt, args.language
+        results = stt.run_for_source(
+            conn, cfg, args.source_id, args.model, args.force, args.prompt, args.language
         )
-        audio_sec = conn.execute(
-            "select end_sec - start_sec as d from chunks where id = %s", (args.chunk_id,)
-        ).fetchone()["d"]
-    speed = audio_sec / (result.transcribe_ms / 1000) if result.transcribe_ms else 0
-    total = sum(r["end_sec"] - r["start_sec"] for r in result.rows)
-    print(f"chunk {args.chunk_id} · {result.model}")
-    print(f"  발화     {len(result.rows)}개 (버림 {result.skipped})")
-    print(f"  언어     {result.language} ({result.language_probability:.2%})")
-    print(f"  모델로딩 {result.load_ms / 1000:.1f}s")
-    print(f"  추론     {result.transcribe_ms / 1000:.1f}s  ({speed:.1f}x 실시간, 오디오 {audio_sec:.0f}s)")
-    print(f"  발화시간 {total:.0f}s / {audio_sec:.0f}s ({total / audio_sec:.0%})")
+        total = conn.execute(
+            """select count(*) as n from utterances u join chunks c on c.id = u.chunk_id
+               where c.source_id = %s""",
+            (args.source_id,),
+        ).fetchone()["n"]
+    if not results:
+        print(f"이미 전사돼 있다 (발화 {total}개) — 다시 하려면 --force")
+        return 0
+    seconds = sum(r.transcribe_ms for r in results) / 1000
+    print(f"source {args.source_id} · {results[0].model} · 조각 {len(results)}개")
+    print(f"  발화   {total}개")
+    print(f"  전사   {seconds:.0f}초")
     return 0
 
 
@@ -157,23 +162,12 @@ def _cmd_stt_show(cfg: config.Config, args) -> int:
 
 def _cmd_segment_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.database_url) as conn:
-        specs = segmentation.run_for_chunk(conn, cfg, args.chunk_id, args.force)
-        call = conn.execute(
-            "select input_tokens, output_tokens, thinking_tokens, latency_ms from stage_calls"
-            " where stage = 'segment' order by id desc limit 1"
-        ).fetchone()
-        rows = conn.execute(
-            "select * from segments where chunk_id = %s order by idx", (args.chunk_id,)
-        ).fetchall()
-    print(f"chunk {args.chunk_id} · 구간 {len(specs)}개")
-    for r in rows:
-        span = r["end_sec"] - r["start_sec"]
-        mark = " ⚠짧음" if span < 30 else ""
-        print(f"  [{r['idx']}] {r['start_sec']:.0f}~{r['end_sec']:.0f}s ({span:.0f}s, "
-              f"발화 {r['start_utterance_idx']}~{r['end_utterance_idx']}){mark}")
-        print(f"      {r['description']}")
-    print(f"\n  토큰 in={call['input_tokens']} out={call['output_tokens']} "
-          f"thinking={call['thinking_tokens']} · {call['latency_ms'] / 1000:.1f}s")
+        segments = segmentation.run_for_source(conn, cfg, args.source_id)
+    print(f"source {args.source_id} · 구간 {len(segments)}개")
+    for segment in segments:
+        length = segment["end_sec"] - segment["start_sec"]
+        print(f"  [{segment['idx']}] {segment['start_sec']:.0f}~{segment['end_sec']:.0f}s ({length:.0f}s)")
+        print(f"      {segment['description']}")
     return 0
 
 
@@ -319,21 +313,21 @@ def main(argv: list[str] | None = None) -> int:
 
     chunk = sub.add_parser("chunk", help="처리할 조각 추출")
     chunk_sub = chunk.add_subparsers(dest="chunk_command", required=True)
-    chunk_add = chunk_sub.add_parser("add", help="구간을 잘라 청크로 만든다")
+    chunk_add = chunk_sub.add_parser("add", help="영상 전체를 분석용 조각으로 나눈다")
     chunk_add.add_argument("source_id", type=int)
-    chunk_add.add_argument("--start", type=float, required=True, help="소스 절대 초")
-    chunk_add.add_argument("--end", type=float, required=True, help="소스 절대 초")
+    chunk_add.add_argument("--start", type=float, help="분석 시작 초 (기본: 0)")
+    chunk_add.add_argument("--end", type=float, help="분석 끝 초 (기본: 영상 끝)")
     chunk_add.add_argument(
         "--replace", action="store_true",
-        help="기존 청크와 그 아래(발화·구간·클립·run)를 지우고 같은 idx 로 다시 만든다",
+        help="기존 조각과 그 아래(발화·구간·클립·run)를 전부 지우고 다시 나눈다",
     )
     chunk_list = chunk_sub.add_parser("list", help="청크 목록")
     chunk_list.add_argument("source_id", type=int, nargs="?")
 
     stt_parser = sub.add_parser("stt", help="음성 인식 (문서 §4-[1])")
     stt_sub = stt_parser.add_subparsers(dest="stt_command", required=True)
-    stt_run = stt_sub.add_parser("run", help="청크를 전사한다")
-    stt_run.add_argument("chunk_id", type=int)
+    stt_run = stt_sub.add_parser("run", help="영상 전체를 전사한다 (조각을 순서대로)")
+    stt_run.add_argument("source_id", type=int)
     stt_run.add_argument("--model", help="whisper 모델 (기본: SHORTS_WHISPER_MODEL)")
     stt_run.add_argument("--force", action="store_true", help="기존 발화를 지우고 다시 한다")
     stt_run.add_argument("--prompt", help="도메인 어휘를 물려준다 (고유명사 교정용, 짧게)")
@@ -344,8 +338,8 @@ def main(argv: list[str] | None = None) -> int:
 
     seg = sub.add_parser("segment", help="주제 단위 구간 분할 (문서 §4-[3])")
     seg_sub = seg.add_subparsers(dest="segment_command", required=True)
-    seg_run = seg_sub.add_parser("run", help="트랜스크립트를 주제 단위로 나눈다 (Gemini)")
-    seg_run.add_argument("chunk_id", type=int)
+    seg_run = seg_sub.add_parser("run", help="영상 전체를 주제 단위로 나눈다 (Gemini)")
+    seg_run.add_argument("source_id", type=int)
     seg_run.add_argument("--force", action="store_true", help="기존 구간을 지우고 다시 한다")
     seg_list = seg_sub.add_parser("list", help="구간 목록")
     seg_list.add_argument("chunk_id", type=int)
@@ -414,6 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         cutting.CuttingError,
         render.RenderError,
         store.SchemaError,
+        store.SourceBusy,
         clusters.ClusterError,
         embeddings.EmbeddingError,
     ) as exc:

@@ -24,7 +24,7 @@ from shorts_maker import cli, config
 from shorts_maker.answers import clusters
 
 main_module = importlib.import_module("shorts_maker.cli.main")
-from shorts_maker.pipeline import ingest, ranking
+from shorts_maker.pipeline import ingest, ranking, segmentation, stt
 from shorts_maker.db import store
 
 from .support import make_config, reset_db
@@ -77,20 +77,32 @@ class ChunkAddTest(unittest.TestCase):
             conn.execute("insert into stage_calls (source_id, stage, latency_ms) values (1, 'chunk', 1)")
             conn.commit()
 
-    def test_replace_flag_reaches_add_chunk(self):
+    def test_replace_flag_reaches_add_chunks(self):
+        # 🔴 구간은 사용자가 고르지 않는다 — 길이를 보고 코드가 나눈다. CLI 도 --start/--end 를 받지 않는다.
         with (
             mock.patch.object(config, "load", return_value=self.cfg),
-            mock.patch.object(ingest, "add_chunk", autospec=True, return_value=1) as add,
-            redirect_stdout(io.StringIO()),
+            mock.patch.object(ingest, "add_chunks", autospec=True, return_value=[1, 2]) as add,
+            redirect_stdout(io.StringIO()) as out,
         ):
-            code = cli.main(["chunk", "add", "1", "--start", "0", "--end", "90", "--replace"])
+            code = cli.main(["chunk", "add", "1", "--replace"])
         self.assertEqual(code, 0)
-        self.assertEqual(add.call_args.args[2:], (1, 0.0, 90.0))
+        self.assertEqual(add.call_args.args[2], 1)
         self.assertEqual(add.call_args.kwargs, {"replace": True})
+        self.assertIn("조각 2개", out.getvalue())
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_stt_and_segment_take_a_source_id(self):
+        # 청크 id 를 요구하면 사용자가 내부 구조를 알아야 한다.
+        for argv, module, name in (
+            (["stt", "run", "1"], stt, "run_for_source"),
+            (["segment", "run", "1"], segmentation, "run_for_source"),
+        ):
+            with self.subTest(argv=argv):
+                with (
+                    mock.patch.object(config, "load", return_value=self.cfg),
+                    mock.patch.object(module, name, autospec=True, return_value=[]),
+                    redirect_stdout(io.StringIO()),
+                ):
+                    self.assertEqual(cli.main(argv), 0)
 
 
 class AnswersCommandTest(unittest.TestCase):
