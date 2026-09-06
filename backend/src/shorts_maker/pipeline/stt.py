@@ -15,6 +15,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .. import config
+from ..db import store
 
 
 # whisper 가 아는 코드 중 이 프로젝트가 쓰는 것만 연다. 늘리려면 여기 한 줄이면 된다.
@@ -135,6 +136,48 @@ def transcribe(
         language_probability=round(float(info.language_probability), 4),
         model=model_name,
     )
+
+
+def run_for_source(
+    conn: psycopg.Connection,
+    cfg: config.Config,
+    source_id: int,
+    model_name: str | None = None,
+    force: bool = False,
+    initial_prompt: str | None = None,
+    language: str | None = None,
+) -> list[Transcription]:
+    """소스의 **모든 청크**를 순서대로 전사한다. 화면에서 "음성 인식" 한 번이 이것이다.
+
+    🔴 청크를 하나씩 도는 이유는 메모리다 — 95분을 한 번에 돌리면 컨테이너 한도를 넘어 죽는다
+    (ingest.add_chunk 주석). 청크 사이에서 메모리가 반납되므로 영상이 길어져도 최대 사용량은
+    청크 하나 분량에 묶인다.
+
+    중간에 실패하면 거기서 멈춘다. 앞 청크의 전사는 이미 커밋돼 있어 다시 돌리면 이어서 간다
+    (force 를 주지 않으면 이미 된 청크는 건너뛴다).
+    """
+    chunks = conn.execute(
+        "select id from chunks where source_id = %s order by idx", (source_id,)
+    ).fetchall()
+    if not chunks:
+        raise SttError(f"source {source_id} 에 청크가 없다 — 먼저 구간을 추출한다")
+    # 🔴 도는 동안 재분할이 들어오면 청크가 사라져 외래키 위반으로 죽는다(store.source_lock).
+    with store.source_lock(conn, source_id, "전사"):
+        return _transcribe_chunks(conn, cfg, chunks, model_name, force, initial_prompt, language)
+
+
+def _transcribe_chunks(conn, cfg, chunks, model_name, force, initial_prompt, language) -> list["Transcription"]:
+    results = []
+    for chunk in chunks:
+        done = conn.execute(
+            "select count(*) as n from utterances where chunk_id = %s", (chunk["id"],)
+        ).fetchone()["n"]
+        if done and not force:
+            continue
+        results.append(
+            run_for_chunk(conn, cfg, chunk["id"], model_name, force, initial_prompt, language)
+        )
+    return results
 
 
 def run_for_chunk(
