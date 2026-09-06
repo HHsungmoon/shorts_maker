@@ -78,7 +78,8 @@ export interface ShortsClip {
 	end_sec: number;
 	score: number | null;
 	reason: string | null;
-	rendered: number;
+	// Postgres boolean(2026-09-06). 예전 SQLite 는 0/1 이었다.
+	rendered: boolean;
 	description: string | null;
 	reviews: ShortsClipReview[];
 }
