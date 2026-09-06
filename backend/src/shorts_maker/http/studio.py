@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .. import pricing
 from ..adapters import ytdlp, ffmpeg
-from ..answers import clusters
+from ..answers import answer, clusters
 from . import deps
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
@@ -480,6 +480,69 @@ def patch_cluster(cluster_id: int, body: ClusterPatchIn) -> dict:
         except clusters.ClusterError as exc:
             raise HTTPException(400, str(exc)) from exc
     return row or {}
+
+
+@router.post("/clusters/{cluster_id}/answer")
+def answer_cluster(cluster_id: int) -> dict:
+    """**[답하기]** — 이 질문 묶음에 답하는 숏폼을 만든다.
+
+    라우팅 → 검색 → 후보 3개 제안 → judge 병렬 판정 → 승자 컷 → 렌더. 고정 DAG 다
+    (answers/answer.py). 실패하면 클러스터가 OPEN 으로 돌아와 다시 누를 수 있다.
+    """
+
+    def work() -> dict:
+        with connect() as conn:
+            return answer.run(conn, deps.cfg, cluster_id)
+
+    return submit("answer", f"cluster {cluster_id}", work)
+
+
+@router.post("/clips/{clip_id}/publish")
+def publish_clip(clip_id: int) -> dict:
+    """🔴 발행하면 이 클립이 시청자에게 보인다(`/api/watch/clips/{id}/file`).
+
+    렌더되지 않은 클립은 발행하지 않는다 — 목록에 떴는데 재생이 안 되는 게 최악이다.
+    """
+    with connect() as conn:
+        clip = conn.execute(
+            "select rendered, question_cluster_id from clips where id = %s", (clip_id,)
+        ).fetchone()
+        if clip is None:
+            raise HTTPException(404, "clip not found")
+        if not clip["rendered"]:
+            raise HTTPException(409, "아직 렌더되지 않은 클립입니다")
+        conn.execute(
+            "update clips set published_at = now() where id = %s and published_at is null",
+            (clip_id,),
+        )
+        if clip["question_cluster_id"]:
+            try:
+                clusters.transition(conn, clip["question_cluster_id"], "PUBLISHED")
+            except clusters.ClusterError as exc:
+                # 이미 PUBLISHED 인 클러스터를 다시 발행하는 건 오류가 아니다 — 클립만 갱신한다.
+                if "REVIEW" not in str(exc):
+                    raise HTTPException(400, str(exc)) from exc
+        conn.commit()
+    return {"published": True}
+
+
+@router.post("/clips/{clip_id}/unpublish")
+def unpublish_clip(clip_id: int) -> dict:
+    """시청자 화면에서 내린다. 클립과 판정 이력은 남는다."""
+    with connect() as conn:
+        clip = conn.execute(
+            "select question_cluster_id from clips where id = %s", (clip_id,)
+        ).fetchone()
+        if clip is None:
+            raise HTTPException(404, "clip not found")
+        conn.execute("update clips set published_at = null where id = %s", (clip_id,))
+        if clip["question_cluster_id"]:
+            try:
+                clusters.transition(conn, clip["question_cluster_id"], "REVIEW")
+            except clusters.ClusterError:
+                pass  # 이미 REVIEW 이하면 그대로 둔다
+        conn.commit()
+    return {"published": False}
 
 
 @router.get("/cost")
