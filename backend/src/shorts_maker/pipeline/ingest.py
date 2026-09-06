@@ -13,6 +13,7 @@ Source = 원본 영상 전체. Chunk = 그 안에서 실제로 처리할 조각.
 """
 
 import hashlib
+import math
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ import psycopg
 
 from .. import config
 from ..adapters import ffmpeg
+from ..db import store
 from . import media
 
 
@@ -180,6 +182,103 @@ def add_source(
     return begun.source_id
 
 
+def plan_chunks(
+    start_sec: float,
+    end_sec: float,
+    max_sec: float,
+    silences: list[tuple[float, float]] | None = None,
+) -> list[tuple[float, float]]:
+    """분석할 범위 [start, end] 를 청크 경계로 나눈다.
+
+    🔴 **몇 조각으로 나눌지는 사용자가 정하지 않는다.** 메모리 상한이 정한다(config 주석).
+    규칙은 둘뿐이다:
+      ① 조각 하나가 `max_sec` 을 넘지 않는 **최소 개수**로 나눈다 — `ceil(범위 / max_sec)`
+      ② 그 개수로 **균등 분할**한다. 95분을 30분 상한으로 나누면 30/30/30/5 가 아니라 24×4 다.
+         마지막만 짧으면 그 조각의 전사가 유난히 빨리 끝나 진행률이 거짓말을 한다.
+
+    경계는 목표 지점 근처의 **무음 한가운데**로 당긴다. 고정 길이로 자르면 문장 한복판에서
+    끊겨 그 발화가 양쪽 청크에서 모두 반토막 난다. 무음이 없으면 균등 분할 그대로 쓴다.
+    """
+    span = end_sec - start_sec
+    if span <= 0:
+        raise IngestError(f"범위가 비었다: {start_sec}s ~ {end_sec}s")
+    if span <= max_sec:
+        return [(start_sec, end_sec)]
+
+    count = math.ceil(span / max_sec)
+    step = span / count
+    # 목표에서 이만큼 안에 있는 무음만 쓴다. 너무 멀리서 당기면 조각 길이가 들쭉날쭉해진다.
+    window = min(45.0, step * 0.15)
+
+    bounds = [start_sec]
+    for index in range(1, count):
+        snapped = _snap_to_silence(start_sec + step * index, window, silences or [])
+        # 앞 경계를 넘어서면 빈 청크가 된다.
+        bounds.append(round(max(snapped, bounds[-1] + 1.0), 3))
+    # 🔴 마지막 경계는 **반올림하지 않는다.** round(5736.048617, 3) = 5736.049 가 되어 원본 길이를
+    # 넘고, add_chunk 의 "end 가 길이를 넘는다" 가드에 걸린다(2026-09-06에 겪었다).
+    bounds.append(end_sec)
+    return [(a, b) for a, b in zip(bounds, bounds[1:]) if b > a]
+
+
+def _snap_to_silence(target: float, window: float, silences: list[tuple[float, float]]) -> float:
+    best, best_distance = target, window
+    for start, end in silences:
+        middle = (start + end) / 2
+        distance = abs(middle - target)
+        if distance < best_distance:
+            best, best_distance = middle, distance
+    return best
+
+
+def add_chunks(
+    conn: psycopg.Connection,
+    cfg: config.Config,
+    source_id: int,
+    start_sec: float | None = None,
+    end_sec: float | None = None,
+    replace: bool = False,
+) -> list[int]:
+    """분석할 범위를 잘라 청크를 만든다. **사용자에게는 이게 "구간 추출" 한 번이다.**
+
+    사용자가 정하는 건 **범위**(어디부터 어디까지 분석할까)이고, 그 안을 몇 조각으로 나눌지는
+    코드가 정한다(plan_chunks). 범위를 비우면 영상 전체다.
+
+    🔴 같은 원본에 긴 작업이 돌고 있으면 거부한다. 전사 중에 청크를 지우면 그 전사가 외래키
+    위반으로 죽는다 — 실제로 당했다(store.source_lock).
+    """
+    row = conn.execute(
+        "select path, duration_sec from sources where id = %s", (source_id,)
+    ).fetchone()
+    if row is None:
+        raise IngestError(f"source {source_id} 없음")
+    if not row["duration_sec"]:
+        raise IngestError("원본 길이를 모른다 — 등록이 끝나지 않았다")
+
+    duration = float(row["duration_sec"])
+    start = max(0.0, float(start_sec or 0.0))
+    end = min(duration, float(end_sec) if end_sec else duration)
+    if end - start <= 0:
+        raise IngestError(f"범위가 비었다: {start:.0f}s ~ {end:.0f}s (영상 길이 {duration:.0f}s)")
+
+    with store.source_lock(conn, source_id, "작업"):
+        silences: list[tuple[float, float]] = []
+        if end - start > cfg.chunk_max_sec:
+            # 나눌 때만 훑는다. 짧은 범위에 수십 초를 쓸 이유가 없다.
+            silences = ffmpeg.detect_silences(str(cfg.source_file(row["path"])), binary=cfg.ffmpeg_bin)
+        ranges = plan_chunks(start, end, cfg.chunk_max_sec, silences)
+
+        made: list[int] = []
+        for position, (piece_start, piece_end) in enumerate(ranges):
+            # 첫 조각에서만 기존 것을 정리한다(replace). 나머지는 그 뒤에 이어 붙는다.
+            made.append(
+                add_chunk(conn, cfg, source_id, piece_start, piece_end,
+                          replace=replace and position == 0,
+                          idx=position, allow_more=position > 0)
+            )
+        return made
+
+
 def add_chunk(
     conn: psycopg.Connection,
     cfg: config.Config,
@@ -187,13 +286,17 @@ def add_chunk(
     start: float,
     end: float,
     replace: bool = False,
+    idx: int | None = None,
+    allow_more: bool = False,
 ) -> int:
-    """구간의 오디오를 뽑아 청크로 만든다.
+    """구간의 오디오를 뽑아 청크 하나를 만든다. 보통은 `add_chunks` 를 통해 불린다.
 
-    🔴 LECTURE 는 **소스당 청크 1개**다(migrations/001_baseline.sql chunks 주석). 이미 있으면 거부하고,
-    `replace=True` 면 기존 청크와 그 아래 전부(발화·구간·클립, 그리고 그 구간을 가리키는 run)를
-    지우고 **같은 idx** 로 다시 만든다. 예전엔 idx 를 올려 옆에 하나 더 만들었는데, 화면은
-    첫 청크만 보고 파이프라인은 전 청크를 봐서 "다시 추출" 뒤에 둘이 서로 다른 것을 봤다.
+    🔴 청크는 **메모리 상한** 때문에 존재한다. 95분을 한 번에 전사하면 컨테이너 한도(3GB)를 넘어
+    OOM 으로 죽는다(2026-09-06 실측: 30분 = 1.4GB). 그래서 긴 영상은 청크가 여러 개가 되고,
+    그 사실은 사용자에게 보이지 않는다 — 화면은 소스 단위로 합쳐 보여준다.
+
+    `allow_more=False` 면 이미 청크가 있을 때 거부한다 — 실수로 하나 더 만드는 걸 막는다.
+    `replace=True` 는 기존 청크와 그 아래 전부(발화·구간·클립, 그리고 그 소스의 run)를 지운다.
     """
     row = conn.execute("select path, content_type, duration_sec from sources where id = %s", (source_id,)).fetchone()
     if row is None:
@@ -211,11 +314,10 @@ def add_chunk(
     existing = conn.execute(
         "select id, idx from chunks where source_id = %s order by idx", (source_id,)
     ).fetchall()
-    if existing and not replace:
-        raise IngestError(
-            f"source {source_id} 에 청크가 이미 있다 — LECTURE 는 청크 1개다. 다시 뽑으려면 replace"
-        )
-    idx = existing[0]["idx"] if existing else 0
+    if existing and not replace and not allow_more:
+        raise IngestError(f"source {source_id} 에 청크가 이미 있다 — 다시 뽑으려면 replace")
+    if idx is None:
+        idx = existing[0]["idx"] if existing else 0
 
     cfg.work_dir.mkdir(parents=True, exist_ok=True)
     out = cfg.work_dir / f"source{source_id}_chunk{idx}.wav"
@@ -224,7 +326,7 @@ def add_chunk(
     # 아래에서 ffmpeg 가 덮어쓴 파일을 도로 지우게 된다.
     stale_files = [
         p for p in media.derived_paths(conn, cfg, source_id) if p.resolve() != out.resolve()
-    ] if existing else []
+    ] if (existing and replace) else []
 
     # 추출을 먼저 한다. 실패하면 옛 청크·전사가 그대로 남는다 — 몇 분짜리 STT 를 실패한 재추출
     # 때문에 잃지 않는다.
@@ -234,7 +336,7 @@ def add_chunk(
     ffmpeg.extract_audio(str(cfg.source_file(row["path"])), str(out), start, end)
     latency_ms = int((time.monotonic() - started) * 1000)
 
-    if existing:
+    if existing and replace:
         # chunks → utterances·segments → clips 는 cascade. runs 는 source 에 매달려 있어 따로 지운다:
         # runs.ranked 가 사라진 구간 idx 를 가리키게 되고, 화면은 그걸 새 구간에 겹쳐 그린다.
         conn.execute("delete from chunks where source_id = %s", (source_id,))

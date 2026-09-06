@@ -156,3 +156,39 @@ def font_available(family: str) -> bool | None:
     # fc-match 는 못 찾아도 대체 폰트를 돌려준다. 요청한 이름이 결과에 없으면 폴백된 것이다.
     wanted = family.replace(" ", "").lower()
     return any(wanted == part.replace(" ", "").lower() for part in matched.split(","))
+
+
+def detect_silences(
+    src: str, noise_db: float = -32.0, min_sec: float = 0.6, binary: str = "ffmpeg"
+) -> list[tuple[float, float]]:
+    """무음 구간 [(start, end), …]. 청크 경계를 말 중간이 아닌 곳에 놓는 데 쓴다.
+
+    영상 전체를 한 번 훑으므로 95분이면 수십 초가 든다 — 등록 직후 한 번만 부른다.
+    실패하면 빈 목록을 준다: 경계가 조금 나빠질 뿐 분할 자체는 되어야 한다.
+
+    `-vn` 으로 영상을 건너뛴다. 오디오만 디코드하면 훨씬 빠르다.
+    """
+    import re
+
+    import logging
+
+    try:
+        done = subprocess.run(
+            [binary, "-nostdin", "-hide_banner", "-vn", "-i", src,
+             "-af", f"silencedetect=noise={noise_db}dB:d={min_sec}", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=1800,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logging.warning("silencedetect 를 돌리지 못했다 (%s) — 청크 경계를 고정 길이로 자른다", exc)
+        return []
+    if done.returncode != 0:
+        # 🔴 조용히 빈 목록을 주면 경계가 나빠진 채로 굴러가고 아무도 모른다. 파일 경로가 틀린
+        # 설정 실수가 여기로 떨어진 적이 있다(2026-09-06).
+        logging.warning(
+            "silencedetect 실패 (exit %s) — 청크 경계를 고정 길이로 자른다: %s",
+            done.returncode, done.stderr.strip()[-200:],
+        )
+        return []
+    starts = [float(m) for m in re.findall(r"silence_start:\s*(-?[\d.]+)", done.stderr)]
+    ends = [float(m) for m in re.findall(r"silence_end:\s*(-?[\d.]+)", done.stderr)]
+    return [(a, b) for a, b in zip(starts, ends) if b > a]

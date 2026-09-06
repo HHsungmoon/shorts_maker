@@ -217,5 +217,188 @@ class ChunkReplaceTest(_IngestDbCase):
         self.assertEqual((counts["chunks"], counts["utterances"], counts["runs"]), (1, 1, 1))
 
 
+
+class PlanChunksTest(unittest.TestCase):
+    """🔴 청크는 **메모리 상한** 때문에 나눈다. 95분을 한 번에 전사하다 컨테이너 한도(2.93GB)를
+    넘어 OOM 으로 죽은 게 이 함수가 생긴 이유다(2026-09-06 실측: 30분 = 1.4GB)."""
+
+    def test_a_short_range_stays_one_piece(self):
+        self.assertEqual(ingest.plan_chunks(0, 600, 1500), [(0.0, 600.0)])
+        self.assertEqual(ingest.plan_chunks(0, 1500, 1500), [(0.0, 1500.0)])
+
+    def test_a_range_that_does_not_start_at_zero_is_respected(self):
+        # 사용자가 정하는 건 범위다 — 영상 전체가 아니라 "20분부터 60분까지" 를 고를 수 있다.
+        ranges = ingest.plan_chunks(1200, 3600, 1500)
+        self.assertEqual(ranges[0][0], 1200)
+        self.assertEqual(ranges[-1][1], 3600)
+        self.assertEqual(len(ranges), 2)
+
+    def test_pieces_are_even_rather_than_max_sized(self):
+        # 🔴 95분을 30분 상한으로 나누면 30/30/30/5 가 아니라 24×4 다. 마지막만 짧으면 그 조각의
+        # 전사가 유난히 빨리 끝나 진행률이 거짓말을 한다.
+        ranges = ingest.plan_chunks(0, 5736, 1800)
+        self.assertEqual(len(ranges), 4)
+        lengths = [end - start for start, end in ranges]
+        self.assertLess(max(lengths), 1800)
+        self.assertLess(max(lengths) - min(lengths), 1.0)
+
+    def test_a_long_video_is_split_into_even_pieces(self):
+        ranges = ingest.plan_chunks(0, 5736, 1500)
+        self.assertEqual(len(ranges), 4)
+        for start, end in ranges:
+            self.assertLessEqual(end - start, 1500)
+        # 마지막만 짧은 것보다 고르게 나뉘어야 STT 시간이 예측 가능하다.
+        lengths = [end - start for start, end in ranges]
+        self.assertLess(max(lengths) - min(lengths), 1.0)
+
+    def test_the_pieces_cover_everything_without_gaps_or_overlap(self):
+        ranges = ingest.plan_chunks(0, 5736, 1500)
+        self.assertEqual(ranges[0][0], 0.0)
+        self.assertEqual(ranges[-1][1], 5736)
+        for (_, end), (next_start, _) in zip(ranges, ranges[1:]):
+            self.assertEqual(end, next_start)
+
+    def test_boundaries_snap_to_nearby_silence(self):
+        # 고정 길이로 자르면 문장 한복판에서 끊겨 그 발화가 양쪽에서 반토막 난다.
+        plain = ingest.plan_chunks(0, 5736, 1500)
+        snapped = ingest.plan_chunks(0, 5736, 1500, [(1420.0, 1424.0)])
+        self.assertNotEqual(plain[0][1], snapped[0][1])
+        self.assertEqual(snapped[0][1], 1422.0)
+
+    def test_silence_too_far_from_the_target_is_ignored(self):
+        # 멀리서 당기면 청크 길이가 들쭉날쭉해져 메모리 상한의 의미가 사라진다.
+        plain = ingest.plan_chunks(0, 5736, 1500)
+        far = ingest.plan_chunks(0, 5736, 1500, [(100.0, 140.0)])
+        self.assertEqual(plain, far)
+
+    def test_the_last_boundary_never_exceeds_the_duration(self):
+        # 🔴 반올림하면 round(5736.048617, 3) = 5736.049 로 길이를 넘어 add_chunk 가 거부한다.
+        for duration in (5736.048617, 1500.0004, 3000.9999):
+            with self.subTest(duration=duration):
+                ranges = ingest.plan_chunks(0, duration, 1500)
+                self.assertLessEqual(ranges[-1][1], duration)
+                self.assertEqual(ranges[-1][1], duration)
+
+    def test_an_empty_range_is_refused(self):
+        for start, end in ((0, 0), (100, 100), (500, 100)):
+            with self.subTest(start=start, end=end):
+                with self.assertRaises(ingest.IngestError):
+                    ingest.plan_chunks(start, end, 1500)
+
+
+class AddChunksTest(_IngestDbCase):
+    """소스 하나 = 사용자에게는 "구간 추출" 한 번. 조각이 몇 개인지는 내부 사정이다."""
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        def fake_extract(src: str, out: str, start: float, end: float) -> None:
+            Path(out).write_bytes(b"wav")
+
+        patcher = mock.patch.object(ffmpeg, "extract_audio", side_effect=fake_extract)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        silence = mock.patch.object(ffmpeg, "detect_silences", return_value=[])
+        silence.start()
+        self.addCleanup(silence.stop)
+
+    def source_of(self, duration: float) -> int:
+        with mock.patch.object(ffmpeg, "duration_sec", return_value=duration):
+            return ingest.add_source(self.conn, self.cfg, "a.mp4", "강연", "LECTURE", None, None)
+
+    def chunks(self, source_id: int) -> list[dict]:
+        return [
+            dict(r) for r in self.conn.execute(
+                "select idx, start_sec, end_sec, path from chunks where source_id = %s order by idx",
+                (source_id,),
+            )
+        ]
+
+    def test_a_short_video_makes_one_chunk(self):
+        source_id = self.source_of(600)
+        self.assertEqual(len(ingest.add_chunks(self.conn, self.cfg, source_id)), 1)
+
+    def test_a_long_video_makes_several_with_distinct_files(self):
+        source_id = self.source_of(5736)
+        made = ingest.add_chunks(self.conn, self.cfg, source_id)
+        self.assertEqual(len(made), 4)
+        rows = self.chunks(source_id)
+        self.assertEqual([r["idx"] for r in rows], [0, 1, 2, 3])
+        # 🔴 파일명이 겹치면 뒤 조각이 앞 조각을 덮어써 전사가 통째로 틀어진다.
+        self.assertEqual(len({r["path"] for r in rows}), 4)
+
+    def test_running_it_twice_is_refused_without_replace(self):
+        source_id = self.source_of(5736)
+        ingest.add_chunks(self.conn, self.cfg, source_id)
+        with self.assertRaises(ingest.IngestError):
+            ingest.add_chunks(self.conn, self.cfg, source_id)
+        self.assertEqual(len(self.chunks(source_id)), 4)
+
+    def test_replace_starts_over_instead_of_appending(self):
+        source_id = self.source_of(5736)
+        ingest.add_chunks(self.conn, self.cfg, source_id)
+        ingest.add_chunks(self.conn, self.cfg, source_id, replace=True)
+        self.assertEqual([r["idx"] for r in self.chunks(source_id)], [0, 1, 2, 3])
+
+    def test_a_source_without_a_duration_is_refused(self):
+        source_id = self.conn.execute(
+            "insert into sources (title, content_type, path, fingerprint, status)"
+            " values ('x', 'LECTURE', 'a.mp4', 'sha256:x', 'RUNNING') returning id"
+        ).fetchone()["id"]
+        self.conn.commit()
+        with self.assertRaises(ingest.IngestError):
+            ingest.add_chunks(self.conn, self.cfg, source_id)
+
+
+
+class SourceLockTest(_IngestDbCase):
+    """🔴 전사가 도는 중에 재분할이 들어오면 청크가 사라져 그 전사가 외래키 위반으로 죽는다.
+
+    2026-09-06에 실제로 당했다 — 4조각 전사 중에 화면에서 "다시 추출" 을 눌렀다. API 는 잡 큐가
+    워커 하나라 동시 실행이 없지만 CLI 는 그 큐를 우회하므로 DB 에 건다.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        def fake_extract(src: str, out: str, start: float, end: float) -> None:
+            Path(out).write_bytes(b"wav")
+
+        for target, kwargs in (("extract_audio", {"side_effect": fake_extract}),
+                               ("detect_silences", {"return_value": []})):
+            patcher = mock.patch.object(ffmpeg, target, **kwargs)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        with mock.patch.object(ffmpeg, "duration_sec", return_value=1200.0):
+            self.source_id = ingest.add_source(
+                self.conn, self.cfg, "a.mp4", "강연", "LECTURE", None, None
+            )
+
+    def test_rechunking_is_refused_while_another_connection_holds_the_source(self):
+        # 다른 연결이 잡고 있는 상태를 흉내낸다 — 어드바이저리 락은 **세션** 단위다.
+        with store.connect(self.url) as other:
+            with store.source_lock(other, self.source_id, "전사"):
+                with self.assertRaises(store.SourceBusy):
+                    ingest.add_chunks(self.conn, self.cfg, self.source_id)
+        # 락이 풀리면 다시 된다.
+        self.assertEqual(len(ingest.add_chunks(self.conn, self.cfg, self.source_id)), 1)
+
+    def test_the_lock_is_released_even_when_the_body_raises(self):
+        with self.assertRaises(ValueError):
+            with store.source_lock(self.conn, self.source_id):
+                raise ValueError("실패")
+        # 🔴 락은 커밋/롤백으로 풀리지 않는다. finally 에서 풀지 않으면 그 세션이 영원히 잡고 있다.
+        with store.connect(self.url) as other:
+            self.assertFalse(store.source_is_busy(other, self.source_id))
+
+    def test_busy_is_visible_to_another_connection(self):
+        # 화면이 버튼을 미리 잠그는 근거다.
+        with store.connect(self.url) as other:
+            self.assertFalse(store.source_is_busy(other, self.source_id))
+            with store.source_lock(self.conn, self.source_id):
+                self.assertTrue(store.source_is_busy(other, self.source_id))
+            self.assertFalse(store.source_is_busy(other, self.source_id))
+
+
 if __name__ == "__main__":
     unittest.main()

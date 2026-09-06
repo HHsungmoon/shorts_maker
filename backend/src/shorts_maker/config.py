@@ -20,6 +20,16 @@ DEFAULTS = {
     # 질문을 기존 대표 문장에 붙일 코사인 임계값. 넘지 못하면 단독 클러스터가 된다.
     # `sm answers eval-cluster` 로 튜닝한다 — tease §13 의 "0.85 시작".
     "SHORTS_CLUSTER_THETA": "0.85",
+    # 답 클립의 길이 예산(초). 🔴 프롬프트에 알려주고 **코드가 강제한다** — LLM 이 말한 길이는 믿지 않는다.
+    "SHORTS_TEASER_MAX_SEC": "30",
+    # 🔴 청크 하나의 최대 길이(초). **메모리 상한이지 취향이 아니다** — whisper 는 전사 길이에 비례해
+    # 메모리를 쓴다. 실측(2026-09-06): 30분 청크가 1.4GB, 95분을 한 번에 돌리자 컨테이너 한도
+    # 2.93GB 를 넘겨 OOM 으로 죽었다. 25분이면 1.2GB 안쪽이라 4GB VM(운영)에서도 여유가 있다.
+    # 사용자는 분석할 범위만 고르고, 그 안을 몇 조각으로 나눌지는 코드가 정한다.
+    "SHORTS_CHUNK_MAX_SEC": "1800",
+    # 질문으로 구간을 검색할 때 가져올 후보 수와, "이 영상엔 답이 없다" 로 볼 최소 유사도.
+    "SHORTS_RETRIEVAL_TOP_K": "5",
+    "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
     "SHORTS_API_HOST": "127.0.0.1",
     "SHORTS_API_PORT": "8100",
     "SHORTS_FFMPEG": "ffmpeg",
@@ -79,6 +89,10 @@ class Config:
     embed_model: str
     embed_dim: int
     cluster_theta: float
+    teaser_max_sec: float
+    chunk_max_sec: float
+    retrieval_top_k: int
+    retrieval_min_sim: float
     api_host: str
     api_port: int
     api_token: str
@@ -156,6 +170,10 @@ def load() -> Config:
         embed_model=get("SHORTS_EMBED_MODEL"),
         embed_dim=int(get("SHORTS_EMBED_DIM")),
         cluster_theta=float(get("SHORTS_CLUSTER_THETA")),
+        teaser_max_sec=float(get("SHORTS_TEASER_MAX_SEC")),
+        chunk_max_sec=float(get("SHORTS_CHUNK_MAX_SEC")),
+        retrieval_top_k=int(get("SHORTS_RETRIEVAL_TOP_K")),
+        retrieval_min_sim=float(get("SHORTS_RETRIEVAL_MIN_SIM")),
         api_host=api_host,
         api_port=int(get("SHORTS_API_PORT")),
         api_token=os.environ.get("SHORTS_API_TOKEN", ""),
