@@ -197,3 +197,112 @@ def run_for_segment(
         conn.commit()
         raise
     return create_clip(conn, run_id, segment, utterances, cut, score, replace)
+
+
+# ==================================================================== 답하기 경로
+#
+# 위의 run_for_segment 는 "구간 하나 안에서 30~60초를 골라줘" 를 LLM 에게 묻는다. 답하기 경로에서는
+# 그 결정을 rank 가 이미 했다(ranking.plan_answer 가 조각의 발화 범위를 준다) — 그래서 여기서는
+# **LLM 을 부르지 않는다.** 초를 되찾고, 예산을 강제하고, 행을 만든다.
+
+@dataclass
+class PartSpec:
+    """클립 조각 하나. 초는 발화에서 되찾은 값이지 LLM 이 말한 값이 아니다(§12)."""
+
+    segment_id: int
+    chunk_id: int
+    start_utterance_idx: int
+    end_utterance_idx: int
+    start_sec: float
+    end_sec: float
+    text: str
+
+    @property
+    def length(self) -> float:
+        return self.end_sec - self.start_sec
+
+
+def resolve_parts(part_ranges: list, lines: list[dict]) -> list[PartSpec]:
+    """rank 가 고른 번호 범위를 실제 초와 대사로 바꾼다."""
+    by_line = {line["line"]: line for line in lines}
+    specs: list[PartSpec] = []
+    for part in part_ranges:
+        span = [by_line[n] for n in range(part.start_line, part.end_line + 1) if n in by_line]
+        if not span:
+            raise CuttingError(f"조각이 비었다: {part.start_line}~{part.end_line}")
+        specs.append(
+            PartSpec(
+                segment_id=span[0]["segment_id"],
+                chunk_id=span[0]["chunk_id"],
+                start_utterance_idx=span[0]["utterance_idx"],
+                end_utterance_idx=span[-1]["utterance_idx"],
+                start_sec=span[0]["start_sec"],
+                end_sec=span[-1]["end_sec"],
+                text=" ".join(line["text"].strip() for line in span),
+            )
+        )
+    return specs
+
+
+def enforce_budget(parts: list[PartSpec], max_sec: float, lines: list[dict]) -> list[PartSpec]:
+    """길이 합을 예산 안으로 **코드가** 맞춘다. 🔴 LLM 이 말한 길이는 믿지 않는다(tease §5-6).
+
+    순서가 있다: ① 뒤 조각부터 떨어뜨린다(앞이 대개 답의 핵심이다) ② 하나만 남았는데도 넘으면
+    **발화 단위로** 뒤를 잘라낸다. 초 단위로 자르지 않는 이유는 말 중간에서 끊기기 때문이다 —
+    발화 경계가 곧 컷 지점이라는 원칙이 여기서도 유지된다.
+    """
+    if not parts:
+        raise CuttingError("조각이 없다")
+    kept = list(parts)
+    while len(kept) > 1 and sum(p.length for p in kept) > max_sec:
+        kept.pop()
+    if sum(p.length for p in kept) <= max_sec:
+        return kept
+
+    # 하나 남았는데 여전히 길다 — 뒤에서부터 발화를 덜어낸다.
+    only = kept[0]
+    span = [
+        line for line in lines
+        if line["chunk_id"] == only.chunk_id
+        and only.start_utterance_idx <= line["utterance_idx"] <= only.end_utterance_idx
+    ]
+    while len(span) > 1 and span[-1]["end_sec"] - span[0]["start_sec"] > max_sec:
+        span.pop()
+    return [
+        PartSpec(
+            segment_id=only.segment_id,
+            chunk_id=only.chunk_id,
+            start_utterance_idx=span[0]["utterance_idx"],
+            end_utterance_idx=span[-1]["utterance_idx"],
+            start_sec=span[0]["start_sec"],
+            end_sec=span[-1]["end_sec"],
+            text=" ".join(line["text"].strip() for line in span),
+        )
+    ]
+
+
+def create_answer_clip(
+    conn: psycopg.Connection, run_id: int, parts: list[PartSpec], score: float | None, reason: str
+) -> int:
+    """조각들로 클립 하나를 만든다. 단일 컷도 조각 1개 — 코드 경로가 하나다(tease §5-6).
+
+    `clips.start_sec/end_sec` 은 조합 클립에서 **봉투**다(첫 조각 시작 ~ 마지막 조각 끝).
+    실제 길이는 `total_sec` 이고, 재생되는 건 조각들의 합이다.
+    """
+    if not parts:
+        raise CuttingError("조각이 없다")
+    total = sum(p.length for p in parts)
+    clip_id = conn.execute(
+        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec)
+           values (%s, %s, %s, %s, %s, %s, %s) returning id""",
+        (run_id, parts[0].segment_id, parts[0].start_sec, parts[-1].end_sec, score, reason, total),
+    ).fetchone()["id"]
+    for ordinal, part in enumerate(parts):
+        conn.execute(
+            """insert into clip_parts (clip_id, ordinal, segment_id, start_sec, end_sec,
+                                       start_utterance_idx, end_utterance_idx)
+               values (%s, %s, %s, %s, %s, %s, %s)""",
+            (clip_id, ordinal, part.segment_id, part.start_sec, part.end_sec,
+             part.start_utterance_idx, part.end_utterance_idx),
+        )
+    return clip_id
