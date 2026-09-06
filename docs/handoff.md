@@ -1,6 +1,6 @@
 # 인수인계 — shorts_maker
 
-**2026-09-04 기준.** 이 레포를 처음 여는 사람(사람이든 새 Claude 세션이든)이 **10분 안에
+**2026-09-06 기준.** 이 레포를 처음 여는 사람(사람이든 새 Claude 세션이든)이 **10분 안에
 "지금 뭐가 있고, 다음에 뭘 하나"를 알게** 하는 문서다. 세부는 다른 문서로 보낸다.
 
 | 알고 싶은 것 | 문서 |
@@ -25,6 +25,12 @@
 레포 이동으로 전 행이 깨진 것을 발견 → **상대경로 저장**으로 바꾸고 DB 는 새로 만들었다(옛 DB 삭제).
 v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 
+**2026-09-06 (3차): M0 완료.** `update_plan.md` 의 첫 마일스톤. tease §13 의 미결 9개를 권고대로 확정했고,
+`/api/**` 를 `studio_api.py` 라우터로 빼 **라우터 레벨 인증**으로 바꿨다(라우트 테이블 순회 테스트가 지킨다).
+"다시 추출" 은 청크 **교체**가 됐고, rank 가 `segments.excluded_by` 에 쓰던 것을 없앴으며, 다운로드·등록 잡이
+`sources.status` 를 RUNNING→DONE/FAILED 로 남긴다. 화면 제목은 TEASE(`web/src/shared/brand.ts`). numpy 추가.
+테스트 151개 · 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render 전부 확인. §4-8. **다음은 M1(스키마 v9).**
+
 ---
 
 ## 2. 커밋 · 푸시 상태
@@ -43,21 +49,25 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 ~/dev/shorts_maker/            ← SWYP-APP-S6/ 에서 빠져나옴. 레포 하나, 원격 github.com/HHsungmoon/shorts_maker
 ├── backend/                   FastAPI + CLI. 파이프라인 본체
 │   ├── src/shorts_maker/
-│   │   ├── api.py             HTTP. 인증 의존성 · /auth/** · /health · SPA 서빙(catch-all)
-│   │   ├── auth.py            🆕 비밀번호 1개 + HMAC 세션 쿠키 + 로그인 잠금. stdlib 만
+│   │   ├── api.py             앱 조립 + **공개** 라우트만: /auth/** · /health · /debug · SPA catch-all
+│   │   ├── studio_api.py      🆕(9/6) 인증 필요한 /api/** 전부. APIRouter(prefix="/api", dependencies=[require_auth])
+│   │   ├── deps.py            🆕(9/6) cfg · queue · require_auth · connect — 두 모듈이 공유. 🔴 deps.cfg 로 속성 접근
+│   │   ├── auth.py            비밀번호 1개 + HMAC 세션 쿠키 + 로그인 잠금. stdlib 만
 │   │   ├── config.py          .env 로딩. BACKEND_ROOT = backend/ (레포 루트 아님)
 │   │   ├── cli.py             `sm` 명령. serve · db · source · chunk · stt · segment · rank · render
 │   │   ├── db/schema.sql      v8. admin id 컬럼 3개 제거됨
 │   │   ├── db/store.py        MIGRATIONS (덧붙이기 + 평범한 컬럼 삭제까지)
 │   │   ├── web.py             node 빌드 없이 보는 개발용 단일 페이지 (/debug)
-│   │   └── (ingest · stt · segmentation · ranking · cutting · render · jobs …)  파이프라인, 변경 없음
-│   ├── tests/                 128개. 🆕 test_auth.py · test_api_auth.py(인증 경계) · test_schema.py 확장
+│   │   ├── ingest.py          (9/6) begin_source → finish_source 로 나뉨(RUNNING→DONE/FAILED). add_chunk(replace=)
+│   │   ├── download.py        (9/6) probe / target_path / fetch_video 로 갈라짐 — 받기 전에 경로를 안다
+│   │   └── (stt · segmentation · ranking · cutting · render · jobs …)  파이프라인
+│   ├── tests/                 151개. test_api_auth.py 에 라우트 테이블 순회 · test_ingest.py 에 상태 전이·교체
 │   ├── work/                  ⛔ git 제외. 호스트 실행(uv) 전용 작업 폴더. 컨테이너는 볼륨 /data/work 를 쓴다
 │   ├── sources/               ⛔ git 제외. **원본 영상은 여기**(니체 강연 2편, 1.5GB). 컨테이너의 /sources
 │   ├── .env                   ⛔ git 제외. GEMINI_API_KEY 있음, SHORTS_ADMIN_PASSWORD **없음**
 │   ├── .env.example           로컬용 템플릿 (인증 항목 추가됨)
 │   ├── deploy.env.example     서버용 템플릿
-│   └── pyproject.toml         + [dependency-groups] dev = httpx (테스트용)
+│   └── pyproject.toml         + numpy(9/6, 임베딩 코사인용) · [dependency-groups] dev = httpx (테스트용)
 ├── web/                       🆕 React + Vite + TS. admin-web 의 숏폼 탭을 옮겨온 것
 │   └── src/
 │       ├── api/client.ts      fetch 래퍼. ApiResponse 봉투 없음, 401 → onUnauthorized
@@ -160,6 +170,23 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
 - **`sm rank run` TypeError**: v8 에서 `requested_by_admin_id` 를 지울 때 CLI 만 인자 5개를 넘기고
   있었다. `tests/test_cli.py` 가 `autospec=True` 로 시그니처를 강제한다.
 
+### 4-8. (3차) M0 — 정리와 결정, 그리고 왜
+
+- **라우터 분리.** 공개 면(`/api/watch/**`, M3)을 붙이기 전에 인증 경계를 구조로 만들었다. 엔드포인트마다
+  `Depends(require_auth)` 를 붙이는 방식은 하나 빠뜨려도 아무것도 안 알려준다. 지금은 `studio_api.router` 에
+  등록하면 자동으로 걸리고, `api.py` 에 `/api/...` 를 직접 달면 테스트가 잡는다. `cfg`·`queue` 는 `deps.py`
+  로 — 라우터 모듈과 앱 모듈이 서로 import 하면 순환이라서.
+- **청크 교체.** 예전 "다시 추출" 은 idx 를 올려 옆에 하나 더 만들었다. 화면은 `chunks[0]` 만 보고 파이프라인은
+  전 청크를 보니 둘이 다른 것을 봤다. LECTURE 는 청크 1개가 전제라 코드가 그걸 지키게 했다. run 은 chunks 에
+  매달려 있지 않아 따로 지운다 — 안 지우면 `runs.ranked` 가 사라진 구간 idx 를 가리킨다.
+- **`excluded_by='auto'` 제거.** run(주관)의 판정을 segments(중립)에 영구 기록하던 것. 기준을 바꿔 다시 돌려도
+  첫 판정이 남았다. 제외 목록은 `runs.ranked` JSON 에 이미 있다.
+- **`sources.status`.** 다운로드는 수 분인데 행이 끝나야 생겨서 그동안 화면엔 아무것도 없었고, 서버가 죽으면
+  정리할 대상도 없었다. 이제 `begin_source` 가 `pending:` 지문으로 행을 먼저 만들고 `finish_source` 가 채운다.
+  실패는 FAILED+error 로 남고 같은 경로 재시도는 같은 id 를 다시 쓴다.
+- 이번엔 **DB 를 유지**했다. 스키마가 안 바뀌어서. 컨테이너 DB 에 검증용 원본 1개(`2fTnEB_r_6Q.mp4`, 제목
+  "M0 검증", 5분 청크·STT·구간 5·run 1·클립 1)가 들어 있다 — M2 임베딩 개발에 쓸 수 있고, 지워도 된다.
+
 ---
 
 ## 5. 지금 동작하는 것 — 검증 방법
@@ -171,7 +198,7 @@ docker compose exec shorts sm doctor                  # ffmpeg · libass · Nanu
 docker compose exec shorts sm db status
 
 cd backend
-uv run python -m unittest discover -s tests -t .      # Ran 136 tests … OK (호스트, uv)
+uv run python -m unittest discover -s tests -t .      # Ran 151 tests … OK (호스트, uv)
 
 cd ../web
 npm run build && npm run lint                         # tsc strict 통과. 경고 2개는 admin-web 에서 온 패턴
@@ -209,7 +236,7 @@ npm run build && npm run lint                         # tsc strict 통과. 경�
 ## 7. 다음에 만들 것
 
 **`update_plan.md` 가 실행 순서다** — tease.md §12 를 마일스톤 M0~M9 로 자르고 완료 조건과 테스트를 붙였다.
-**M0(정리·결정)부터.** 아래는 tease.md §12 의 원래 요약이고, update_plan.md 와 다르면 그쪽이 맞다:
+**M0 완료(9/6). 다음은 M1(스키마 v9).** 아래는 tease.md §12 의 원래 요약이고, update_plan.md 와 다르면 그쪽이 맞다:
 
 1. **스키마 v9** (§6) — 6 테이블 신규 · 컬럼 10개 · `stage_calls` 재생성(🔴 규칙 예외, §6-4)
 2. **임베딩 레이어** (§5-3) — 질문 묶기 + 세그먼트 검색. θ 튜닝
@@ -232,7 +259,7 @@ backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_
                                             새 DB 와 마이그레이션한 DB 의 table_info 가 같은지
 ```
 
-시작 전에 **§13 의 미결 9개를 결정**한다. 권고가 달려 있으니 "권고대로" 한 마디면 된다.
+§13 은 결정됐다(9/6, 권고대로). M1 에서 `store.MIGRATIONS` 값 타입을 `list[str | Callable]` 로 넓히는 것이 첫 손질이다.
 
 ---
 
