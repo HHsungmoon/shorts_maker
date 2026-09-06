@@ -490,7 +490,7 @@ Gemini 는 영상을 1 FPS 로 샘플링: 프레임 258토큰/장(기본) 또는
 | 패키지 | uv + pyproject | `uv sync` / `uv run sm` |
 | CLI | **argparse** (stdlib) | typer/click 은 런타임 동작이 같아 도입하지 않는다 |
 | 웹 | **FastAPI** (Phase C) | 1단계 A/B 는 CLI 로 개발한다 |
-| DB | SQLite → PostgreSQL (C5) | 운영은 backend 의 기존 postgres 인스턴스에 **별도 DB** |
+| DB | **PostgreSQL 17** (2026-09-06 전환, compose 의 `db` 서비스) | psycopg 3 · SQL 직접 · ORM 없음 |
 | LLM | Gemini (`google-genai` 2.20.0) | Files API 는 FILM 단계에서 필요 |
 | 영상 | **ffmpeg/ffprobe 9.0.1 바이너리 + subprocess** | 파이썬 영상 라이브러리 안 씀 |
 | 자막 | ASS + **libass** (`ass` 필터) | 🔴 Homebrew 기본 ffmpeg 엔 없다 — `SHORTS_FFMPEG` 로 지정 |
@@ -568,7 +568,7 @@ DB 를 날려도 안 아픈 이점도 같이 온다.
 - C2 ✅ 잡 큐 — 워커 1개로 동시 1건 강제, 상태 폴링, 재기동 시 RUNNING 잡 정리
 - C3 ✅ 소스 경로 allowlist 가드(`SHORTS_SOURCE_DIR` 하위만) — 테스트 6개로 고정
 - C4 ✅ 클립 스트리밍 + 리뷰 O/X
-- C5 SQLite → Postgres 전환 (남음)
+- C5 SQLite → Postgres 전환 ✅ 2026-09-06 (update_plan M1)
 - C6 ✅ 레포 분리 + `web/` 자체 프론트 + 비밀번호 로그인(§13)
 
 ### Phase D — 배포
@@ -676,7 +676,7 @@ v1 에서 할 수 있는 최소한:
 
 Naver Cloud 단일 VM(4GB / 2vCPU). `docker compose` 한 스택이고 nginx 가 앞에 선다.
 **로컬 개발도 같은 `compose.yaml` 로 띄운다**(2026-09-04). 맥 ffmpeg 에 libass 가 없고 폰트가 다르고
-경로가 다른 문제가 한 번에 사라진다. DB 는 SQLite 파일이고 `shorts-data` 볼륨에 있다 — 별도 DB
+경로가 다른 문제가 한 번에 사라진다. DB 는 compose 의 `db` 서비스(Postgres)다(2026-09-06 전환). 아래 문장은 그 전 기록 — 별도 DB
 컨테이너는 없고 Postgres 는 여전히 C5 다. DB 안의 파일 경로는 `source_dir`/`work_dir` 기준 상대경로라
 볼륨을 서버로 옮겨도 그대로 읽힌다.
 

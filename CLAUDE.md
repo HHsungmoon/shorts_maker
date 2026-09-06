@@ -9,7 +9,17 @@
 ```
 web/       React + Vite. 빌드 결과를 backend 가 같은 오리진에서 서빙한다
 backend/   FastAPI + CLI. 파이프라인 본체
+  src/shorts_maker/
+    http/        FastAPI 앱·라우터·인증 (server · deps · studio · auth · debug_page). 도메인 로직 없음
+    pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate)
+    answers/     시청자 질문 → 답 클립 (M2 부터). 제품명 TEASE 는 코드에 안 쓴다 — 여기가 그 기능이다
+    adapters/    프로세스 밖과 말하는 것만: ffmpeg · gemini · ytdlp
+    db/          store(풀·마이그레이션 적용) · migrations/NNN_*.sql
+    cli/         `sm`
+    config · jobs · doctor · pricing   (횡단 관심사)
+  tests/         src 구조를 그대로 미러링(http/ pipeline/ adapters/ db/). support.py 가 테스트 DB 를 준다
 ```
+층 사이 의존 방향은 한쪽이다: http → pipeline/answers → adapters·db. 거꾸로 import 하면 틀린 것이다.
 
 **세션을 시작하면 `docs/handoff.md` 부터 읽는다** — 지금 상태 · 다음 할 일 · 함정.
 
@@ -31,13 +41,14 @@ backend/   FastAPI + CLI. 파이프라인 본체
 
 - Python 3.12 (`.python-version` 고정) · uv · pyproject
 - 실행: **로컬도 `docker compose up`** 이 기본이다(2026-09-04 부터). 운영과 같은 이미지·경로·폰트.
-  DB 는 `shorts-data` 볼륨의 SQLite, 원본은 `backend/sources/` 바인드 마운트. CLI 는
-  `docker compose exec shorts sm …`. 호스트 `uv run sm serve` 는 테스트·디버깅용으로 남아 있다
+  서비스 둘 — `db`(Postgres 17, `shorts-pg` 볼륨, 127.0.0.1:5432) 와 `shorts`(앱, 산출물은 `shorts-data`
+  볼륨). 원본은 `backend/sources/` 바인드 마운트. CLI 는 `docker compose exec shorts sm …`.
+  호스트 `uv run sm …`·테스트는 그 `db` 컨테이너에 붙는다(`SHORTS_DB_HOST=127.0.0.1`)
 - 웹: **FastAPI** (`sm serve`). 빌드된 프론트(`web/dist`)를 같은 오리진에서 서빙한다 —
   그래서 CORS 설정이 없고 세션 쿠키가 그냥 실린다
 - 프론트: **React + Vite + TypeScript**, 라우터 없음. 화면이 로그인과 파이프라인 둘뿐이고
   전환은 URL 이 아니라 인증 상태가 결정한다
-- 인증: **비밀번호 1개 + 서명된 httpOnly 세션 쿠키**(`auth.py`, stdlib hmac). 회원가입은 없다 —
+- 인증: **비밀번호 1개 + 서명된 httpOnly 세션 쿠키**(`http/auth.py`, stdlib hmac). 회원가입은 없다 —
   운영자 1명이 쓰는 도구다. 사용자 개념을 넣으면 전 테이블에 소유자 스코프와 잡 큐 분리가
   따라온다. 🔴 루프백이 아닌 주소에 바인딩하려면 `SHORTS_ADMIN_PASSWORD` 가 있어야 기동된다
 - CLI 는 **argparse**(stdlib). typer/click 은 쓰지 않는다 — 런타임 동작이 같다
@@ -46,9 +57,14 @@ backend/   FastAPI + CLI. 파이프라인 본체
 - 자막: ASS + libass. 🔴 Homebrew 기본 ffmpeg 엔 libass 가 없다 — `SHORTS_FFMPEG` 로
   libass 포함 빌드를 지정한다(`brew install ffmpeg-full`). `sm doctor` 가 확인한다
 - STT: faster-whisper (`uv sync --extra stt`). 기본 설치에서 빠져 있다
-- DB: SQLite → Postgres (C5). 마이그레이션 도구는 안 쓰지만 **통째로 날리는 건 이제 최후수단**이다 —
-  STT 한 번에 수 분이 든다. 덧붙이기와 평범한 컬럼 삭제는 `store.MIGRATIONS` 로 제자리 처리한다.
-  스키마 제약은 `tests/test_schema.py` 가 지킨다
+- DB: **Postgres 17** (2026-09-06, SQLite 에서 전환 — 이유는 `db/store.py` 머리 주석). psycopg 3 + 풀,
+  **SQL 은 직접 쓴다. ORM 없음.** 마이그레이션은 `db/migrations/NNN_*.sql` 번호 순, 파일 하나가 트랜잭션
+  하나. 🔴 적용된 파일은 고치지 않고 새 번호로 덧붙인다. 스키마 제약은 `tests/db/test_schema.py` 가 지킨다.
+  행은 dict(`row["col"]`), 자리표시자는 `%s`, JSON 컬럼은 jsonb(`Jsonb(obj)` 로 쓰고 dict 로 읽는다),
+  참/거짓은 boolean. `store.connect(url)` 은 컨텍스트 매니저 — 정상 종료 commit, 예외 rollback.
+  🔴 몇 분 도는 계산(STT·렌더·지문) 앞에서는 `conn.commit()` 으로 트랜잭션을 끊는다
+- 테스트는 **진짜 Postgres** 에 돈다(`shorts_test` DB, 테스트마다 truncate). `db` 컨테이너가 없으면 DB
+  테스트는 skip 되고 요약에 `skipped=N` 으로 보인다 — 0 이 아니면 테스트가 안 돈 것이다
 - 🔴 DB 에 들어가는 파일 경로는 **상대경로**다 — 원본은 `source_dir`, 파생물은 `work_dir` 기준
   (`Config.store_source/store_work`, 읽기는 `source_file/work_file`). 절대경로를 넣었다가 레포를
   옮기자 전 행이 깨졌다. `Path(row["path"])` 를 직접 쓰면 틀린 것이다
@@ -70,20 +86,22 @@ backend/   FastAPI + CLI. 파이프라인 본체
 ## 인증 경계 (여기서 틀리면 조용히 뚫린다)
 
 - `/health` 만 무인증이다. **설정값을 담지 않는다** — 도커 네트워크 뒤가 아니라 인터넷에 열려 있다
-- `/api/**` 는 전부 `studio_api.router` 에 등록한다. 인증은 그 라우터가 **라우터 레벨**로 건다
-  (`deps.require_auth`) — 엔드포인트마다 `Depends` 를 붙이지 않고, 그래서 빠뜨릴 수 없다.
-  `api.py` 에 `/api/...` 를 직접 등록하면 인증이 빠진다. `tests/test_api_auth.py` 가 라우트 테이블을
-  순회해 이 경계를 지킨다(모든 라우트×메서드 401 · 앱의 `/api/**` 는 전부 스튜디오 라우터 소속)
-- 시청자용 공개 API(`/api/watch/**`, M3)는 **별도 라우터**로 붙인다. 스튜디오 라우터에 넣으면
-  시청자가 못 쓰고, 공개 라우터엔 "발행된 것만" 조건이 따로 있다
-- `cfg`·`queue` 는 `deps.py` 에 있다. **`deps.cfg` 로 속성 접근** — `from .deps import cfg` 로 값을 복사하면
-  테스트의 교체가 반영되지 않는다
+- `/api/**` 는 전부 `http/studio.py` 의 라우터에 등록한다. 인증은 그 라우터가 **라우터 레벨**로 건다
+  (`http/deps.py::require_auth`) — 엔드포인트마다 `Depends` 를 붙이지 않고, 그래서 빠뜨릴 수 없다.
+  `http/server.py` 에 `/api/...` 를 직접 등록하면 인증이 빠진다. `tests/http/test_api_auth.py` 가 라우트
+  테이블을 순회해 이 경계를 지킨다(모든 라우트×메서드 401 · 앱의 `/api/**` 는 전부 스튜디오 라우터 소속)
+- 시청자용 공개 API(`/api/watch/**`, M3)는 **별도 라우터**(`http/watch.py`)로 붙인다. 스튜디오 라우터에
+  넣으면 시청자가 못 쓰고, 공개 라우터엔 "발행된 것만" 조건이 따로 있다
+- `cfg`·`queue` 는 `http/deps.py` 에 있다. **`deps.cfg` 로 속성 접근** — `from .deps import cfg` 로 값을
+  복사하면 테스트의 교체가 반영되지 않는다
 - 비밀번호 비교는 `hmac.compare_digest`. `==` 는 일치 접두사 길이만큼 시간이 달라진다
 - 프론트 catch-all 라우트는 **반드시 API 라우트 뒤에** 등록한다. 앞에 두면 `/api/**` 를 전부 삼킨다
 
 ## Workflow
 
-- 커밋 / push / PR 은 **사용자가 명시적으로 요청할 때만** 한다. 자동으로 하지 않는다
+- 커밋 / push / PR 은 **사용자가 명시적으로 요청할 때만** 한다. 자동으로 하지 않는다.
+  커밋은 사용자가 VS Code "커밋 플랜" 패널에서 한다 — `/commit-plan` 으로 `.claude/commit-plan.json` 을 쓴다
+- **코드를 먼저 끝까지 쓰고, 전체 테스트는 사용자 허락을 받고 돌린다.** 단계마다 스위트를 돌리지 않는다
 - 단계마다 **결과를 눈으로 확인**하고 다음으로 간다. 컴파일/실행 성공 ≠ 완료
 - 가장 단순한 동작을 먼저. 최적화는 측정 후 별도로
 - 라이브러리 채택은 **런타임 동작 근거로만** 정당화한다 — "코드가 줄어듦"은 근거가 아니다

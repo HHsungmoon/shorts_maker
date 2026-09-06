@@ -29,7 +29,14 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 `/api/**` 를 `studio_api.py` 라우터로 빼 **라우터 레벨 인증**으로 바꿨다(라우트 테이블 순회 테스트가 지킨다).
 "다시 추출" 은 청크 **교체**가 됐고, rank 가 `segments.excluded_by` 에 쓰던 것을 없앴으며, 다운로드·등록 잡이
 `sources.status` 를 RUNNING→DONE/FAILED 로 남긴다. 화면 제목은 TEASE(`web/src/shared/brand.ts`). numpy 추가.
-테스트 151개 · 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render 전부 확인. §4-8. **다음은 M1(스키마 v9).**
+테스트 151개 · 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render 전부 확인. §4-8.
+
+**2026-09-06 (4차): 구조 재편 + Postgres 전환.** 평평하던 20개 모듈을 `http/ pipeline/ answers/ adapters/ db/ cli/`
+로 갈랐고(§3), SQLite 를 **Postgres 17** 로 바꿨다(compose 의 `db` 서비스, psycopg 3, ORM 없음). 스키마는
+`db/migrations/001_baseline.sql` 하나로 시작한다(= 옛 SQLite v9 내용, CHECK 전부 포함). 테스트는 진짜 Postgres
+(`shorts_test`)에 돈다. 테스트 166개 통과(skip 0), 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render→
+미리보기→리뷰까지 실제로 확인했다. 이유는 §4-9, 결정 번복은 update_plan D5.
+**다음은 M2(임베딩·클러스터) — `answers/` 에.**
 
 ---
 
@@ -48,26 +55,23 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 ```
 ~/dev/shorts_maker/            ← SWYP-APP-S6/ 에서 빠져나옴. 레포 하나, 원격 github.com/HHsungmoon/shorts_maker
 ├── backend/                   FastAPI + CLI. 파이프라인 본체
-│   ├── src/shorts_maker/
-│   │   ├── api.py             앱 조립 + **공개** 라우트만: /auth/** · /health · /debug · SPA catch-all
-│   │   ├── studio_api.py      🆕(9/6) 인증 필요한 /api/** 전부. APIRouter(prefix="/api", dependencies=[require_auth])
-│   │   ├── deps.py            🆕(9/6) cfg · queue · require_auth · connect — 두 모듈이 공유. 🔴 deps.cfg 로 속성 접근
-│   │   ├── auth.py            비밀번호 1개 + HMAC 세션 쿠키 + 로그인 잠금. stdlib 만
-│   │   ├── config.py          .env 로딩. BACKEND_ROOT = backend/ (레포 루트 아님)
-│   │   ├── cli.py             `sm` 명령. serve · db · source · chunk · stt · segment · rank · render
-│   │   ├── db/schema.sql      v8. admin id 컬럼 3개 제거됨
-│   │   ├── db/store.py        MIGRATIONS (덧붙이기 + 평범한 컬럼 삭제까지)
-│   │   ├── web.py             node 빌드 없이 보는 개발용 단일 페이지 (/debug)
-│   │   ├── ingest.py          (9/6) begin_source → finish_source 로 나뉨(RUNNING→DONE/FAILED). add_chunk(replace=)
-│   │   ├── download.py        (9/6) probe / target_path / fetch_video 로 갈라짐 — 받기 전에 경로를 안다
-│   │   └── (stt · segmentation · ranking · cutting · render · jobs …)  파이프라인
-│   ├── tests/                 151개. test_api_auth.py 에 라우트 테이블 순회 · test_ingest.py 에 상태 전이·교체
+│   ├── src/shorts_maker/      (9/6 재편 — 역할별. 의존 방향 http → pipeline/answers → adapters·db)
+│   │   ├── http/              server.py(앱 조립·공개 라우트·serve) · deps.py(cfg·queue·require_auth) ·
+│   │   │                      studio.py(/api/**, 라우터 레벨 인증) · auth.py · debug_page.py · (M3) watch.py
+│   │   ├── pipeline/          ingest · stt · segmentation · ranking · cutting · render · media · subtitles · orchestrate
+│   │   ├── answers/           🆕 비어 있음. M2 부터 embeddings · clusters · routing · retrieval · judge · events
+│   │   ├── adapters/          ffmpeg · gemini · ytdlp
+│   │   ├── db/store.py        🆕 psycopg 풀 · connect() · apply_schema() · reset(). SCHEMA_VERSION = 파일 번호 최댓값
+│   │   ├── db/migrations/     🆕 001_baseline.sql. 🔴 적용된 파일은 안 고친다, 새 번호로 덧붙인다
+│   │   ├── cli/main.py        `sm` 명령
+│   │   └── config.py · jobs.py · doctor.py · pricing.py
+│   ├── tests/                 src 미러링(http/ pipeline/ adapters/ db/). support.py 가 shorts_test DB 를 준다(없으면 skip)
 │   ├── work/                  ⛔ git 제외. 호스트 실행(uv) 전용 작업 폴더. 컨테이너는 볼륨 /data/work 를 쓴다
 │   ├── sources/               ⛔ git 제외. **원본 영상은 여기**(니체 강연 2편, 1.5GB). 컨테이너의 /sources
-│   ├── .env                   ⛔ git 제외. GEMINI_API_KEY 있음, SHORTS_ADMIN_PASSWORD **없음**
-│   ├── .env.example           로컬용 템플릿 (인증 항목 추가됨)
+│   ├── .env                   ⛔ git 제외. GEMINI_API_KEY · SHORTS_ADMIN_PASSWORD · 🔴 POSTGRES_PASSWORD(9/6 부터 필수)
+│   ├── .env.example           로컬용 템플릿 (Postgres 항목 추가됨)
 │   ├── deploy.env.example     서버용 템플릿
-│   └── pyproject.toml         + numpy(9/6, 임베딩 코사인용) · [dependency-groups] dev = httpx (테스트용)
+│   └── pyproject.toml         + numpy · psycopg[binary] · psycopg-pool (9/6) · [dependency-groups] dev = httpx
 ├── web/                       🆕 React + Vite + TS. admin-web 의 숏폼 탭을 옮겨온 것
 │   └── src/
 │       ├── api/client.ts      fetch 래퍼. ApiResponse 봉투 없음, 401 → onUnauthorized
@@ -84,7 +88,7 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 │   ├── update_plan.md         🆕 (9/5) TEASE 실행 계획 — M0~M9, 상태 전이표, 불변식, 결정 D1~D10
 │   └── make_shorts.md         backend 레포에서 가져옴. §0·§10·§13 갱신
 ├── Dockerfile                 🆕 루트로 이동. node 빌드 → python → runtime, 한 이미지
-├── compose.yaml               **로컬·운영 공용.** 127.0.0.1:8100, mem 3000m, `environment` 로 컨테이너 경로 고정
+├── compose.yaml               **로컬·운영 공용.** db(postgres:17, 127.0.0.1:5432, shorts-pg 볼륨) + shorts(127.0.0.1:8100)
 ├── .dockerignore              🆕 work/ 1.6GB 가 빌드 컨텍스트에 안 들어가게
 ├── deploy/nginx-shorts.conf   🆕 nginx 예시 (range 요청, 2g 업로드)
 ├── scripts/deploy.sh          SHORTS_ADMIN_PASSWORD 검사로 변경
@@ -184,8 +188,29 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
 - **`sources.status`.** 다운로드는 수 분인데 행이 끝나야 생겨서 그동안 화면엔 아무것도 없었고, 서버가 죽으면
   정리할 대상도 없었다. 이제 `begin_source` 가 `pending:` 지문으로 행을 먼저 만들고 `finish_source` 가 채운다.
   실패는 FAILED+error 로 남고 같은 경로 재시도는 같은 id 를 다시 쓴다.
-- 이번엔 **DB 를 유지**했다. 스키마가 안 바뀌어서. 컨테이너 DB 에 검증용 원본 1개(`2fTnEB_r_6Q.mp4`, 제목
-  "M0 검증", 5분 청크·STT·구간 5·run 1·클립 1)가 들어 있다 — M2 임베딩 개발에 쓸 수 있고, 지워도 된다.
+- 이번엔 **DB 를 유지**했다. 스키마가 안 바뀌어서. (→ 4차에서 Postgres 로 가며 결국 비웠다.)
+
+### 4-9. (4차) 구조 재편과 Postgres — 그리고 왜
+
+- **왜 지금.** 해커톤 뒤 서비스로 갈 것이 확정됐다. SQL 이 코드 113곳·테스트 114곳으로 가장 적은 지금이 전환이
+  가장 싼 시점이고, M2~M9 가 지금보다 더 많은 SQL 을 쓴다. 결정적 계기는 M1 이었다 — SQLite 는 CHECK 를 ALTER 로
+  못 바꿔 `stage_calls` 재생성·멱등 함수 스텝·DDL 파서까지 짜야 했다. 그 코드를 다 짜고 나서 버렸다(git stash 에
+  "M1 sqlite v9" 로 남아 있다). Postgres 에선 그 전부가 `alter table … add constraint` 한 줄이다.
+- **서비스가 되면.** 잡 워커를 별도 프로세스로 빼야 하는데 SQLite 단일 쓰기 잠금이 웹 서버와 워커를 서로 막는다.
+  Postgres 의 `select … for update skip locked` 가 표준 답이다. 인증인가가 붙으면 전 테이블에 소유자 스코프가
+  들어가는데 그것도 ALTER 한 줄. pgvector 도 켤 수 있게 됐지만 N<1000 이라 아직 numpy 다.
+- **어떻게.** psycopg 3 + 풀, SQL 은 직접 쓴다(ORM 없음 — 런타임 근거 없음, SQL 이 보이는 게 장점). 마이그레이션은
+  번호 붙인 SQL 파일 + `schema_version`. 테스트는 진짜 Postgres(`shorts_test`, 테스트마다 truncate) — SQLite 를
+  테스트용으로 남기는 이중 방언은 가장 흔한 함정이라 안 했다. 비밀번호는 `POSTGRES_PASSWORD` 하나를 db 컨테이너와
+  앱이 env_file 로 나눠 갖는다.
+- **잡은 버그 둘.** ① `debug_page` 모듈명과 함수명이 같아 `/debug` 와 프론트 미빌드 시의 `/` 가 AttributeError
+  로 죽었다(이름 변경의 부작용, import 를 별칭으로 바꿔 해결). ② `conn.executemany` 는 psycopg 에 없다 —
+  **커서의 메서드**다. sqlite3 에는 연결에도 있어서 그대로 옮겼다가 STT 저장이 통째로 실패했는데, 테스트는
+  순수 함수(`to_utterance_rows`)만 봐서 전부 통과했다. 저장 경로를 도는 테스트 3개를 추가했다
+  (`tests/pipeline/test_stt.py::RunForChunkTest`).
+- **구조.** `tease/` 를 옆에 붙이는 대신 역할별로 갈랐다(§3, update_plan §3). TEASE 는 서비스 이름이라 코드에
+  안 쓰고, 그 기능은 `answers/` 다. 이동은 `git mv` 만 하고 로직은 안 건드렸다(별도 커밋). 인증인가 대비로 넣은 건
+  없다 — `require_auth` 가 Principal 을 돌려주게 바꾸는 것은 사용자 개념이 생길 때 한다.
 
 ---
 
@@ -193,16 +218,20 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
 
 ```sh
 cd ~/dev/shorts_maker
-docker compose up -d --build                          # 🔴 backend/.env 에 SHORTS_ADMIN_PASSWORD 필수
-docker compose exec shorts sm doctor                  # ffmpeg · libass · NanumGothic · sqlite v8 · Gemini
-docker compose exec shorts sm db status
+docker compose up -d --build                          # 🔴 backend/.env 에 SHORTS_ADMIN_PASSWORD · POSTGRES_PASSWORD 필수
+docker compose exec shorts sm doctor                  # ffmpeg · libass · NanumGothic · Postgres v1 · Gemini
+docker compose exec shorts sm db status               # v1 · 테이블 14개
+docker compose exec db psql -U shorts shorts          # SQL 직접
 
 cd backend
-uv run python -m unittest discover -s tests -t .      # Ran 151 tests … OK (호스트, uv)
+uv run python -m unittest discover -s tests -t .      # 호스트, uv. db 컨테이너가 떠 있어야 DB 테스트가 돈다(skipped=0 확인)
 
 cd ../web
 npm run build && npm run lint                         # tsc strict 통과. 경고 2개는 admin-web 에서 온 패턴
 ```
+
+실측(2026-09-06, 컨테이너): 등록 DONE · 청크 재추출 409→replace · STT 55발화 20.7초 · 구간 5개 ·
+rank 3위/제외 2 · cut · render · 미리보기 6.2MB · 클립 7.8MB · 비용 추정 44.78원. `stage_calls` 7종 기록.
 
 | 주소 | 내용 |
 |---|---|
@@ -267,25 +296,32 @@ backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_
 
 - **`.venv` 를 옮기면 깨진다.** 절대경로가 박혀 있다. 경로가 바뀌면 `rm -rf .venv && uv sync --extra stt`.
 - **`sources/`·볼륨은 git 에 없다.** clone 하면 영상도 DB 도 없다. 영상은 이 맥 `backend/sources/`,
-  DB 는 도커 볼륨 `shorts-data`. `docker compose down -v` 는 DB 를 지운다.
+  DB 는 도커 볼륨 `shorts-pg`, 산출물은 `shorts-data`. `docker compose down -v` 는 둘 다 지운다.
 - **DB 경로는 상대경로다.** `Path(row["path"])` 를 직접 쓰지 말고 `cfg.source_file/work_file`.
   절대경로로 저장했다가 레포 이동으로 전 행이 깨진 게 2차 작업의 출발점이다.
 - **`.env` 는 env_file 로 컨테이너에 통째로 들어간다.** 호스트용 값(ffmpeg 경로·폰트·work 경로)은
   compose 의 `environment` 가 덮는다. 새 설정 키를 추가할 때 "컨테이너에서 다른 값이어야 하는가"를 묻고
   그렇다면 compose 에도 넣는다.
-- **호스트 `uv run sm serve` 와 컨테이너는 다른 DB 를 본다.** 전자는 `backend/work/shorts.db`, 후자는 볼륨.
-  원본 폴더만 공유한다.
+- **호스트 `uv run sm …` 과 컨테이너는 같은 DB(`db` 컨테이너)를 본다.** 산출물 폴더만 다르다(`backend/work` vs
+  `/data/work`). 테스트는 `shorts_test` 라 운영 데이터를 건드리지 않는다.
+- **DB 테스트가 `skipped` 로 나오면 통과가 아니다.** `docker compose up -d db` 를 먼저. 요약의 `skipped=N` 을 본다.
+- **Postgres 는 실패한 문장 뒤 트랜잭션이 aborted 다.** 테스트에서 `assertRaises(IntegrityError)` 다음엔 `rollback()`.
+  코드에서는 `with store.connect()` 가 예외 시 롤백하니 같은 연결로 계속 쓰지 말 것.
+- **긴 계산 앞에서 commit.** 읽기만 해도 트랜잭션이 열려 있다. STT·렌더·지문 계산 몇 분 동안 열어두지 않는다.
 - **비밀번호가 비어 있으면 컨테이너가 안 뜬다.** 0.0.0.0 바인딩이라 기동 거부. 호스트 uv 실행에서만 무인증 로컬 모드다.
 - **vite 개발 서버는 5173 으로 접속.** 8100 을 직접 열면 빌드된 옛 `dist` 를 본다.
 - **SPA catch-all 은 API 라우트 뒤에 등록돼야 한다.** 앞으로 올리면 `/api/**` 가 전부 index.html 을
   받는다. `test_api_auth.py::SpaRoutingTest` 가 잡는다.
 - **`BACKEND_ROOT` 는 `backend/` 다, 레포 루트가 아니다.** 상대 경로 설정은 전부 그 아래로 풀린다.
-- **`stage_calls.stage` 는 CHECK 라 새 stage 를 못 넣는다.** v9 에서 테이블 재생성이 필요하다
-  (tease.md §6-4). `MIGRATIONS` 가 문자열만 받으니 함수 스텝을 허용하게 넓혀야 한다.
+- **`executemany` 는 커서에만 있다.** `conn.execute` 는 되지만 `conn.executemany` 는 psycopg 에 없다 —
+  `with conn.cursor() as cur: cur.executemany(...)`. sqlite3 와 다른 지점이고 조용히 AttributeError 로 죽는다.
+- **순수 함수만 테스트하면 저장 경로가 빈다.** 위 버그가 그렇게 새어 나갔다. 단계 함수는 DB 에 실제로 쓰는
+  테스트를 하나씩 둔다.
+- **`stage_calls.stage` 에 새 값을 넣으려면 마이그레이션 파일.** `002_*.sql` 에 `alter table stage_calls drop constraint
+  …_stage_check, add constraint … check (stage in (…))`. 코드에서 새 stage 문자열을 먼저 쓰면 insert 가 터진다.
 - **컨텍스트 캐싱 ↔ 검색은 겹친다.** 검색으로 후보가 줄면 캐싱 이득이 준다. 둘 다 켜지 말고 측정.
 - **좋아요 중복 방지는 쿠키 기반이라 완벽하지 않다** (tease.md §7-4). 데모용 절충. 문서에 적어라.
-- **DB 백업은 볼륨에서.** v9 전에 `docker compose exec shorts cp /data/shorts.db /data/shorts.db.bak-before-v9`.
-  1차의 `work/shorts.db.bak-before-v8` 는 2차에서 지웠다(데이터 리셋 결정).
+- **DB 백업은 `pg_dump`.** `docker compose exec db pg_dump -U shorts shorts > backup.sql`. 볼륨 복사는 버전이 묶인다.
 
 ---
 
