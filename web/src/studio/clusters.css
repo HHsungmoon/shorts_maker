@@ -1,0 +1,128 @@
+/* 시청자 질문 패널. ClusterPanel 이 import 한다.
+ *
+ * 토큰(--surface, --border, --accent …)과 공통 클래스(.button, .sm-meta, .sm-fold)는
+ * shared/styles.css 것을 그대로 쓴다 — 여기서 다시 정의하면 두 곳이 서로 다르게 늙는다.
+ */
+
+.sm-clusters {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 14px 16px;
+	margin-bottom: 10px;
+}
+
+.sm-clusters__head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-bottom: 12px;
+}
+
+.sm-clusters__title {
+	margin: 0;
+	font-size: 15px;
+}
+
+/* 클러스터 한 줄 ---------------------------------------------------------- */
+
+.sm-cluster {
+	border-top: 1px solid var(--border);
+	padding: 10px 0;
+}
+
+.sm-cluster:first-of-type {
+	border-top: none;
+}
+
+.sm-cluster__head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+/* 대표 문장을 누르면 원문이 펼쳐진다. 줄 전체를 <button> 으로 감싸면 안쪽 [고치기] 가
+   버튼 중첩이 되므로(HTML 위반) 문장만 버튼으로 만든다. */
+.sm-cluster__toggle {
+	flex: 1;
+	min-width: 200px;
+	border: none;
+	background: none;
+	padding: 0;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+	line-height: 1.5;
+	/* 한 줄이 화면을 가로지르면 다음 줄 첫머리를 눈이 못 찾는다. */
+	max-width: 76ch;
+}
+
+.sm-cluster__toggle:hover {
+	color: var(--accent);
+}
+
+.sm-cluster__mark {
+	display: inline-block;
+	width: 14px;
+	color: var(--text-muted);
+}
+
+/* 질문 원문 목록 ---------------------------------------------------------- */
+
+.sm-cluster__questions {
+	margin: 8px 0 0;
+	padding-left: 22px;
+	color: var(--text-muted);
+	font-size: 13px;
+	line-height: 1.7;
+}
+
+/* 대표 문장 편집 ---------------------------------------------------------- */
+
+.sm-cluster__editor {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	flex: 1;
+	min-width: 240px;
+}
+
+.sm-cluster__editor textarea {
+	width: 100%;
+	min-height: 56px;
+	resize: vertical;
+	font: inherit;
+	line-height: 1.5;
+}
+
+/* 상태 배지 — 눈에 띄되 대표 문장보다 앞서지 않게 옅게 둔다. */
+.sm-status {
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	padding: 1px 9px;
+	font-size: 12px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.sm-status--in-progress,
+.sm-status--review {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.sm-status--published {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+	font-weight: 600;
+}
+
+.sm-status--declined,
+.sm-status--unanswerable {
+	border-color: #f0cfcd;
+	color: var(--danger);
+}
