@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 # 이 파일 기준 `backend/` 를 가리킨다. 상대 경로로 적힌 설정(.env·work·sources)은 전부
 # 이 아래로 풀린다 — 레포 루트가 아니다. web/ 은 이 경로와 무관하다.
@@ -22,7 +23,13 @@ DEFAULTS = {
     "SHORTS_PRICE_INPUT_USD_PER_1M": "0.75",
     "SHORTS_PRICE_OUTPUT_USD_PER_1M": "3.75",
     "SHORTS_USD_KRW": "1400",
-    "SHORTS_DB_PATH": "work/shorts.db",
+    # Postgres 접속. 조각으로 받는 이유: compose 가 호스트(db)만 덮고 비밀번호는 db 컨테이너와
+    # **같은 변수**(POSTGRES_PASSWORD, 공식 이미지가 읽는 이름)를 env_file 로 나눠 갖기 위해서다.
+    # SHORTS_DATABASE_URL 을 주면 조각은 무시하고 그걸 쓴다(관리형 DB 등).
+    "SHORTS_DB_HOST": "127.0.0.1",
+    "SHORTS_DB_PORT": "5432",
+    "SHORTS_DB_NAME": "shorts",
+    "SHORTS_DB_USER": "shorts",
     "SHORTS_WORK_DIR": "work",
     # compose 가 `./backend/sources` 를 `/sources` 로 마운트한다. 호스트에서 uv 로 직접 띄워도
     # 같은 디렉터리를 보게 기본값을 맞춘다 — 두 실행 방식이 다른 폴더를 보면 "등록했는데 없다"가 된다.
@@ -73,7 +80,8 @@ class Config:
     price_input_usd_per_1m: float
     price_output_usd_per_1m: float
     usd_krw: float
-    db_path: Path
+    # postgresql://user:pass@host:port/dbname. 🔴 로그에 찍지 않는다 — 비밀번호가 들어 있다.
+    database_url: str
     work_dir: Path
     source_dir: Path
 
@@ -111,6 +119,17 @@ def _relative_or_absolute(path: Path, root: Path) -> str:
     return str(resolved)
 
 
+def database_url_from_env(get) -> str:
+    explicit = os.environ.get("SHORTS_DATABASE_URL")
+    if explicit:
+        return explicit
+    password = os.environ.get("POSTGRES_PASSWORD", "")
+    auth = quote(get("SHORTS_DB_USER"), safe="")
+    if password:
+        auth += ":" + quote(password, safe="")
+    return f"postgresql://{auth}@{get('SHORTS_DB_HOST')}:{get('SHORTS_DB_PORT')}/{get('SHORTS_DB_NAME')}"
+
+
 def load() -> Config:
     _load_dotenv(BACKEND_ROOT / ".env")
     get = lambda k: os.environ.get(k) or DEFAULTS[k]  # noqa: E731
@@ -139,7 +158,7 @@ def load() -> Config:
         price_input_usd_per_1m=float(get("SHORTS_PRICE_INPUT_USD_PER_1M")),
         price_output_usd_per_1m=float(get("SHORTS_PRICE_OUTPUT_USD_PER_1M")),
         usd_krw=float(get("SHORTS_USD_KRW")),
-        db_path=_resolve(get("SHORTS_DB_PATH")),
+        database_url=database_url_from_env(get),
         work_dir=_resolve(get("SHORTS_WORK_DIR")),
         source_dir=_resolve(get("SHORTS_SOURCE_DIR")),
     )
