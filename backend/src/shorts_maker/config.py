@@ -12,6 +12,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULTS = {
     "SHORTS_GEMINI_MODEL": "gemini-3.6-flash",
     "SHORTS_WHISPER_MODEL": "small",
+    # 임베딩. 🔴 dim 을 바꾸면 저장된 벡터와 섞이면 안 된다 — embeddings 테이블이 (model, dim, task_type)
+    # 을 함께 저장하고 다른 조합은 무시한다. 768 을 쓰는 이유는 3072 대비 저장이 1/4 이고, 짧은 한국어
+    # 질문끼리의 유사도 순위는 거의 같기 때문이다(θ 는 dim 에 따라 다시 튜닝해야 한다).
+    "SHORTS_EMBED_MODEL": "gemini-embedding-001",
+    "SHORTS_EMBED_DIM": "768",
+    # 질문을 기존 대표 문장에 붙일 코사인 임계값. 넘지 못하면 단독 클러스터가 된다.
+    # `sm answers eval-cluster` 로 튜닝한다 — tease §13 의 "0.85 시작".
+    "SHORTS_CLUSTER_THETA": "0.85",
     "SHORTS_API_HOST": "127.0.0.1",
     "SHORTS_API_PORT": "8100",
     "SHORTS_FFMPEG": "ffmpeg",
@@ -68,6 +76,9 @@ class Config:
     gemini_api_key: str
     gemini_model: str
     whisper_model: str
+    embed_model: str
+    embed_dim: int
+    cluster_theta: float
     api_host: str
     api_port: int
     api_token: str
@@ -142,6 +153,9 @@ def load() -> Config:
         gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
         gemini_model=get("SHORTS_GEMINI_MODEL"),
         whisper_model=get("SHORTS_WHISPER_MODEL"),
+        embed_model=get("SHORTS_EMBED_MODEL"),
+        embed_dim=int(get("SHORTS_EMBED_DIM")),
+        cluster_theta=float(get("SHORTS_CLUSTER_THETA")),
         api_host=api_host,
         api_port=int(get("SHORTS_API_PORT")),
         api_token=os.environ.get("SHORTS_API_TOKEN", ""),

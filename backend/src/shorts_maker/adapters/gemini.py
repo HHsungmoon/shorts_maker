@@ -162,3 +162,63 @@ def model_catalog(cfg: config.Config) -> list[dict]:
             }
         )
     return sorted(rows, key=lambda r: r["id"])
+
+
+# 한 번에 보낼 텍스트 수. gemini-embedding-001 은 요청당 배치 상한이 있고, 넘으면 400 이다.
+# 한도가 모델마다 다르므로 넉넉히 낮게 잡았다 — 질문 수백 개면 몇 번 나눠 보내도 1초 안쪽이다.
+EMBED_BATCH = 100
+
+
+def embed_texts(
+    cfg: config.Config, texts: list[str], task_type: str
+) -> tuple[list[list[float]], int, int]:
+    """텍스트들을 임베딩한다. (벡터들, 총 소요 ms, 배치 호출 수).
+
+    🔴 `task_type` 이 다르면 **다른 벡터**가 나온다. 같은 문장이라도 'SEMANTIC_SIMILARITY' 로
+    뽑은 것과 'RETRIEVAL_DOCUMENT' 로 뽑은 것을 섞어 비교하면 안 된다 — 그래서 저장할 때
+    task_type 을 키에 넣는다(answers/embeddings.py).
+
+    🔴 정규화는 **여기서 하지 않는다.** 저장 직전에 한 번만 한다(embeddings.to_blob) — 두 곳에서
+    하면 어디서 이미 했는지 헷갈린다. gemini-embedding-001 은 3072 이 아닌 차원을 요청하면
+    정규화되지 않은 벡터를 주므로, 코사인을 내적으로 계산하려면 반드시 한 번은 해야 한다.
+    """
+    import time
+
+    from google.genai import types
+
+    if not texts:
+        return [], 0, 0
+    active = client(cfg)
+    settings = types.EmbedContentConfig(
+        task_type=task_type, output_dimensionality=cfg.embed_dim
+    )
+    vectors: list[list[float]] = []
+    started = time.monotonic()
+    calls = 0
+    for offset in range(0, len(texts), EMBED_BATCH):
+        batch = texts[offset : offset + EMBED_BATCH]
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                response = active.models.embed_content(
+                    model=cfg.embed_model, contents=batch, config=settings
+                )
+                break
+            except Exception as exc:
+                if attempt == MAX_ATTEMPTS or not is_transient(exc):
+                    raise
+                import logging
+                import time as _time
+
+                wait = BASE_BACKOFF_SEC * (2 ** (attempt - 1))
+                logging.warning("embed failed (%s), retrying in %.0fs", _status_of(exc), wait)
+                _time.sleep(wait)
+        calls += 1
+        got = list(getattr(response, "embeddings", None) or [])
+        if len(got) != len(batch):
+            raise GeminiError(f"임베딩 개수가 안 맞는다: 보낸 {len(batch)}, 받은 {len(got)}")
+        for item in got:
+            values = getattr(item, "values", None)
+            if not values:
+                raise GeminiError("임베딩 응답에 값이 없다")
+            vectors.append(list(values))
+    return vectors, int((time.monotonic() - started) * 1000), calls
