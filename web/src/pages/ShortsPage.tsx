@@ -17,6 +17,7 @@ import {
 	segmentPreviewUrl,
 } from "../api/shorts";
 import { useAuth } from "../auth/AuthContext";
+import { PRODUCT_NAME, REPO_NAME } from "../shared/brand";
 import { ClipVideo } from "../components/ClipVideo";
 import { MediaLibrary } from "../components/MediaLibrary";
 import { NewSourceModal } from "../components/NewSourceModal";
@@ -172,7 +173,7 @@ export function ShortsPage() {
 	return (
 		<div className="page">
 			<div className="page-head">
-				<h1 className="page-title">shorts_maker</h1>
+				<h1 className="page-title">{PRODUCT_NAME}</h1>
 				{data && (
 					<span className="page-count">
 						발화 {utterances} · 구간 {segments.length} · 클립 {data.clips.length}
@@ -196,7 +197,7 @@ export function ShortsPage() {
 
 			{status.error && (
 				<div className="notice">
-					서버 상태를 읽지 못했습니다. shorts_maker 가 떠 있는지 확인하세요 ({status.error.message}).
+					서버 상태를 읽지 못했습니다. {REPO_NAME} 가 떠 있는지 확인하세요 ({status.error.message}).
 				</div>
 			)}
 			{status.data && !geminiReady && (
@@ -284,7 +285,9 @@ export function ShortsPage() {
 								type="button"
 								className={`button button--small${nextStep === 2 ? " sm-go" : ""}`}
 								disabled={busy || toMin <= fromMin}
-								onClick={() => submit(() => createChunk(data.source.id, fromMin * 60, toMin * 60))}
+								onClick={() =>
+									submit(() => createChunk(data.source.id, fromMin * 60, toMin * 60, chunk !== null))
+								}
 							>
 								{chunk ? "다시 추출" : "추출"}
 							</button>
