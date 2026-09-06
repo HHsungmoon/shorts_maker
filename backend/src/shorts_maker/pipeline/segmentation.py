@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 
 from .. import config
 from ..adapters import gemini
+from ..db import store
 
 
 class SegmentationError(RuntimeError):
@@ -132,8 +133,45 @@ def load_utterances(conn: psycopg.Connection, chunk_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def run_for_source(
+    conn: psycopg.Connection, cfg: config.Config, source_id: int, force: bool = True
+) -> list[dict]:
+    """소스의 **모든 청크**를 순서대로 나눈다. 화면에서 "주제 분할" 한 번이 이것이다.
+
+    🔴 구간 번호(`segments.idx`)는 **소스 안에서 연속**이어야 한다. rank 프롬프트가 `[번호]` 로
+    구간을 지목하는데, 청크마다 0부터 다시 시작하면 같은 번호가 둘이 되어 모델이 지목한 게
+    어느 것인지 알 수 없다. 그래서 청크별로 돌리되 번호는 이어 붙인다.
+    """
+    chunks = conn.execute(
+        "select id from chunks where source_id = %s order by idx", (source_id,)
+    ).fetchall()
+    if not chunks:
+        raise SegmentationError(f"source {source_id} 에 청크가 없다 — 먼저 구간을 추출한다")
+    with store.source_lock(conn, source_id, "구간 분할"):
+        return _segment_chunks(conn, cfg, source_id, chunks)
+
+
+def _segment_chunks(conn, cfg, source_id: int, chunks) -> list[dict]:
+    # 전부 다시 만든다. 청크 하나만 다시 나누면 번호가 어긋나므로 부분 재분할은 두지 않는다.
+    conn.execute(
+        "delete from segments where chunk_id in (select id from chunks where source_id = %s)",
+        (source_id,),
+    )
+    conn.commit()
+    offset = 0
+    for chunk in chunks:
+        specs = run_for_chunk(conn, cfg, chunk["id"], force=True, idx_offset=offset)
+        offset += len(specs)
+    rows = conn.execute(
+        """select sg.* from segments sg join chunks ch on ch.id = sg.chunk_id
+           where ch.source_id = %s order by sg.idx""",
+        (source_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def run_for_chunk(
-    conn: psycopg.Connection, cfg: config.Config, chunk_id: int, force: bool
+    conn: psycopg.Connection, cfg: config.Config, chunk_id: int, force: bool, idx_offset: int = 0
 ) -> list[SegmentSpec]:
     chunk = conn.execute(
         "select c.*, s.id as source_id, s.context from chunks c join sources s on s.id = c.source_id"
@@ -193,7 +231,8 @@ def run_for_chunk(
     by_idx = {u["idx"]: u for u in utterances}
 
     conn.execute("delete from segments where chunk_id = %s", (chunk_id,))
-    for position, spec in enumerate(specs):
+    # idx_offset: 소스 안에서 번호를 이어 붙인다(run_for_source 주석).
+    for position, spec in enumerate(specs, start=idx_offset):
         conn.execute(
             """insert into segments
                (chunk_id, idx, start_sec, end_sec, description, describe_model,
