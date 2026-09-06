@@ -49,6 +49,53 @@ def build_subtitle_file(
     return path, len(cues)
 
 
+def load_parts(conn: psycopg.Connection, clip_id: int) -> list[dict]:
+    """클립의 조각들. 답하기 경로가 만든 클립은 1~3개, 기존 경로가 만든 것은 0개다."""
+    rows = conn.execute(
+        """select p.*, sg.chunk_id from clip_parts p
+           join segments sg on sg.id = p.segment_id
+           where p.clip_id = %s order by p.ordinal""",
+        (clip_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def part_utterances(conn: psycopg.Connection, part: dict) -> list[dict]:
+    rows = conn.execute(
+        """select idx, start_sec, end_sec, text, words from utterances
+           where chunk_id = %s and end_sec > %s and start_sec < %s order by idx""",
+        (part["chunk_id"], part["start_sec"], part["end_sec"]),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def render_combined(
+    conn: psycopg.Connection, cfg: config.Config, clip: dict, parts: list[dict],
+    out: Path, out_dir: Path, burn_subtitles: bool,
+) -> tuple[int, int]:
+    """조각 여러 개를 이어붙여 렌더한다. (소요 ms, 자막 큐 수).
+
+    🔴 자막은 이어붙인 타임라인 기준이다(subtitles.build_part_cues). 조각별 상대 초를 그대로
+    쓰면 두 번째 조각부터 전부 어긋난다.
+    """
+    ranges = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+    subtitle_path, cue_count = None, 0
+    if burn_subtitles:
+        cues = subtitles.build_part_cues([part_utterances(conn, p) for p in parts], ranges)
+        if cues:
+            subtitle_path = subtitles.write_ass(
+                out_dir / f"clip{clip['id']:03d}.ass", cues, font=cfg.subtitle_font
+            )
+            cue_count = len(cues)
+    conn.commit()
+    started = time.monotonic()
+    ffmpeg.render_parts(
+        str(cfg.source_file(clip["source_path"])), str(out), ranges,
+        subtitle_path=str(subtitle_path) if subtitle_path else None, binary=cfg.ffmpeg_bin,
+    )
+    return int((time.monotonic() - started) * 1000), cue_count
+
+
 def run_for_clip(
     conn: psycopg.Connection, cfg: config.Config, clip_id: int, force: bool, burn_subtitles: bool = True
 ) -> Path:
@@ -63,6 +110,16 @@ def run_for_clip(
     out_dir = cfg.work_dir / "clips"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"clip{clip_id:03d}.mp4"
+
+    # 조각이 여럿이면 이어붙인다. 하나뿐이면 아래의 기존 경로 그대로 — 단일 컷은 검증된 길로 간다.
+    parts = load_parts(conn, clip_id)
+    if len(parts) > 1:
+        if burn_subtitles and not ffmpeg.has_filter("ass", cfg.ffmpeg_bin):
+            raise RenderError(f"{cfg.ffmpeg_bin} 에 libass 가 없어 자막을 넣을 수 없다")
+        latency_ms, cue_count = render_combined(
+            conn, cfg, clip, parts, out, out_dir, burn_subtitles
+        )
+        return _finish(conn, cfg, clip, out, latency_ms, cue_count, burn_subtitles, len(parts))
 
     subtitle_path, cue_count = (None, 0)
     if burn_subtitles:
@@ -94,8 +151,15 @@ def run_for_clip(
         binary=cfg.ffmpeg_bin,
     )
     latency_ms = int((time.monotonic() - started) * 1000)
+    return _finish(conn, cfg, clip, out, latency_ms, cue_count, bool(subtitle_path), 1)
 
-    conn.execute("update clips set path = %s, rendered = true where id = %s", (cfg.store_work(out), clip_id))
+
+def _finish(
+    conn: psycopg.Connection, cfg: config.Config, clip: dict, out: Path,
+    latency_ms: int, cue_count: int, had_subtitles: bool, parts: int,
+) -> Path:
+
+    conn.execute("update clips set path = %s, rendered = true where id = %s", (cfg.store_work(out), clip["id"]))
     conn.execute(
         "insert into stage_calls (source_id, run_id, stage, latency_ms, params) values (%s, %s, 'render', %s, %s)",
         (
@@ -104,10 +168,11 @@ def run_for_clip(
             latency_ms,
             Jsonb(
                 {
-                    "clip_id": clip_id,
+                    "clip_id": clip["id"],
                     "duration_sec": round(clip["end_sec"] - clip["start_sec"], 2),
-                    "subtitles": bool(subtitle_path),
+                    "subtitles": had_subtitles,
                     "cues": cue_count,
+                    "parts": parts,
                 }
             ),
         ),

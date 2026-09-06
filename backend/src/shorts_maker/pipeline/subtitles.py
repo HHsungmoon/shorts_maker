@@ -146,3 +146,38 @@ def write_ass(path: Path, cues: list[Cue], **style) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(to_ass(cues, **style), encoding="utf-8")
     return path
+
+
+def build_part_cues(
+    part_utterances: list[list[dict]],
+    parts: list[tuple[float, float]],
+    bridge_sec: float = 0.4,
+    bridge_text: str = "{position}에서 이어집니다",
+) -> list[Cue]:
+    """조각들을 이어붙인 **하나의 타임라인** 기준 자막을 만든다.
+
+    조각을 따로 렌더하지 않고 한 번에 이어붙이므로(ffmpeg.render_parts), 자막 시각도 이어붙인
+    뒤 기준이어야 한다. 두 번째 조각의 자막은 첫 조각 길이 + 브릿지 길이만큼 뒤로 밀린다.
+
+    🔴 브릿지 카드의 글자도 **같은 자막 파일**에 넣는다. 점프를 숨기지 않고 읽히게 만드는 쪽이
+    낫다 — 시청자는 "편집됐다" 를 알고 봐야 한다(tease §5-6). 별도 필터를 쓰지 않아 필터 그래프도
+    단순해진다.
+    """
+    if len(part_utterances) != len(parts):
+        raise ValueError(f"조각 수가 안 맞는다: 발화 {len(part_utterances)}, 범위 {len(parts)}")
+    cues: list[Cue] = []
+    offset = 0.0
+    for index, (utterances, (start, end)) in enumerate(zip(part_utterances, parts)):
+        for cue in build_cues(utterances, start, end):
+            cues.append(Cue(round(cue.start + offset, 3), round(cue.end + offset, 3), cue.text))
+        offset += end - start
+        if index < len(parts) - 1:
+            # 다음 조각이 원본의 어디인지 알려준다. 분만 쓰면 같은 분 안의 점프가 "0분에서"가 되어
+            # 이상하다 — 영상 위치는 사람들이 늘 mm:ss 로 말한다.
+            at = parts[index + 1][0]
+            cues.append(
+                Cue(round(offset, 3), round(offset + bridge_sec, 3),
+                    bridge_text.format(position=f"{int(at // 60)}:{int(at % 60):02d}"))
+            )
+            offset += bridge_sec
+    return cues
