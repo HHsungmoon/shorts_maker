@@ -3,40 +3,44 @@
 v8 에서 `requested_by_admin_id` 를 지울 때 API·pipeline 은 고쳤는데 CLI 만 옛 인자를 넘기고
 있었고, CLI 를 도는 테스트가 없어 한 달 가까이 `sm rank run` 이 TypeError 로 죽었다.
 `autospec=True` 가 시그니처를 강제하므로, 다음에 인자를 바꾸면 여기서 먼저 걸린다.
+
+DB 는 비운 테스트 Postgres(tests/support.reset_db). CLI 가 `config.load()` 로 받는 cfg 의
+database_url 이 그 DB 를 가리키므로 여기서 심은 행을 CLI 가 실제로 읽는다.
 """
 
 import io
-import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from shorts_maker import cli, config, ingest, ranking
+from psycopg.types.json import Jsonb
+
+from shorts_maker import cli, config
+from shorts_maker.pipeline import ingest, ranking
 from shorts_maker.db import store
 
-from .support import make_config
+from .support import make_config, reset_db
 
 
 class RankRunTest(unittest.TestCase):
     def setUp(self):
+        reset_db()
         self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
         self.cfg = make_config(Path(self._dir.name))
-        with store.connect(self.cfg.db_path) as conn:
-            store.apply_schema(conn)
+        with store.connect(self.cfg.database_url) as conn:
             conn.execute(
                 "insert into sources (title, content_type, path, fingerprint)"
                 " values ('t', 'LECTURE', 'a.mp4', 'sha256:a')"
             )
+            # ranked 는 jsonb — 문자열이 아니라 Jsonb 로 감싼 dict 를 넣는다.
             conn.execute(
-                "insert into runs (source_id, status, ranked) values (1, 'DONE', ?)",
-                (json.dumps({"ranked": [{"idx": 0, "score": 90, "reason": "r"}], "excluded": []}),),
+                "insert into runs (source_id, status, ranked) values (1, 'DONE', %s)",
+                (Jsonb({"ranked": [{"idx": 0, "score": 90, "reason": "r"}], "excluded": []}),),
             )
             conn.commit()
-
-    def tearDown(self):
-        self._dir.cleanup()
 
     def test_calls_run_for_source_with_its_real_signature(self):
         with (
@@ -52,10 +56,11 @@ class RankRunTest(unittest.TestCase):
 
 class ChunkAddTest(unittest.TestCase):
     def setUp(self):
+        reset_db()
         self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
         self.cfg = make_config(Path(self._dir.name))
-        with store.connect(self.cfg.db_path) as conn:
-            store.apply_schema(conn)
+        with store.connect(self.cfg.database_url) as conn:
             conn.execute(
                 "insert into sources (title, content_type, path, fingerprint)"
                 " values ('t', 'LECTURE', 'a.mp4', 'sha256:a')"
@@ -65,9 +70,6 @@ class ChunkAddTest(unittest.TestCase):
             )
             conn.execute("insert into stage_calls (source_id, stage, latency_ms) values (1, 'chunk', 1)")
             conn.commit()
-
-    def tearDown(self):
-        self._dir.cleanup()
 
     def test_replace_flag_reaches_add_chunk(self):
         with (
@@ -79,3 +81,7 @@ class ChunkAddTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(add.call_args.args[2:], (1, 0.0, 90.0))
         self.assertEqual(add.call_args.kwargs, {"replace": True})
+
+
+if __name__ == "__main__":
+    unittest.main()
