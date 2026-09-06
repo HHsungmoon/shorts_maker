@@ -12,7 +12,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from shorts_maker import api, auth, config
+from fastapi.routing import APIRoute
+
+from shorts_maker import api, auth, config, deps, studio_api
 from shorts_maker.db import store
 
 PASSWORD = "test-admin-password"
@@ -22,7 +24,7 @@ TOKEN = "test-machine-token"
 class ApiAuthTestCase(unittest.TestCase):
     """cfg 를 갈아끼운 앱으로 테스트한다.
 
-    라우트들이 모듈 전역 `api.cfg` 를 호출 시점에 읽으므로 이 교체가 실제 경로에 반영된다.
+    라우트들이 모듈 전역 `deps.cfg` 를 호출 시점에 읽으므로 이 교체가 실제 경로에 반영된다.
     """
 
     admin_password = PASSWORD
@@ -45,12 +47,12 @@ class ApiAuthTestCase(unittest.TestCase):
         )
         with store.connect(base.db_path) as conn:
             store.apply_schema(conn)
-        self._saved = api.cfg
-        api.cfg = base
+        self._saved = deps.cfg
+        deps.cfg = base
         self.client = TestClient(api.app)
 
     def tearDown(self):
-        api.cfg = self._saved
+        deps.cfg = self._saved
         self._tmp.cleanup()
         auth.reset_throttle()
 
@@ -95,6 +97,56 @@ class ClosedByDefaultTest(ApiAuthTestCase):
     def test_a_forged_cookie_does_not_open_it(self):
         self.client.cookies.set(auth.COOKIE_NAME, "99999999999.not-a-real-signature")
         self.assertEqual(self.client.get("/api/sources").status_code, 401)
+
+
+# 경로 변수에 넣을 더미 값. 401 은 본문·경로 검증 **전에** 나야 하므로 값이 실제로 존재하는지는
+# 상관없지만, 타입은 맞춰서 422 가 먼저 튀지 않게 한다.
+PATH_VALUES = {"name": "x.mp4", "job_id": "abc"}
+
+
+def _fill(path: str) -> str:
+    out = path
+    for name, value in PATH_VALUES.items():
+        out = out.replace("{" + name + "}", value)
+    import re
+
+    return re.sub(r"\{[a-z_]+\}", "1", out)
+
+
+class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
+    """🔴 라우트 테이블을 **순회**한다. 몇 개 골라 확인하는 방식은 새 엔드포인트를 놓친다 —
+    v8 이전에 그렇게 `/api/segments/{id}/preview` 가 열린 채로 며칠 있었다."""
+
+    def test_the_router_has_routes(self):
+        # 순회 테스트가 빈 목록을 돌며 통과하는 것을 막는다.
+        self.assertGreaterEqual(len(studio_api.router.routes), 20)
+
+    def test_every_route_and_method_returns_401_without_credentials(self):
+        for route in studio_api.router.routes:
+            assert isinstance(route, APIRoute)
+            for method in route.methods:
+                with self.subTest(method=method, path=route.path):
+                    response = self.client.request(method, _fill(route.path), json={})
+                    self.assertEqual(response.status_code, 401, response.text)
+
+    def test_every_api_route_of_the_app_belongs_to_the_studio_router(self):
+        # api.py 에 `/api/...` 를 직접 등록하면 라우터 레벨 인증이 안 걸린다. 그 실수를 잡는다.
+        studio_paths = {(r.path, m) for r in studio_api.router.routes for m in r.methods}
+        for route in api.app.routes:
+            if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
+                continue
+            for method in route.methods:
+                with self.subTest(method=method, path=route.path):
+                    self.assertIn((route.path, method), studio_paths)
+
+    def test_the_only_public_routes_are_health_auth_and_the_frontend(self):
+        public = sorted(
+            r.path for r in api.app.routes
+            if isinstance(r, APIRoute) and not r.path.startswith("/api/")
+        )
+        self.assertEqual(
+            public, ["/auth/login", "/auth/logout", "/auth/me", "/debug", "/health", "/{full_path:path}"]
+        )
 
 
 class LoginTest(ApiAuthTestCase):
@@ -158,12 +210,12 @@ class LocalDevModeTest(ApiAuthTestCase):
 
     def test_binding_beyond_loopback_is_refused_in_this_state(self):
         # 🔴 이 조합(인증 없음 + 외부 바인딩)이 사고 경로다. 기동 자체를 막는다.
-        api.cfg = dataclasses.replace(api.cfg, api_host="0.0.0.0")
+        deps.cfg = dataclasses.replace(deps.cfg, api_host="0.0.0.0")
         with self.assertRaises(SystemExit):
             api.check_binding()
 
     def test_loopback_binding_is_allowed(self):
-        api.cfg = dataclasses.replace(api.cfg, api_host="127.0.0.1")
+        deps.cfg = dataclasses.replace(deps.cfg, api_host="127.0.0.1")
         api.check_binding()
 
 
