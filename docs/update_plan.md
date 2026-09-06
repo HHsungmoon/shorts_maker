@@ -191,23 +191,31 @@ web/src/
 크기: S(반나절) · M(하루) · L(이틀). 혼자면 순서대로, 둘이면 §5 의 병렬 트랙.
 **컷 라인**: M0~M6 이 데모(§10-2 시나리오 1~8)의 필수다. M7·M8 은 있으면 좋은 것. M9 는 반드시.
 
-### M0 — 정리와 결정 (S) 🔴 먼저
+### M0 — 정리와 결정 (S) 🔴 먼저 — **완료 2026-09-06**
 
 **목적**: 뒤의 마일스톤이 깨진 바닥 위에 서지 않게 한다.
 
-- [ ] tease.md §13 미결 9개에 **[결정]** 기록. 권고대로면 표의 "권고" 열을 "결정" 으로 바꾸고 날짜.
+- [x] tease.md §13 미결 9개에 **[결정]** 기록. 권고대로 — 표의 "권고" 열이 "결정" 이 됐다.
       추가 결정 4개는 §6 참조
-- [ ] `api.py` → `api.py` + `studio_api.py`(APIRouter, 라우터 레벨 `require_auth`). 동작 변화 0.
-      `test_api_auth.py` 에 **라우트 테이블 순회 테스트** 추가 — 스튜디오 라우터의 모든 GET/POST 가 401
-- [ ] "다시 추출" → **교체**. `ingest.add_chunk(replace=True)` 가 기존 청크(+cascade)를 지우고 같은 idx 로 만든다.
-      화면 버튼은 `replace` 를 넘긴다. LECTURE 청크 1개 전제를 코드가 지킨다
-- [ ] `ranking.run_for_source` 의 `update segments set excluded_by='auto'` 제거. 제외 목록은 `runs.ranked` 에만
-- [ ] `download`·`register` 잡이 `sources.status` 를 RUNNING→DONE/FAILED 로. `api.serve` 의 정리 코드가 살아난다
-- [ ] `web/src/shared/brand.ts`: `PRODUCT_NAME = "TEASE"`, `REPO_NAME = "shorts_maker"`. 화면 제목만 바꾼다
-- [ ] `numpy` 의존성 추가(임베딩 코사인). 근거: `frombuffer` + 행렬곱 한 줄 — 순수 파이썬 루프는 세그먼트 수백 ×
+- [x] `api.py` → `api.py`(앱 조립·공개 라우트) + `studio_api.py`(APIRouter `/api`, 라우터 레벨 `require_auth`)
+      + `deps.py`(cfg·queue·require_auth — 두 모듈이 공유하는 것. 순환 import 를 피하려고 뺐다). 동작 변화 0.
+      `test_api_auth.py` 에 **라우트 테이블 순회 테스트** — 스튜디오 라우터의 모든 라우트×메서드가 401,
+      앱의 모든 `/api/**` 는 스튜디오 라우터 소속, 공개 라우트는 정확히 6개(`/auth/*` 3 · `/health` · `/debug` · catch-all)
+- [x] "다시 추출" → **교체**. `ingest.add_chunk(replace=True)` 가 기존 청크(+cascade: 발화·구간·클립)와
+      **그 소스의 run** 을 지우고 같은 idx 로 만든다. run 은 chunks 에 매달려 있지 않아 따로 지운다 — 남기면
+      `runs.ranked` 가 사라진 구간 idx 를 가리킨다. 추출을 먼저 하고 지운다(실패하면 옛 전사가 남는다).
+      화면 버튼·`sm chunk add --replace` 가 넘긴다. replace 없이 두 번째 청크는 API 409 · CLI IngestError
+- [x] `ranking.run_for_source` 의 `update segments set excluded_by='auto'` 제거. 제외 목록은 `runs.ranked` 에만.
+      컬럼은 'human' 용도로 남긴다(스키마 변경은 M1)
+- [x] `download`·`register` 잡이 `sources.status` 를 RUNNING→DONE/FAILED 로. `ingest.begin_source`(행을
+      `pending:` 지문으로 먼저) → `finish_source`(길이·sha256·DONE). 실패는 FAILED+error 로 남고, 같은 경로
+      재시도는 **같은 id** 를 다시 쓴다. 같은 내용을 다른 파일명으로 넣으면 행을 지우고 거절(유령 행 방지).
+      `download.fetch` 를 `probe`/`target_path`/`fetch_video` 로 갈라 다운로드 전에 경로를 안다
+- [x] `web/src/shared/brand.ts`: `PRODUCT_NAME = "TEASE"`, `REPO_NAME = "shorts_maker"`. 제목 2곳 + index.html
+- [x] `numpy` 의존성 추가(임베딩 코사인). 근거: `frombuffer` + 행렬곱 한 줄 — 순수 파이썬 루프는 세그먼트 수백 ×
       질문 수백에서 이미 수십 ms 다
 
-**완료 조건**: 테스트 전부 통과 · 화면에서 기존 파이프라인 5단계가 그대로 돈다 · `git log` 에 M0 커밋
+**완료 조건**: 테스트 전부 통과(151) · 화면에서 기존 파이프라인 5단계가 그대로 돈다 · `git log` 에 M0 커밋
 
 ### M1 — 스키마 v9 (M)
 
