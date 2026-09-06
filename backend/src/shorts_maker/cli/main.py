@@ -162,7 +162,7 @@ def _cmd_stt_show(cfg: config.Config, args) -> int:
 
 def _cmd_segment_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.database_url) as conn:
-        segments = segmentation.run_for_source(conn, cfg, args.source_id)
+        segments = segmentation.run_for_source(conn, cfg, args.source_id, args.force)
     print(f"source {args.source_id} · 구간 {len(segments)}개")
     for segment in segments:
         length = segment["end_sec"] - segment["start_sec"]
