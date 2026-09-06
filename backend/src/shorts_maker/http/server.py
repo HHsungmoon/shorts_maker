@@ -23,7 +23,8 @@ from pydantic import BaseModel
 
 # 🔴 모듈을 별칭으로 들여온다. 아래 `/debug` 라우트 함수 이름이 `debug_page` 라서 그대로 import 하면
 # 함수 정의가 모듈 전역 이름을 덮어써 `debug_page.INDEX_HTML` 이 AttributeError 가 된다.
-from . import auth, deps, studio
+from ..answers import clusters
+from . import auth, deps, studio, watch
 from . import debug_page as debug_html
 from ..config import LOOPBACK
 from ..db import store
@@ -100,6 +101,11 @@ def health() -> dict:
 # 🔴 라우터는 아래 프론트 catch-all **앞에** 붙여야 한다. FastAPI 는 등록 순서대로 매칭한다.
 app.include_router(studio.router)
 
+# 🔴 시청자 API. **인증이 없다** — 인터넷에 그대로 열린다. 경로는 전부 `/api/watch/` 로 시작하고,
+# 읽기는 발행된 것만 준다(watch.py 머리 주석). 스튜디오 엔드포인트를 실수로 여기 넣으면
+# 무인증으로 새므로, `tests/http/test_api_auth.py` 가 두 라우터의 경로 접두사를 검사한다.
+app.include_router(watch.router)
+
 
 # ---------------------------------------------------------------- 프론트
 
@@ -162,5 +168,7 @@ def serve() -> None:
         # sources 의 RUNNING 은 다운로드·등록 잡이 만든다(ingest.begin_source).
         conn.execute("update sources set status = 'FAILED', error = '재기동으로 중단됨' where status = 'RUNNING'")
         conn.execute("update runs set status = 'FAILED', error = '재기동으로 중단됨' where status = 'RUNNING'")
+        # 클러스터의 IN_PROGRESS 도 같은 이유로 죽은 것이다 — 크리에이터가 다시 [답하기] 를 누를 수 있게 되돌린다.
+        clusters.reopen_stuck(conn)
         conn.commit()
     uvicorn.run(app, host=deps.cfg.api_host, port=deps.cfg.api_port, log_level="info")

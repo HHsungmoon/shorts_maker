@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from .. import pricing
 from ..adapters import ytdlp, ffmpeg
+from ..answers import clusters
 from . import deps
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
@@ -156,6 +157,13 @@ class ReviewIn(BaseModel):
     note: str | None = None
 
 
+class ClusterPatchIn(BaseModel):
+    """대표 문장 수정과 상태 변경. 둘 다 선택이고, 둘 다 없으면 400."""
+
+    canonicalText: str | None = None
+    status: str | None = None
+
+
 def _language(code: str | None) -> str | None:
     """잡을 띄우기 전에 언어 코드를 검사한다 — 큐에 넣고 나서 실패하면 늦게 안다."""
     try:
@@ -174,6 +182,38 @@ def add_source(body: SourceIn) -> dict:
         except ingest.IngestError as exc:
             raise HTTPException(400, str(exc)) from exc
     return {"sourceId": source_id}
+
+
+@router.post("/sources/{source_id}/publish")
+def publish_source(source_id: int) -> dict:
+    """시청자 화면(`/watch`)의 목록에 이 영상을 노출한다.
+
+    🔴 발행하지 않은 영상은 공개 API 에서 **404** 다 — 목록에서 빠지는 게 아니라 존재를 알리지
+    않는다(watch.py). 그래서 이 토글이 시청자 면 전체의 스위치다.
+
+    아직 처리 중(RUNNING)이거나 실패한 영상은 발행하지 않는다 — 길이도 모르는 영상이 목록에
+    뜬다. 임베드 id 가 없어도 발행은 막지 않는다(질문만 받는 영상이 있을 수 있다). 화면이 경고한다.
+    """
+    with connect() as conn:
+        found = conn.execute("select status from sources where id = %s", (source_id,)).fetchone()
+        if found is None:
+            raise HTTPException(404, "source not found")
+        if found["status"] != "DONE":
+            raise HTTPException(409, f"등록이 끝나지 않았습니다 (status={found['status']})")
+        conn.execute("update sources set published = true, updated_at = now() where id = %s", (source_id,))
+        conn.commit()
+    return {"published": True}
+
+
+@router.post("/sources/{source_id}/unpublish")
+def unpublish_source(source_id: int) -> dict:
+    """목록에서 내린다. 쌓인 질문과 좋아요는 그대로 남는다 — 다시 발행하면 그대로 보인다."""
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        conn.execute("update sources set published = false, updated_at = now() where id = %s", (source_id,))
+        conn.commit()
+    return {"published": False}
 
 
 @router.get("/media")
@@ -247,6 +287,7 @@ def add_source_from_url(body: UrlIn) -> dict:
             begun = ingest.begin_source(
                 conn, deps.cfg, target, info.title, "LECTURE",
                 f"{info.url} ({info.uploader})", body.context, language,
+                youtube_id=info.video_id, channel=info.uploader or None,
             )
         if begun.reused:
             return {"sourceId": begun.source_id, "reused": True, "title": info.title}
@@ -363,6 +404,62 @@ def run_pipeline(source_id: int, body: RankIn, resegment: bool = False) -> dict:
             return orchestrate.run_all(conn, deps.cfg, source_id, body.criteria, resegment)
 
     return submit("pipeline", f"source {source_id}", work)
+
+
+# ---------------------------------------------------------------- 질문 묶기
+
+@router.post("/sources/{source_id}/aggregate")
+def aggregate_questions(source_id: int) -> dict:
+    """**[집계]** — 미분류 질문을 묶는다. 🔴 크리에이터가 누를 때만 돈다(update_plan D11).
+
+    질문이 들어올 때마다 부르지 않는 이유는 둘이다: 공개 경로에서 요청마다 유료 API 를 부르면
+    그게 공격면이고, 제품 정의상 "취합"은 크리에이터의 행동이다.
+
+    LLM 은 대표 문장만 짓고, 소속은 임베딩 코사인이, 개수는 SQL 이 정한다(answers/clusters.py).
+    재집계는 증분이라 몇 번을 눌러도 기존 소속과 좋아요가 그대로다.
+    """
+
+    def work() -> dict:
+        with connect() as conn:
+            if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+                raise clusters.ClusterError(f"source {source_id} 없음")
+            return clusters.aggregate(conn, deps.cfg, source_id)
+
+    return submit("cluster", f"source {source_id}", work)
+
+
+@router.get("/sources/{source_id}/clusters")
+def list_clusters(source_id: int) -> dict:
+    """클러스터(수요 순) + 각 클러스터의 질문 원문 + 아직 안 묶인 질문."""
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        found = clusters.demand(conn, source_id)
+        for cluster in found:
+            cluster["questions"] = clusters.questions_of(conn, cluster["id"])
+        return {"clusters": found, "unclustered": clusters.unclustered(conn, source_id)}
+
+
+@router.patch("/clusters/{cluster_id}")
+def patch_cluster(cluster_id: int, body: ClusterPatchIn) -> dict:
+    """대표 문장을 고치거나 상태를 바꾼다.
+
+    🔴 상태 변경은 `clusters.transition()` 만 거친다 — 허용 표에 없는 전이는 여기서 400 이다.
+    대표 문장을 고치면 벡터를 다시 계산한다(안 하면 다음 집계가 옛 문장 기준으로 붙인다).
+    """
+    if body.canonicalText is None and body.status is None:
+        raise HTTPException(400, "canonicalText 나 status 중 하나는 있어야 합니다")
+    with connect() as conn:
+        try:
+            row = None
+            if body.canonicalText is not None:
+                row = clusters.rename(conn, deps.cfg, cluster_id, body.canonicalText)
+            if body.status is not None:
+                row = clusters.transition(conn, cluster_id, body.status)
+                conn.commit()
+        except clusters.ClusterError as exc:
+            raise HTTPException(400, str(exc)) from exc
+    return row or {}
 
 
 @router.get("/cost")
