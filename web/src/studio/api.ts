@@ -171,9 +171,23 @@ export function fetchClusters(sourceId: number): Promise<ShortsClusterList> {
 export function patchCluster(
 	clusterId: number,
 	body: { canonicalText?: string; status?: string },
-): Promise<Omit<ShortsCluster, "question_count" | "like_count" | "questions">> {
-	return request<Omit<ShortsCluster, "question_count" | "like_count" | "questions">>(
+): Promise<Omit<ShortsCluster, "question_count" | "like_count" | "questions" | "clip">> {
+	return request<Omit<ShortsCluster, "question_count" | "like_count" | "questions" | "clip">>(
 		`/api/clusters/${clusterId}`,
 		{ method: "PATCH", body },
 	);
+}
+
+// [답하기] 는 잡을 돌려준다 — 라우팅·검색·판정·컷·렌더가 한 번에 도는 고정 DAG 라 분 단위로
+// 걸린다. 화면은 이걸 페이지의 submit() 에 태워 진행 배너와 폴링을 다른 단계와 공유한다.
+// 잡이 죽으면 서버가 클러스터를 OPEN 으로 되돌려 두므로 그냥 다시 누르면 된다.
+export function answerCluster(clusterId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/clusters/${clusterId}/answer`, { method: "POST" });
+}
+
+// 🔴 발행하면 이 클립이 로그인 없는 시청자에게 보인다. 클러스터 상태(REVIEW ↔ PUBLISHED)는
+// 서버가 같은 트랜잭션에서 함께 옮긴다 — 화면에서 patchCluster 를 따로 부르면 안 된다.
+export function publishClip(clipId: number, published: boolean): Promise<{ published: boolean }> {
+	const action = published ? "publish" : "unpublish";
+	return request<{ published: boolean }>(`/api/clips/${clipId}/${action}`, { method: "POST" });
 }
