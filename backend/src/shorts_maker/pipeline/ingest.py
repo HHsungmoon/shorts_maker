@@ -71,8 +71,15 @@ def begin_source(
     origin: str | None,
     context: str | None,
     language: str | None = None,
+    youtube_id: str | None = None,
+    channel: str | None = None,
 ) -> Begun:
     """원본 행을 **파일이 준비되기 전에** RUNNING 으로 만든다.
+
+    `youtube_id`·`channel` 은 유튜브에서 받은 경우에만 채워진다(`ytdlp.probe` 가 준다).
+    🔴 `origin` 문자열을 나중에 파싱해서 되찾지 않는다 — 형식이 바뀌면 조용히 깨진다.
+    id 가 있어야 시청자 화면이 임베드 플레이어를 띄우고, channel 이 있어야 채널 횡단 검색(tease §5-3 b)
+    의 범위를 정할 수 있다.
 
     같은 경로의 행이 이미 있으면: DONE 이면 그대로 재사용(`reused=True`), 그 외(FAILED · 죽은
     RUNNING · PENDING)는 이전 시도의 잔해라 같은 행을 다시 쓴다 — 지우고 새로 만들면 id 가
@@ -88,17 +95,22 @@ def begin_source(
             return Begun(existing_id, reused=True)
         conn.execute(
             """update sources set title = %s, content_type = %s, origin = %s, context = %s, language = %s,
+               youtube_id = coalesce(%s, youtube_id), channel = coalesce(%s, channel),
                status = 'RUNNING', error = null, updated_at = now() where id = %s""",
-            (title, content_type, origin, context, language, existing_id),
+            # coalesce: 이번에 안 넘어온 값은 지우지 않는다. 유튜브로 받은 뒤 파일 경로로 다시
+            # 등록하는 경우, 이미 있는 id 를 null 로 덮으면 임베드가 사라진다.
+            (title, content_type, origin, context, language, youtube_id, channel, existing_id),
         )
         conn.commit()
         return Begun(existing_id, reused=False)
 
     cursor = conn.execute(
-        """insert into sources (title, content_type, path, origin, fingerprint, context, language, status)
-           values (%s, %s, %s, %s, %s, %s, %s, 'RUNNING') returning id""",
+        """insert into sources (title, content_type, path, origin, fingerprint, context, language,
+                                youtube_id, channel, status)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'RUNNING') returning id""",
         # 🔴 source_dir 기준 상대경로로 저장한다(config.Config.store_source 주석).
-        (title, content_type, cfg.store_source(path), origin, f"pending:{uuid.uuid4().hex}", context, language),
+        (title, content_type, cfg.store_source(path), origin, f"pending:{uuid.uuid4().hex}", context,
+         language, youtube_id, channel),
     )
     source_id = cursor.fetchone()["id"]
     conn.commit()
