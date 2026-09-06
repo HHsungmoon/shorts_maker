@@ -12,7 +12,8 @@ backend/   FastAPI + CLI. 파이프라인 본체
   src/shorts_maker/
     http/        FastAPI 앱·라우터·인증 (server · deps · studio · auth · debug_page). 도메인 로직 없음
     pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate)
-    answers/     시청자 질문 → 답 클립 (M2 부터). 제품명 TEASE 는 코드에 안 쓴다 — 여기가 그 기능이다
+    answers/     시청자 질문 → 답 클립. 제품명 TEASE 는 코드에 안 쓴다 — 여기가 그 기능이다
+                 viewers(익명 쿠키·레이트리밋) · events(퍼널). M3 부터 embeddings · clusters · judge
     adapters/    프로세스 밖과 말하는 것만: ffmpeg · gemini · ytdlp
     db/          store(풀·마이그레이션 적용) · migrations/NNN_*.sql
     cli/         `sm`
@@ -90,8 +91,14 @@ backend/   FastAPI + CLI. 파이프라인 본체
   (`http/deps.py::require_auth`) — 엔드포인트마다 `Depends` 를 붙이지 않고, 그래서 빠뜨릴 수 없다.
   `http/server.py` 에 `/api/...` 를 직접 등록하면 인증이 빠진다. `tests/http/test_api_auth.py` 가 라우트
   테이블을 순회해 이 경계를 지킨다(모든 라우트×메서드 401 · 앱의 `/api/**` 는 전부 스튜디오 라우터 소속)
-- 시청자용 공개 API(`/api/watch/**`, M3)는 **별도 라우터**(`http/watch.py`)로 붙인다. 스튜디오 라우터에
-  넣으면 시청자가 못 쓰고, 공개 라우터엔 "발행된 것만" 조건이 따로 있다
+- 시청자용 공개 API 는 `http/watch.py` 라우터다. **인증이 없다 — 인터넷에 그대로 열린다.** 규칙 셋:
+  ① 읽기는 발행된 것만(`sources.published` · `clips.published_at`), 미발행은 403 이 아니라 **404**
+  ② 🔴 **외부 API 를 부르지 않는다** — 질문 등록은 insert 만이고 묶기는 크리에이터의 [집계]가 한다
+  ③ 쓰기는 레이트리밋(`answers/viewers.check_rate`). `tests/http/test_watch.py` 가 셋 다 지킨다
+- **시청자에게 로그인은 없다.** 익명 쿠키(`sm_viewer`, UUID)가 전부다. email 로그인을 검토했다가
+  물렀다(2026-09-06) — 검증하지 않는 email 은 쿠키보다 위조가 쉬워 중복 방지가 오히려 약해지고,
+  첫 관문의 마찰이 이 제품의 핵심 지표(질문 유입)를 직접 깎는다. 알림이 필요해지면 그때 **질문을 남긴
+  뒤** 선택적으로 받는다
 - `cfg`·`queue` 는 `http/deps.py` 에 있다. **`deps.cfg` 로 속성 접근** — `from .deps import cfg` 로 값을
   복사하면 테스트의 교체가 반영되지 않는다
 - 비밀번호 비교는 `hmac.compare_digest`. `==` 는 일치 접두사 길이만큼 시간이 달라진다
