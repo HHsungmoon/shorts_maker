@@ -44,17 +44,23 @@ export function createSourceFromUrl(url: string, language: string | null): Promi
 	return request<ShortsJob>("/api/sources/from-url", { method: "POST", body: { url, language } });
 }
 
-// 🔴 replace: 기존 청크와 그 아래 전부(발화·구간·클립·run)를 서버가 지우고 다시 만든다.
-// LECTURE 는 소스당 청크 1개라 "다시 추출"은 추가가 아니라 교체다.
-export function createChunk(
-	sourceId: number,
-	startSec: number,
-	endSec: number,
-	replace = false,
-): Promise<ShortsJob> {
+/**
+ * 분석할 **범위**. 사용자가 정하는 건 여기까지고, 그 안을 몇 조각으로 나눌지는 서버가 정한다 —
+ * 조각 수는 취향이 아니라 메모리 상한이다(ingest.plan_chunks). 시작·끝을 비우면 영상 전체다.
+ */
+export interface ChunkRange {
+	startSec?: number;
+	endSec?: number;
+	// 🔴 기존 조각과 그 아래 전부(발화·구간·클립·run)를 서버가 지우고 다시 만든다.
+	// 화면의 "다시 추출"이 이것이다. 켜지 않고 이미 있으면 409 다.
+	replace?: boolean;
+}
+
+// 몇 조각이 됐는지는 잡 결과의 `chunks` 로만 돌아온다.
+export function createChunk(sourceId: number, range: ChunkRange = {}): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/chunks`, {
 		method: "POST",
-		body: { startSec, endSec, replace },
+		body: { replace: false, ...range },
 	});
 }
 
@@ -76,15 +82,17 @@ export function fetchUtterances(chunkId: number): Promise<ShortsUtterance[]> {
 	return request<ShortsUtterance[]>(`/api/chunks/${chunkId}/utterances`);
 }
 
-export function runStt(chunkId: number, language: string | null, force = true): Promise<ShortsJob> {
-	return request<ShortsJob>(`/api/chunks/${chunkId}/stt`, {
+// 소스 단위다. 조각이 여럿이면 서버가 순서대로 전사하고, 화면에는 잡 하나로 보인다.
+export function runStt(sourceId: number, language: string | null, force = true): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/stt`, {
 		method: "POST",
 		body: { force, language },
 	});
 }
 
-export function runSegment(chunkId: number, force = true): Promise<ShortsJob> {
-	return request<ShortsJob>(`/api/chunks/${chunkId}/segment?force=${force}`, { method: "POST" });
+// 구간 번호는 소스 안에서 연속이다 — 조각 경계는 여기서 이미 사라진다.
+export function runSegment(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/segment`, { method: "POST" });
 }
 
 export function runRank(sourceId: number, criteria: string | null): Promise<ShortsJob> {

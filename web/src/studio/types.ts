@@ -152,6 +152,11 @@ export interface ShortsRemoval {
 }
 
 export interface ShortsSourceDetail {
+	/**
+	 * 🔴 이 소스에 긴 작업(구간 추출·전사·주제 분할)이 물려 있는가. 서버의 advisory lock 을
+	 * 그대로 읽은 값이라 다른 탭·CLI 가 돌린 작업까지 잡힌다. 화면이 버튼을 잠그는 근거다.
+	 */
+	busy: boolean;
 	source: ShortsSource;
 	chunks: ShortsChunk[];
 	runs: ShortsRun[];
