@@ -192,3 +192,109 @@ def detect_silences(
     starts = [float(m) for m in re.findall(r"silence_start:\s*(-?[\d.]+)", done.stderr)]
     ends = [float(m) for m in re.findall(r"silence_end:\s*(-?[\d.]+)", done.stderr)]
     return [(a, b) for a, b in zip(starts, ends) if b > a]
+
+
+def video_fps(src: str, binary: str = "ffmpeg") -> float:
+    """영상의 프레임률. concat 필터는 입력들의 프레임률이 같아야 하므로, 만들어 넣는
+    브릿지 카드를 원본에 맞춘다 — 원본을 변환하는 것보다 낫다.
+
+    🔴 `binary` 에서 ffprobe 경로를 유도하지 않는다. `/opt/.../ffmpeg-full/bin/ffmpeg` 에서
+    문자열 치환을 하면 경로 중간까지 바뀌어 없는 파일을 가리킨다(2026-09-06에 겪었다).
+    이 레포는 ffprobe 를 PATH 에서 찾는다(probe 참고) — 메타데이터 조회에는 특별한 빌드가 필요 없다.
+    """
+    try:
+        streams = probe(src).get("streams") or []
+    except FfmpegError:
+        return 30.0
+    for stream in streams:
+        if stream.get("codec_type") != "video":
+            continue
+        numerator, _, denominator = str(stream.get("r_frame_rate", "")).partition("/")
+        try:
+            fps = float(numerator) / float(denominator or 1)
+        except (ValueError, ZeroDivisionError):
+            break
+        # 이상치는 믿지 않는다 — 가변 프레임률 소스가 1000 같은 값을 주기도 한다.
+        return fps if 1.0 <= fps <= 120.0 else 30.0
+    return 30.0
+
+
+# 9:16 블러 레터박스 체인. 단일 컷과 조합 클립이 **같은 모양**이어야 해서 한 곳에 둔다.
+def _vertical_chain(label_in: str, label_out: str, blur: int, fps: float) -> str:
+    return (
+        f"[{label_in}]split=2[bg{label_out}][fg{label_out}];"
+        f"[bg{label_out}]scale=1080:1920:force_original_aspect_ratio=increase,"
+        f"crop=1080:1920,boxblur={blur}:5[bgb{label_out}];"
+        f"[fg{label_out}]scale=1080:-2[fgs{label_out}];"
+        f"[bgb{label_out}][fgs{label_out}]overlay=(W-w)/2:(H-h)/2,"
+        # 🔴 concat 필터는 입력들의 해상도·SAR·프레임률이 같아야 한다. 여기서 맞춰 둔다.
+        f"setsar=1,fps={fps:g}[{label_out}]"
+    )
+
+
+def render_parts(
+    src: str,
+    dst: str,
+    parts: list[tuple[float, float]],
+    bridge_sec: float = 0.4,
+    blur: int = 40,
+    subtitle_path: str | None = None,
+    binary: str = "ffmpeg",
+) -> None:
+    """여러 조각을 이어붙여 9:16 로 렌더한다. 조각 사이에는 검은 브릿지 카드가 들어간다.
+
+    **한 번의 인코딩으로 끝낸다.** 조각을 따로 렌더해서 concat 데뮤서로 붙이는 방법도 있지만,
+    그러면 조각들의 코덱 파라미터가 하나라도 어긋날 때 `-c copy` 가 조용히 싱크가 틀어진 파일을
+    만든다. 필터로 붙이면 그 위험이 없고 인코딩도 한 번이다.
+
+    🔴 자막은 **이어붙인 뒤** 한 번만 얹는다. 그래서 자막 시각이 이어붙인 타임라인 기준이어야
+    한다(subtitles.build_part_cues 가 브릿지 길이까지 더해 오프셋을 계산한다). 브릿지 카드의
+    글자도 같은 자막 파일에 들어 있다 — 별도 필터가 필요 없다.
+    """
+    if not parts:
+        raise FfmpegError("조각이 없다")
+    fps = video_fps(src, binary)
+
+    args = [binary, "-nostdin", "-y"]
+    for start, end in parts:
+        args += ["-ss", f"{start}", "-t", f"{end - start}", "-i", src]
+    bridges = len(parts) - 1
+    if bridges:
+        # 무한 소스 하나를 trim 으로 잘라 쓴다. 브릿지마다 입력을 만들면 인자가 길어지기만 한다.
+        args += ["-f", "lavfi", "-i", f"color=c=black:s=1080x1920:r={fps:g}"]
+        args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+
+    chain: list[str] = []
+    stream_order: list[str] = []
+    for index in range(len(parts)):
+        chain.append(_vertical_chain(f"{index}:v", f"v{index}", blur, fps))
+        # 조각마다 원본 오디오의 샘플레이트가 같더라도 명시해 둔다 — concat 이 요구한다.
+        chain.append(f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo[a{index}]")
+        stream_order += [f"[v{index}]", f"[a{index}]"]
+        if index < bridges:
+            color, silence = len(parts), len(parts) + 1
+            chain.append(
+                f"[{color}:v]trim=duration={bridge_sec},setpts=PTS-STARTPTS,setsar=1[bv{index}]"
+            )
+            chain.append(
+                f"[{silence}:a]atrim=duration={bridge_sec},asetpts=PTS-STARTPTS[ba{index}]"
+            )
+            stream_order += [f"[bv{index}]", f"[ba{index}]"]
+
+    pieces = len(parts) + bridges
+    chain.append(f"{''.join(stream_order)}concat=n={pieces}:v=1:a=1[cv][ca]")
+    if subtitle_path:
+        chain.append(f"[cv]ass='{_escape_filter_path(subtitle_path)}'[vout]")
+        video_label = "[vout]"
+    else:
+        video_label = "[cv]"
+
+    args += [
+        "-filter_complex", ";".join(chain),
+        "-map", video_label, "-map", "[ca]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    _run(args, timeout=1800)
