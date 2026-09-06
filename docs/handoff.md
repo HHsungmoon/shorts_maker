@@ -34,9 +34,16 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 **2026-09-06 (4차): 구조 재편 + Postgres 전환.** 평평하던 20개 모듈을 `http/ pipeline/ answers/ adapters/ db/ cli/`
 로 갈랐고(§3), SQLite 를 **Postgres 17** 로 바꿨다(compose 의 `db` 서비스, psycopg 3, ORM 없음). 스키마는
 `db/migrations/001_baseline.sql` 하나로 시작한다(= 옛 SQLite v9 내용, CHECK 전부 포함). 테스트는 진짜 Postgres
-(`shorts_test`)에 돈다. 테스트 166개 통과(skip 0), 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render→
-미리보기→리뷰까지 실제로 확인했다. 이유는 §4-9, 결정 번복은 update_plan D5.
-**다음은 M2(임베딩·클러스터) — `answers/` 에.**
+(`shorts_test`)에 돈다. 이유는 §4-9, 결정 번복은 update_plan D5.
+
+**2026-09-06 (5차): M2 — 시청자 면.** 계획 순서를 바꿨다(§4-10). 공개 API(`http/watch.py`, 인증 없음) ·
+익명 쿠키와 레이트리밋(`answers/viewers.py`) · 퍼널 이벤트(`answers/events.py`) · 스튜디오 발행 토글 ·
+프론트를 `shared/ studio/ watch/` 로 가르고 react-router 도입 · `/watch` 목록과 상세(임베드·질문·좋아요).
+테스트 194개 통과, 컨테이너에서 비공개 404 → 발행 → 질문·좋아요·이벤트까지 확인.
+**2026-09-06 (6차): M3 — 질문 묶기.** `answers/embeddings.py`(임베딩 저장·코사인) · `answers/clusters.py`
+([집계] · 36칸 상태 기계) · 스튜디오 클러스터 패널 · 평가 CLI. 마이그레이션 002 로 `embeddings.task_type` 을
+유니크 키에 넣었다. 실제 Gemini 로 θ 를 0.60~0.92 재서 **0.85 확정**(근거는 update_plan M3 표).
+사용자가 시청자 화면에 남긴 진짜 질문 1개가 [집계]로 묶이는 것까지 확인. **다음은 M5([답하기] 파이프라인).**
 
 ---
 
@@ -57,16 +64,20 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 ├── backend/                   FastAPI + CLI. 파이프라인 본체
 │   ├── src/shorts_maker/      (9/6 재편 — 역할별. 의존 방향 http → pipeline/answers → adapters·db)
 │   │   ├── http/              server.py(앱 조립·공개 라우트·serve) · deps.py(cfg·queue·require_auth) ·
-│   │   │                      studio.py(/api/**, 라우터 레벨 인증) · auth.py · debug_page.py · (M3) watch.py
+│   │   │                      studio.py(/api/**, 라우터 레벨 인증) · watch.py(/api/watch/**, 🔴 인증 없음) ·
+│   │   │                      auth.py · debug_page.py
 │   │   ├── pipeline/          ingest · stt · segmentation · ranking · cutting · render · media · subtitles · orchestrate
-│   │   ├── answers/           🆕 비어 있음. M2 부터 embeddings · clusters · routing · retrieval · judge · events
+│   │   ├── answers/           viewers(익명 쿠키·레이트리밋) · events(퍼널) · embeddings(벡터·코사인) ·
+│   │   │                      clusters([집계]·상태 기계). M5 부터 routing · retrieval · judge · answer
 │   │   ├── adapters/          ffmpeg · gemini · ytdlp
 │   │   ├── db/store.py        🆕 psycopg 풀 · connect() · apply_schema() · reset(). SCHEMA_VERSION = 파일 번호 최댓값
-│   │   ├── db/migrations/     🆕 001_baseline.sql. 🔴 적용된 파일은 안 고친다, 새 번호로 덧붙인다
+│   │   ├── db/migrations/     001_baseline.sql · 002_embedding_task_type.sql.
+│   │   │                      🔴 적용된 파일은 안 고친다, 새 번호로 덧붙인다
 │   │   ├── cli/main.py        `sm` 명령
 │   │   └── config.py · jobs.py · doctor.py · pricing.py
 │   ├── tests/                 src 미러링(http/ pipeline/ adapters/ db/). support.py 가 shorts_test DB 를 준다(없으면 skip)
 │   ├── work/                  ⛔ git 제외. 호스트 실행(uv) 전용 작업 폴더. 컨테이너는 볼륨 /data/work 를 쓴다
+│   ├── eval/questions.json    🆕 θ 튜닝용 질문 세트. `sm answers eval-cluster` 가 읽는다(이미지에도 들어간다)
 │   ├── sources/               ⛔ git 제외. **원본 영상은 여기**(니체 강연 2편, 1.5GB). 컨테이너의 /sources
 │   ├── .env                   ⛔ git 제외. GEMINI_API_KEY · SHORTS_ADMIN_PASSWORD · 🔴 POSTGRES_PASSWORD(9/6 부터 필수)
 │   ├── .env.example           로컬용 템플릿 (Postgres 항목 추가됨)
@@ -74,14 +85,11 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 │   └── pyproject.toml         + numpy · psycopg[binary] · psycopg-pool (9/6) · [dependency-groups] dev = httpx
 ├── web/                       🆕 React + Vite + TS. admin-web 의 숏폼 탭을 옮겨온 것
 │   └── src/
-│       ├── api/client.ts      fetch 래퍼. ApiResponse 봉투 없음, 401 → onUnauthorized
-│       ├── api/shorts.ts      /api/** 호출. 영상은 URL 만 (blob 우회 삭제)
-│       ├── api/auth.ts        /auth/me · login · logout
-│       ├── auth/AuthContext   checking / in / out
-│       ├── pages/LoginPage    비밀번호 폼
-│       ├── pages/ShortsPage   파이프라인 화면 (667줄, 기존 것 이식)
-│       ├── components/        Step · MediaLibrary · NewSourceModal · Modal · ClipVideo
-│       └── App.tsx            라우터 없음 — 인증 상태로 Login/Shorts 전환 (⚠️ tease.md 에서 라우터 복귀 예정)
+│       ├── App.tsx            🆕(9/6) react-router. /watch → 시청자, 나머지 → 스튜디오. 🔴 lazy 로 가른 건
+│       │                      번들이 아니라 **인증** 때문이다 — 한 트리면 시청자도 /auth/me 를 부른다
+│       ├── shared/            client.ts(fetch 래퍼) · useAsync · brand.ts · styles.css
+│       ├── studio/            StudioApp(인증 게이트) · LoginPage · ShortsPage · api.ts · types.ts · components/
+│       └── watch/             🆕 WatchApp · HomePage(목록) · SourcePage(임베드·질문·좋아요) · api.ts · watch.css
 ├── docs/
 │   ├── handoff.md             이 문서
 │   ├── tease.md               🆕 제품·아키텍처·스키마 v9 (823줄)
@@ -212,6 +220,21 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
   안 쓰고, 그 기능은 `answers/` 다. 이동은 `git mv` 만 하고 로직은 안 건드렸다(별도 커밋). 인증인가 대비로 넣은 건
   없다 — `require_auth` 가 Principal 을 돌려주게 바꾸는 것은 사용자 개념이 생길 때 한다.
 
+### 4-10. (5차) 왜 시청자 면을 임베딩보다 먼저 했나
+
+- **의존이 없었다.** 질문 등록은 insert 만이고 AI 를 안 부른다(D11). 그런데 계획에서는 임베딩(M2) 뒤에
+  있었다 — 순서가 틀렸던 것이다.
+- **오히려 반대였다.** 묶기 임계값 θ 를 튜닝하려면 실제로 쌓인 질문이 필요한데, 손으로 적은
+  `eval/questions.yaml` 은 사람이 쓴 문장과 표현이 다르다. 시청자 면을 먼저 열어야 진짜 데이터가 생긴다.
+- **위험이 앞으로 온다.** 무인증 라우터·익명 쿠키·레이트리밋·미발행 404 는 틀리면 조용히 뚫린다.
+  일찍 만들어 테스트로 굳히는 편이 낫다.
+- **email 로그인은 검토했다가 물렀다.** 검증하지 않는 email 은 쿠키를 지우는 것보다 위조가 쉬워서 좋아요
+  중복 방지가 **더 약해진다.** 그리고 첫 관문의 마찰이 이 제품의 핵심 지표(질문 유입, 원본 유입)를 직접
+  깎는다. 알림이 필요해지면 질문을 남긴 뒤 선택적으로 받는 게 맞다.
+- **프론트 이미지는 가르지 않았다.** 같은 출처에서 서빙하는 것이 인증 설계의 전제고(쿠키가 그냥 실린다),
+  가르면 CORS·CSRF 대응이 새로 생긴다. 실측으로 프론트만 고쳤을 때 이미지 재빌드가 2.9초라 아픈 데도 없다.
+  CDN 에 올리거나 정적 서빙이 앱을 실제로 방해할 때 가른다.
+
 ---
 
 ## 5. 지금 동작하는 것 — 검증 방법
@@ -232,6 +255,7 @@ npm run build && npm run lint                         # tsc strict 통과. 경�
 
 실측(2026-09-06, 컨테이너): 등록 DONE · 청크 재추출 409→replace · STT 55발화 20.7초 · 구간 5개 ·
 rank 3위/제외 2 · cut · render · 미리보기 6.2MB · 클립 7.8MB · 비용 추정 44.78원. `stage_calls` 7종 기록.
+시청자 면: 비공개 영상 404 → 발행 → 목록 노출 · 질문 등록 · 좋아요 토글 · CTA 이벤트 · 위조 이벤트 422.
 
 | 주소 | 내용 |
 |---|---|
@@ -321,6 +345,18 @@ backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_
   …_stage_check, add constraint … check (stage in (…))`. 코드에서 새 stage 문자열을 먼저 쓰면 insert 가 터진다.
 - **컨텍스트 캐싱 ↔ 검색은 겹친다.** 검색으로 후보가 줄면 캐싱 이득이 준다. 둘 다 켜지 말고 측정.
 - **좋아요 중복 방지는 쿠키 기반이라 완벽하지 않다** (tease.md §7-4). 데모용 절충. 문서에 적어라.
+- **`/api/watch/**` 에 새 라우트를 넣을 땐 셋을 확인한다.** 읽기는 발행된 것만(미발행은 404) · 외부 API
+  호출 0회 · 쓰기는 레이트리밋. `tests/http/test_watch.py` 가 지키지만 새 라우트는 자동으로 안 걸린다.
+- **시청자 이벤트 중 `question_post`·`like` 는 서버가 넣는다.** 클라이언트가 보낼 수 있는 종류는
+  `events.KIND_FROM_CLIENT` 로 좁혀 놨다 — 안 그러면 퍼널 수치를 브라우저가 조작할 수 있다.
+- **`eval-cluster` 는 실제 데이터를 건드린다.** 같은 소스의 진짜 질문도 함께 묶인다 — 그래서 실행 전 소속을
+  스냅숏하고 끝나면 되돌린다. `--keep` 을 쓰면 되돌리지 않는다. 실제로 한 번 당했다.
+- **θ 는 민감한 변수가 아니다.** 0.60~0.85 에서 결과가 거의 같다. 묶기 품질은 LLM 의 대표 문장 짓기가
+  대부분 결정한다. 이상하면 θ 보다 프롬프트를 먼저 본다.
+- **임베딩 벡터는 저장 직전에 정규화한다.** gemini-embedding-001 은 3072 이 아닌 차원에서 정규화된 벡터를
+  주지 않는다. 안 하면 내적이 코사인이 아니게 되고 θ 가 조용히 의미를 잃는다(순위는 비슷해 보여 더 나쁘다).
+- **시청자 화면을 스튜디오 트리에 넣지 마라.** 스튜디오 트리는 마운트되면서 `/auth/me` 를 부른다.
+  한 트리면 시청자에게 로그인 화면이 번쩍인다 — `App.tsx` 가 라우트로 가른 이유다.
 - **DB 백업은 `pg_dump`.** `docker compose exec db pg_dump -U shorts shorts > backup.sql`. 볼륨 복사는 버전이 묶인다.
 
 ---

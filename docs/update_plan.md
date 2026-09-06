@@ -252,45 +252,83 @@ http → pipeline/answers → adapters·db. `pipeline/` 의 `ranking`·`cutting`
 컨테이너에서 파이프라인 전 단계 실행 확인(2026-09-06).
 **tease 수정**: §6-4(재생성)는 Postgres 에선 해당 없음 — 주석으로 남김. §5-3 sqlite-vec → pgvector.
 
-### M2 — 임베딩·클러스터 (M~L)
+### M2 — 시청자 면: 공개 API + `/watch` 화면 (L) — **완료 2026-09-06**
 
-- [ ] `embeddings.embed_texts(cfg, texts, task_type)` — `gemini-embedding-001`, 배치 호출, `stage_calls(stage='embed')`.
-      벡터는 float32 LE blob. `dim` 저장
-- [ ] `embeddings.index_segments(conn, cfg, source_id)` — 세그먼트 `description` (+발화 앞 200자) 를
-      `RETRIEVAL_DOCUMENT` 로. **세그먼트가 만들어지는 순간(segmentation 직후) 자동으로 부른다** — 검색 시점에
-      임베딩이 없으면 그때 만드는 폴백도 둔다
-- [ ] `clusters.aggregate(conn, cfg, source_id)` — **[집계] 잡.** ① `cluster_id is null` 질문 + 기존 대표 문장 →
-      LLM 1회로 **새 그룹 대표 문장만** `[stage=cluster]` (검증: 비어 있지 않음 · 기존과 중복 아님)
-      ② 대표 문장 + 미분류 질문 배치 임베딩 `[stage=embed]` ③ 질문마다 최근접 대표, 코사인 ≥ θ 면 합류,
-      아니면 단독 클러스터(대표=원문). θ 는 `SHORTS_CLUSTER_THETA`(기본 0.85)
-- [ ] 🔴 LLM 에게 소속·개수를 시키지 않는다. 개수는 SQL 뷰(`cluster_demand`: count + likes). 재집계해도
-      `questions.text` 와 기존 `cluster_id`·좋아요는 그대로(증분)
-- [ ] 대표 문장이 새 질문 유입으로 어색해지면 크리에이터가 `PATCH` 로 고친다 — 자동 재작성은 하지 않는다
-      (고치면 임베딩을 다시 계산한다)
-- [ ] `clusters.transition()` + 상태표 + 36칸 테스트
-- [ ] **평가 CLI** `sm tease eval-cluster --source 1 [--theta 0.85]` — `backend/eval/questions.yaml` 을 전부 insert
-      한 뒤 `aggregate()` 를 돌리고 "붙어야 할 것이 붙고 붙지 말아야 할 것이 안 붙었나" 를 표로.
-      🔴 LLM 1회 + 임베딩이 실제로 나간다(센트 미만). θ 를 0.80~0.90 돌려 **표를 tease §13 에 붙인다**
+**순서를 바꿨다.** 원래 M2 는 임베딩·클러스터였는데, 질문 등록은 insert 만이라(D11) 임베딩에
+의존하지 않는다 — 계획의 순서가 틀렸다. 오히려 반대다: 묶기 임계값 θ 를 튜닝하려면 **실제로 쌓인
+질문**이 필요한데, 손으로 적은 `eval/questions.yaml` 은 사람이 쓴 문장과 표현이 다르다. 시청자 면을
+먼저 열면 진짜 데이터로 튜닝한다. 공개 면의 위험(무인증 라우터·익명 쿠키·레이트리밋)이 앞으로 오는
+것도 이득이다 — 틀리면 조용히 뚫리는 것들이라 일찍 테스트로 굳히는 게 낫다.
 
-**완료 조건**: eval 표에서 "급여 수준이 어떤가요?" 가 "희망연봉…" 에 붙고 "야근 많아요?" 가 안 붙는 θ 가 존재한다.
-그 값이 기본값이 된다.
-**리스크**: 한국어 짧은 질문의 임베딩 유사도 분포가 좁을 수 있다 → 그러면 θ 하나로 안 갈리고 **LLM 확인 1회**를
-경계 구간(θ±0.03)에만 넣는다. 결정은 eval 표를 보고.
+- [x] `answers/viewers.py` — `sm_viewer` 쿠키(UUID4 · httpOnly · SameSite=lax · 1년). 🔴 값이 UUID 모양이
+      아니면 새로 발급한다(남이 정한 문자열이 viewer_id 로 DB 에 들어가는 걸 막는다). 레이트리밋:
+      viewer 당 질문 5/분 · 좋아요 30/분, IP 당 ×3, 넘으면 429. IP 는 **`X-Real-IP` 만** 믿는다 — nginx 가
+      덮어쓰는 헤더다. `X-Forwarded-For` 는 클라이언트 값 뒤에 덧붙는 형태라 위조로 한도를 피할 수 있다
+- [x] `http/watch.py` — 인증 의존성 **없는** 별도 라우터. 라우터 레벨 의존성은 쿠키 발급뿐이라
+      목록만 봐도 시청자 id 가 생긴다. 읽기는 전부 `published` 조건, 미발행은 **404**(403 아님)
+- [x] 🔴 질문 등록은 **insert 만** — 임베딩도 LLM 도 없다(D11). 테스트: Gemini mock 이 한 번도 안 불리고,
+      `GEMINI_API_KEY` 를 비운 채로도 공개 면 전체가 동작한다
+- [x] 좋아요는 **토글**. `likedByMe` 를 서버가 계산해 준다 — 쿠키가 httpOnly 라 브라우저가 자기 id 를 못 읽는다
+- [x] `answers/events.py` — `question_post`·`like` 는 **서버가** 넣고, 클라이언트는 `KIND_FROM_CLIENT`
+      (재생·완주·CTA·원본 이동)만 보낼 수 있다. 🔴 클라이언트가 서버 이벤트를 위조하면 퍼널이 거짓이 된다
+- [x] 스튜디오 `POST /api/sources/{id}/publish` · `/unpublish`. 발행은 `status='DONE'` 일 때만
+- [x] URL 등록이 `youtube_id`·`channel` 을 저장한다(`ytdlp.probe` 가 준다). 🔴 `origin` 문자열을 나중에
+      파싱해서 되찾지 않는다 — 형식이 바뀌면 조용히 깨진다
+- [x] `web/` 재배치: `shared/`(client·useAsync·brand·styles) · `studio/` · `watch/`. react-router 도입,
+      두 트리를 `React.lazy` 로 분리 — 🔴 번들이 아니라 **인증** 때문이다. 한 트리면 시청자도 `/auth/me` 를
+      부르고 로그인 화면이 번쩍인다. 실측: watch 6.4KB / studio 22.6KB 로 갈렸다
+- [x] `/watch` 목록(썸네일·질문 수) · `/watch/:id` 상세(유튜브 임베드 · 질문 작성 200자 · 질문 목록 · 좋아요)
+- [x] 테스트 `tests/http/test_watch.py` 25개 + 인증 경계 테스트 확장(두 라우터가 겹치지 않는가,
+      공개 라우터의 경로가 전부 `/api/watch/` 인가, 공개 라우터가 무인증으로 닿는가)
 
-### M3 — 공개 API + 익명 시청자 + 레이트리밋 (M)
+**완료 조건**: ✅ 테스트 194개 통과 · 컨테이너에서 비공개 404 → 발행 → 질문·좋아요·이벤트 확인(2026-09-06).
+**남은 것**: 클립 줄(`/watch` 의 숏폼)은 M4 에서 붙는다 — 지금은 발행된 클립이 없어 빈 배열이다.
 
-- [ ] `viewers.py`: `tease_viewer` 쿠키(UUID4 · httpOnly · SameSite=lax · 1년). `/api/watch/**` 와 `/watch*`
-      응답에 없으면 발급. 레이트리밋: viewer 당 질문 5/분 · 좋아요 30/분, IP 당 ×3. 메모리 카운터
-      (`auth.py` 잠금과 같은 방식). 넘으면 429
-- [ ] `http/watch.py` — tease §7-1 의 6개. **인증 의존성 없음.** 읽기는 전부 `published` 조건.
-      🔴 질문 등록은 **insert 만** — 임베딩도 LLM 도 부르지 않는다(D11). 테스트: Gemini mock 이 한 번도 안 불린다
-- [ ] 🔴 `GET /api/watch/clips/{id}/file` — `published_at is not null` 아니면 **404**. 기존 `/api/clips/{id}/file` 은
-      스튜디오 라우터에 그대로(프리뷰용)
-- [ ] `events.record()` — kind 검증은 스키마 CHECK 가 한다. payload 는 JSON 문자열 그대로
-- [ ] 테스트 `tests/http/test_watch.py`: I1 · I3 · I7 · 미발행 영상은 목록에 없음 · 질문 200자 상한 · 쿠키 발급
+### M3 — 임베딩·클러스터 (M~L) — **완료 2026-09-06**
 
-**완료 조건**: 비밀번호 모드 컨테이너에서 `curl` 로 질문 등록·좋아요·이벤트가 쿠키만으로 되고, 미발행 클립이 404.
-`GEMINI_API_KEY` 를 비운 채로도 공개 API 전부가 동작한다(외부 호출 0회의 증명).
+- [x] `answers/embeddings.py` — `gemini.embed_texts(cfg, texts, task_type)` 배치 호출, `stage_calls(stage='embed')`.
+      float32 LE blob. 🔴 **저장 직전에 정규화한다** — gemini-embedding-001 은 3072 이 아닌 차원을 요청하면
+      정규화되지 않은 벡터를 준다. 안 하면 내적이 코사인이 아니게 되고 θ 가 조용히 의미를 잃는다
+- [x] 🔴 **마이그레이션 002** — `embeddings.task_type` 을 유니크 키에 넣었다. 클러스터 대표 문장은 묶기용
+      (`SEMANTIC_SIMILARITY`)과 검색용(`RETRIEVAL_QUERY`, M5) 벡터를 **둘 다** 가져야 하는데, 001 의
+      `unique (kind, ref_id, model)` 로는 하나가 조용히 덮인다. (SQLite 였다면 테이블 재생성이었다)
+- [x] `answers/clusters.aggregate()` — **[집계] 잡.** ① LLM 1회로 **새 대표 문장만** `[stage=cluster]`
+      (검증: 빈 문자열·기존과 중복·길이·개수 상한) ② 대표 문장 + 미분류 질문 배치 임베딩 `[stage=embed]`
+      ③ 최근접 대표에 코사인 ≥ θ 면 합류, 아니면 그 질문이 곧 새 클러스터. 🔴 단독 클러스터는 만들어지는
+      즉시 후보 목록에 들어간다 — 없으면 LLM 이 놓친 표현이 전부 1개짜리로 흩어진다
+- [x] 🔴 LLM 에게 소속·개수를 시키지 않는다. 프롬프트에 번호를 붙여 보내지도 않는다(번호가 있으면 모델이
+      지목하고 싶어진다). 개수는 `clusters.demand()` 의 SQL. 재집계는 증분 — `cluster_id` 가 있는 질문은
+      건드리지 않는다(I12, 테스트로 고정)
+- [x] LLM 이 제안했지만 아무도 안 붙은 대표 문장은 그 실행에서 만든 것에 한해 지운다(소음 제거)
+- [x] 대표 문장 수정은 `PATCH /api/clusters/{id}` 로만. 자동 재작성 없음. 🔴 수정하면 벡터를 다시 계산한다
+- [x] `clusters.transition()` + 상태표 + **36칸 테스트**. 재기동 시 `reopen_stuck()` 이 IN_PROGRESS 를 OPEN 으로
+- [x] 스튜디오 API: `POST /api/sources/{id}/aggregate` · `GET /api/sources/{id}/clusters` · `PATCH /api/clusters/{id}`
+- [x] 스튜디오 화면: 클러스터 패널([집계] 버튼 · 수요 순 목록 · 원문 펼치기 · 대표 문장 인라인 수정 · 미분류 목록)
+- [x] **평가 CLI** `sm answers eval-cluster <source> [--theta] [--keep]` + `backend/eval/questions.json`.
+      🔴 실제 API 호출이 나간다. 🔴 실행 전 소속을 스냅숏하고 끝나면 되돌린다 — 처음엔 안 했다가 사용자의
+      진짜 질문 하나가 평가용 클러스터에 묶였다(테스트로 고정). yaml 대신 json 인 이유는 의존성을 늘리지 않으려고
+
+**θ 측정 결과 (질문 23개, 2026-09-06):**
+
+| θ | 클러스터 수 | 잘못 섞임 | 판단 |
+|---|---|---|---|
+| 0.60 | 10 | 0 | 무관한 질문도 아직 단독. 하한이 안 잡힘 |
+| 0.75 | 10 | 0 | 0.60 과 결과 동일 — 넓은 안정 구간 |
+| **0.85** | **12** | **0** | **기본값.** 무관한 질문 단독, 쪼개진 3개는 전부 defensible |
+| 0.92 | 17 | 0 | 23개 중 17개가 단독 — 사실상 묶이지 않는다. 상한 |
+
+**배운 것**: θ 는 민감한 변수가 아니었다. 묶기 품질의 대부분은 **LLM 의 대표 문장 짓기**가 결정하고, θ 는
+"붙일까 혼자 둘까"만 가른다. 높은 쪽을 택한 근거는 실패 비용의 비대칭 — 잘못 붙은 건 대표 문장만 보는
+크리에이터의 눈에 안 띄고, 안 붙은 건 단독 클러스터로 목록에 보인다.
+**평가 세트의 한계**: 이 표는 묶기(θ)와 이름짓기(LLM)를 구분하지 못한다. 숫자보다 대표 문장을 읽어야 한다.
+
+**완료 조건**: ✅ 테스트 통과 · 실제 Gemini 로 θ 표 작성 · 사용자의 진짜 질문 1개가 [집계]로 묶이는 것 확인.
+
+### (옛 M3 — 공개 API) → **M2 에 흡수됨**
+
+공개 라우터·익명 쿠키·레이트리밋·이벤트는 M2 에서 다 했다. 여기 있던 항목 중 남은 것 하나는
+`GET /api/watch/clips/{id}/file`(발행 클립만) 인데, 엔드포인트와 테스트는 M2 에서 만들었고 실제로
+클립이 발행되는 건 M4 다.
 
 ### M4 — `web/` 재배치 + `/watch` 화면 (L)
 
