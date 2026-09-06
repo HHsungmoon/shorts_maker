@@ -149,3 +149,48 @@ def ensure_database(url: str) -> None:
         exists = admin.execute("select 1 from pg_database where datname = %s", (name,)).fetchone()
         if not exists:
             admin.execute(psycopg.sql.SQL("create database {}").format(psycopg.sql.Identifier(name)))
+
+
+# ---------------------------------------------------------------- 소스 잠금
+
+# 어드바이저리 락의 네임스페이스. 다른 용도의 락과 키가 겹치지 않게 첫 인자를 고정한다.
+SOURCE_LOCK_NS = 8317
+
+
+class SourceBusy(RuntimeError):
+    pass
+
+
+@contextmanager
+def source_lock(conn: psycopg.Connection, source_id: int, what: str = "작업") -> Iterator[None]:
+    """이 원본을 건드리는 긴 작업을 **한 번에 하나만** 돌게 한다.
+
+    🔴 실제로 당했다(2026-09-06): 4조각 전사가 도는 중에 화면에서 "다시 추출" 을 누르자 청크가
+    삭제됐고, 마지막 조각의 발화를 넣던 STT 가 외래키 위반으로 죽었다. API 는 잡 큐가 워커
+    하나라 동시 실행이 구조적으로 없지만 **CLI 는 그 큐를 우회한다** — 그래서 DB 에 건다.
+
+    `pg_try_advisory_lock` 을 쓰는 이유: 연결이 끊기면 **자동으로 풀린다.** 상태 컬럼으로 하면
+    프로세스가 죽었을 때 RUNNING 이 남아 손으로 치워야 한다.
+    """
+    got = conn.execute(
+        "select pg_try_advisory_lock(%s, %s) as ok", (SOURCE_LOCK_NS, source_id)
+    ).fetchone()["ok"]
+    if not got:
+        raise SourceBusy(
+            f"source {source_id} 에 다른 {what}이 돌고 있다 — 끝난 뒤에 다시 시도한다"
+        )
+    try:
+        yield
+    finally:
+        # 🔴 락은 **세션**에 걸린다. 커밋/롤백으로 풀리지 않으므로 반드시 여기서 푼다.
+        conn.execute("select pg_advisory_unlock(%s, %s)", (SOURCE_LOCK_NS, source_id))
+
+
+def source_is_busy(conn: psycopg.Connection, source_id: int) -> bool:
+    """지금 잠겨 있는가. 화면이 버튼을 미리 잠그는 데 쓴다 — 판단의 근거는 락 자체다."""
+    row = conn.execute(
+        """select count(*) as n from pg_locks
+           where locktype = 'advisory' and classid = %s and objid = %s and granted""",
+        (SOURCE_LOCK_NS, source_id),
+    ).fetchone()
+    return row["n"] > 0
