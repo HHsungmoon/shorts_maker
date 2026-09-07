@@ -7,6 +7,7 @@ import {
 	fetchMedia,
 	fetchShortsSource,
 	fetchStatus,
+	publishClip,
 	publishSource,
 	fetchUtterances,
 	renderClip,
@@ -703,6 +704,34 @@ export function ShortsPage() {
 										<span className="sm-meta">
 											평가 {clip.reviews.map((r) => r.verdict).join(", ")}
 										</span>
+									)}
+									{/* 🔴 질문에 답한 클립은 질문 패널에서 발행한다(클러스터 상태가 함께 움직여야
+									    하므로). 여기 있는 건 크리에이터가 자기 기준으로 뽑은 클립이라 묶인 질문이
+									    없다 — 그래도 시청자에게 보여줄 수 있어야 해서 발행 길을 따로 둔다. */}
+									{clip.rendered && (
+										<button
+											type="button"
+											className={`button button--small${clip.published_at ? "" : " sm-go"}`}
+											disabled={jobBusy}
+											onClick={() =>
+												act(async () => {
+													await publishClip(clip.id, !clip.published_at);
+													setReloadToken((n) => n + 1);
+												})
+											}
+										>
+											{clip.published_at ? "내리기" : "시청자에게 공개"}
+										</button>
+									)}
+									{clip.published_at && (
+										<a
+											className="button button--small"
+											href={`/watch/${data.source.id}`}
+											target="_blank"
+											rel="noreferrer"
+										>
+											시청자 화면 열기
+										</a>
 									)}
 								</div>
 							</div>

@@ -85,6 +85,10 @@ export interface ShortsClip {
 	reason: string | null;
 	// Postgres boolean(2026-09-06). 예전 SQLite 는 0/1 이었다.
 	rendered: boolean;
+	/** 🔴 null 이면 시청자에게 보이지 않는다. 이 컬럼 하나가 공개 여부의 전부다. */
+	published_at: string | null;
+	/** 조각 합. 조합 클립에서는 start/end 가 봉투라 이쪽이 실제 길이다. */
+	total_sec: number | null;
 	description: string | null;
 	reviews: ShortsClipReview[];
 }
