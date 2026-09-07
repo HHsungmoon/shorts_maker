@@ -128,9 +128,11 @@ def create_clip(
         conn.execute("delete from clips where id = %s", (previous["id"],))
 
     cursor = conn.execute(
-        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason)
-           values (%s, %s, %s, %s, %s, %s) returning id""",
-        (run_id, segment["id"], start_sec, end_sec, score, cut.reason),
+        # 🔴 total_sec 은 여기서도 채운다. 조각 하나짜리라 봉투와 같은 값이지만, "실제 길이는
+        # total_sec 이다" 라는 규칙에 예외를 두면 읽는 쪽이 매번 null 을 처리해야 한다.
+        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec)
+           values (%s, %s, %s, %s, %s, %s, %s) returning id""",
+        (run_id, segment["id"], start_sec, end_sec, score, cut.reason, end_sec - start_sec),
     )
     clip_id = cursor.fetchone()["id"]
     conn.commit()

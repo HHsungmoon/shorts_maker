@@ -181,5 +181,69 @@ class CombinedSubtitleTest(RenderTestCase):
         self.assertIsNone(combined.call_args.kwargs["subtitle_path"])
 
 
+
+class LegacyClipLengthTest(DbTestCase):
+    """기존 경로(기준 rank → cut)가 만든 클립도 `total_sec` 을 갖는가.
+
+    🔴 시청자 화면이 이 값으로 길이를 보여준다. null 이면 길이가 통째로 안 나오고, 읽는 쪽마다
+    "null 이면 end - start" 폴백을 써야 하는데 그 폴백은 **조합 클립에서 틀린다**(봉투가 나온다).
+    """
+
+    def test_the_backfill_only_touches_clips_without_parts(self):
+        source_id = self.conn.execute(
+            "insert into sources (title, content_type, path, fingerprint, status)"
+            " values ('강연', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE') returning id"
+        ).fetchone()["id"]
+        chunk_id = self.conn.execute(
+            "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+            " values (%s, 0, 0, 3000, 'c.wav') returning id", (source_id,)
+        ).fetchone()["id"]
+        segment_id = self.conn.execute(
+            "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+            " end_utterance_idx) values (%s, 0, 0, 800, 0, 7) returning id", (chunk_id,)
+        ).fetchone()["id"]
+        run_id = self.conn.execute(
+            "insert into runs (source_id) values (%s) returning id", (source_id,)
+        ).fetchone()["id"]
+
+        # 조각 없는 단일 컷 — 봉투가 곧 길이다.
+        plain = self.conn.execute(
+            "insert into clips (run_id, segment_id, start_sec, end_sec) values (%s, %s, 10, 42)"
+            " returning id", (run_id, segment_id)
+        ).fetchone()["id"]
+        # 조합 클립 — 봉투(12:30~41:00)와 실제 길이(30초)가 다르다.
+        # 🔴 run 을 따로 만든다. `uq_clips_run_segment` 가 한 run 안에서 같은 구간의 클립을 하나로
+        # 막는다 — 버튼을 두 번 눌러 중복이 쌓이는 걸 막는 제약이라 여기서도 지켜야 한다.
+        other_run = self.conn.execute(
+            "insert into runs (source_id) values (%s) returning id", (source_id,)
+        ).fetchone()["id"]
+        combo = self.conn.execute(
+            "insert into clips (run_id, segment_id, start_sec, end_sec) values (%s, %s, 750, 2460)"
+            " returning id", (other_run, segment_id)
+        ).fetchone()["id"]
+        for ordinal, (start, end) in enumerate([(750, 770), (2450, 2460)]):
+            self.conn.execute(
+                "insert into clip_parts (clip_id, ordinal, segment_id, start_sec, end_sec,"
+                " start_utterance_idx, end_utterance_idx) values (%s, %s, %s, %s, %s, 0, 1)",
+                (combo, ordinal, segment_id, start, end),
+            )
+        self.conn.commit()
+
+        # 003 마이그레이션과 같은 문장.
+        self.conn.execute(
+            """update clips c set total_sec = c.end_sec - c.start_sec
+               where c.total_sec is null
+                 and not exists (select 1 from clip_parts p where p.clip_id = c.id)"""
+        )
+        self.conn.commit()
+        lengths = {
+            r["id"]: r["total_sec"]
+            for r in self.conn.execute("select id, total_sec from clips")
+        }
+        self.assertEqual(lengths[plain], 32.0)
+        # 🔴 조합 클립은 그대로 null 이어야 한다 — 봉투(1710초)를 길이로 적으면 거짓이 된다.
+        self.assertIsNone(lengths[combo])
+
+
 if __name__ == "__main__":
     unittest.main()
