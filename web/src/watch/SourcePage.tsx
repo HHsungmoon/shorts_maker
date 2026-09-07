@@ -9,8 +9,8 @@ const MAX_LENGTH = 200;
 function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
 	return (
 		<li className="watch-clip">
-			{/* preload="metadata" — 한 줄에 카드가 여럿이라 자동 재생분까지 받아오면 첫 화면이 느려진다.
-			    첫 프레임(포스터)조차 없이 검은 칸만 보이는 것보다는 메타데이터까지가 낫다. */}
+			{/* preload="metadata" — 목록에 여러 개가 있어 전부 받아오면 첫 화면이 느려진다.
+			    첫 프레임조차 없이 검은 칸만 보이는 것보다는 메타데이터까지가 낫다. */}
 			<video
 				className="watch-clip__video"
 				src={clipFileUrl(clip.id)}
@@ -20,15 +20,18 @@ function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
 				onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
 				onEnded={() => recordEvent("short_complete", sourceId, { clipId: clip.id })}
 			/>
-			{clip.question && <p className="watch-clip__question">{clip.question}</p>}
-			<p className="watch-clip__meta">
-				{/* 1명이면 "1명이 물어봤어요"가 오히려 초라하다 — 여럿일 때만 말한다. */}
-				{clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
-				{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
-			</p>
+			<div className="watch-clip__body">
+				{clip.question && <p className="watch-clip__question">{clip.question}</p>}
+				<p className="watch-clip__meta">
+					{/* 1명이면 "1명이 물어봤어요"가 오히려 초라하다 — 여럿일 때만 말한다. */}
+					{clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
+					{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
+				</p>
+			</div>
 		</li>
 	);
 }
+
 
 function UnanswerableRow({ item }: { item: WatchUnanswerable }) {
 	return (
@@ -167,11 +170,39 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		return mine ? { ...question, likes: mine.likes, liked_by_me: mine.liked } : question;
 	});
 
+	// 🔴 답변 숏폼을 **영상 오른쪽**에 세로로 둔다(유튜브의 관련 영상 자리). 아래에 가로로 깔면
+	// 스크롤을 내려야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에
+	// 있어야 한다. 좁은 화면에서는 한 단으로 접히고 숏폼이 질문 폼보다 위로 온다.
+	const shorts = (
+		<section className="watch-shorts">
+			<h2 className="watch-section watch-section--tight">
+				질문에 대한 답
+				{clips.length > 0 && <span className="watch-count">{clips.length}</span>}
+			</h2>
+			{clips.length === 0 ? (
+				// 🔴 빈 칸으로 두지 않는다. 2단 레이아웃에서 오른쪽이 비면 깨져 보이고, 무엇보다
+				// 이 한 줄이 이 서비스가 무엇인지 설명한다 — 처음 온 사람이 질문을 남길 이유가 된다.
+				<p className="watch-empty">
+					아직 올라온 답이 없어요. 질문이 모이면 그 답만 잘라 숏폼으로 만들어 여기에 올립니다.
+				</p>
+			) : (
+				<ul className="watch-clips">
+					{clips.map((clip) => (
+						<ClipCard key={clip.id} clip={clip} sourceId={sourceId} />
+					))}
+				</ul>
+			)}
+		</section>
+	);
+
 	return (
 		<article className="watch-detail">
 			<Link to="/watch" className="watch-back">
 				← 목록으로
 			</Link>
+
+			<div className="watch-columns">
+			<div className="watch-main">
 
 			{source.youtube_id ? (
 				<div className="watch-player">
@@ -201,21 +232,8 @@ function SourceView({ sourceId }: { sourceId: number }) {
 				</a>
 			)}
 
-			{/* 이 제품의 값이 여기서 갚아진다 — "물어봤더니 답이 왔다". 그래서 질문 폼보다 위다.
-			    발행된 클립이 없으면 빈 껍데기를 두지 않고 통째로 감춘다. */}
-			{clips.length > 0 && (
-				<section>
-					<h2 className="watch-section">
-						질문에 대한 답 <span className="watch-count">{clips.length}</span>
-					</h2>
-					{/* 9:16 세로 영상이라 세로로 쌓으면 한 화면에 한 개도 안 들어간다. 가로 스크롤. */}
-					<ul className="watch-clips">
-						{clips.map((clip) => (
-							<ClipCard key={clip.id} clip={clip} sourceId={sourceId} />
-						))}
-					</ul>
-				</section>
-			)}
+			{/* 좁은 화면에서만 여기 나온다 — 넓으면 오른쪽 단이 가져간다(watch.css). */}
+			<div className="watch-shorts--inline">{shorts}</div>
 
 			<section className="watch-ask">
 				<h2 className="watch-section">궁금한 걸 남겨 주세요</h2>
@@ -274,6 +292,11 @@ function SourceView({ sourceId }: { sourceId: number }) {
 					</ul>
 				</section>
 			)}
+			</div>
+
+			{/* 넓은 화면의 오른쪽 단. 스크롤을 내려도 따라오게 sticky. */}
+			<aside className="watch-side">{shorts}</aside>
+			</div>
 		</article>
 	);
 }
