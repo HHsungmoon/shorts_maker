@@ -5,7 +5,8 @@
  */
 
 .watch {
-	max-width: 900px;
+	/* 2단(영상 + 오른쪽 숏폼)이 되려면 900px 로는 좁다. 목록 화면도 같은 폭을 쓴다. */
+	max-width: 1240px;
 	margin: 0 auto;
 	padding: 24px 20px 72px;
 }
@@ -217,45 +218,89 @@
 	color: var(--danger);
 }
 
-/* 답변 숏폼 ------------------------------------------------------------- */
+/* 답변 숏폼 — 영상 오른쪽 단 --------------------------------------------- */
 
-/* 9:16 세로 영상이라 가로로 늘어놓고 스크롤한다. 스크롤바 자리를 미리 비워 두지 않는 이유는
-   카드가 하나뿐일 때 아래가 뜬 것처럼 보이기 때문이다. */
+/* 🔴 유튜브의 관련 영상 자리다. 아래에 가로로 깔면 스크롤을 내려야 보이는데, 이 제품의 값이
+   갚아지는 자리("물어봤더니 답이 왔다")가 거기다 — 영상을 보는 내내 눈에 있어야 한다. */
+.watch-columns {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 340px;
+	gap: 24px;
+	align-items: start;
+}
+
+.watch-main {
+	min-width: 0;
+}
+
+.watch-side {
+	position: sticky;
+	/* 스크롤을 내려도 따라온다. 질문 목록이 길어질수록 이게 필요해진다. */
+	top: 16px;
+	max-height: calc(100vh - 32px);
+	overflow-y: auto;
+}
+
+/* 좁은 화면에서만 본문 안에 나타난다(아래 미디어쿼리에서 켠다). */
+.watch-shorts--inline {
+	display: none;
+}
+
+.watch-section--tight {
+	margin-top: 0;
+}
+
+.watch-empty {
+	margin: 0;
+	padding: 14px;
+	border: 1px dashed var(--border);
+	border-radius: var(--radius);
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
 .watch-clips {
 	list-style: none;
 	margin: 0;
-	padding: 0 0 4px;
+	padding: 0;
 	display: flex;
+	flex-direction: column;
 	gap: 12px;
-	overflow-x: auto;
-	/* 카드가 화면을 넘을 때 손가락이 한 장 단위로 멈추게 한다. */
-	scroll-snap-type: x proximity;
-	-webkit-overflow-scrolling: touch;
 }
 
+/* 썸네일 왼쪽 · 글 오른쪽. 9:16 영상을 단 폭 그대로 두면 한 장이 화면을 다 먹는다. */
 .watch-clip {
-	flex: 0 0 auto;
-	/* 폭 고정 — 세로 영상 한 장이 가로의 절반을 먹으면 옆 카드가 보이지 않아 스크롤을 눈치채지 못한다. */
-	width: 200px;
-	scroll-snap-align: start;
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
 }
 
 .watch-clip__video {
-	display: block;
-	width: 100%;
+	flex: 0 0 auto;
+	width: 108px;
 	aspect-ratio: 9 / 16;
 	border-radius: var(--radius);
 	border: 1px solid var(--border);
 	background: #000;
-	/* 컨트롤 막대 때문에 세로가 조금 남아도 영상은 잘리지 않게. */
-	object-fit: contain;
+	display: block;
+}
+
+.watch-clip__body {
+	min-width: 0;
+	padding-top: 2px;
 }
 
 .watch-clip__question {
-	margin: 8px 0 4px;
+	margin: 0 0 6px;
 	font-size: 14px;
 	line-height: 1.45;
 	overflow-wrap: anywhere;
+	/* 질문이 길어도 카드 높이가 영상보다 커지지 않게 세 줄로 묶는다. */
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
 }
 
 .watch-clip__meta {
@@ -362,6 +407,26 @@
 	color: var(--accent);
 }
 
+/* 오른쪽 단을 둘 만큼 넓지 않으면 한 단으로 접는다. 이때 숏폼은 **질문 폼 위**로 간다 —
+   영상 바로 다음이 이 제품의 답이다. */
+@media (max-width: 900px) {
+	.watch-columns {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.watch-side {
+		display: none;
+	}
+
+	.watch-shorts--inline {
+		display: block;
+	}
+
+	.watch-shorts--inline .watch-section--tight {
+		margin-top: 32px;
+	}
+}
+
 @media (max-width: 600px) {
 	.watch {
 		padding: 16px 14px 56px;
@@ -371,9 +436,7 @@
 		grid-template-columns: 1fr;
 	}
 
-	/* 좁은 화면에서는 카드 하나가 화면을 다 먹지 않게 — 옆 카드가 살짝 보여야 넘길 생각을 한다. */
-	.watch-clip {
-		width: 62vw;
-		max-width: 200px;
+	.watch-clip__video {
+		width: 96px;
 	}
 }
