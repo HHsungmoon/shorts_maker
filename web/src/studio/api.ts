@@ -64,6 +64,19 @@ export function createChunk(sourceId: number, range: ChunkRange = {}): Promise<S
 	});
 }
 
+/**
+ * 숏폼 제목을 고친다.
+ *
+ * 🔴 기본값(질문 문장 또는 구간 설명)은 제목으로 쓰라고 쓴 문장이 아니다. 시청자 목록에 그대로
+ * 보이므로 고칠 길이 있어야 한다.
+ */
+export function patchClipTitle(clipId: number, title: string): Promise<{ id: number; title: string }> {
+	return request<{ id: number; title: string }>(`/api/clips/${clipId}`, {
+		method: "PATCH",
+		body: { title },
+	});
+}
+
 // 🔴 발행하면 이 영상이 로그인 없는 시청자에게 보인다(질문·좋아요 포함). 되돌리려면 unpublish.
 export function publishSource(sourceId: number, published: boolean): Promise<{ published: boolean }> {
 	const action = published ? "publish" : "unpublish";

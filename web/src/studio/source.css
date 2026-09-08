@@ -97,3 +97,19 @@
 	color: var(--text-muted);
 	font-variant-numeric: tabular-nums;
 }
+
+/* 직접 골라 만들기 ------------------------------------------------------- */
+
+/* 완성 클립 아래에 놓이는 부수적인 길. 질문 루프와 시각적으로 다투지 않게 여백만 준다. */
+.sm-own {
+	margin-top: 22px;
+}
+
+.sm-own__lead {
+	margin: 0 0 12px;
+}
+
+/* 안쪽 단계·후보 카드가 이미 자기 배경(--surface)을 갖고 있어서 그대로 두면 흰 위에 흰이다. */
+.sm-own[open] {
+	background: var(--bg);
+}

@@ -89,6 +89,15 @@ export interface ShortsClip {
 	published_at: string | null;
 	/** 조각 합. 조합 클립에서는 start/end 가 봉투라 이쪽이 실제 길이다. */
 	total_sec: number | null;
+	/** 시청자 목록에 보이는 제목. 기본값은 질문(답하기) 또는 구간 설명(기준)이고 고칠 수 있다. */
+	title: string | null;
+	/** 🔴 이 클립이 어디서 나왔나. 질문에서 나왔으면 그 대표 문장, 기준에서 나왔으면 null. */
+	question: string | null;
+	/** 그 질문을 몇 명이 물었나. 질문에서 나온 클립만 의미가 있다. */
+	asked_by: number;
+	/** 이 클립을 만든 run 의 기준 문장. 질문에서 나온 클립은 대표 문장과 같다. */
+	criteria_prompt: string | null;
+	route: string | null;
 	description: string | null;
 	reviews: ShortsClipReview[];
 }
@@ -188,6 +197,13 @@ export interface ShortsCluster {
 	status: "OPEN" | "IN_PROGRESS" | "REVIEW" | "PUBLISHED" | "DECLINED" | "UNANSWERABLE";
 	/** 이 클러스터에 답하려고 띄운 run. 클립이 나오기 전에도 진행을 보여주려고 둔다. */
 	run_id: number | null;
+	/**
+	 * 🔴 run 이 남긴 사유. `답할 구간 없음` 배지만으로는 "영상이 정말 안 다룬다"와 "검색이 엉뚱한
+	 * 데를 봤다"를 구분할 수 없다 — 이유는 이미 저장돼 있으니 화면에 꺼내 놓는다.
+	 */
+	run_note: string | null;
+	/** run 이 실패했을 때의 오류. note 와 달리 이건 정상 결과가 아니다. */
+	run_error: string | null;
 	/** UNANSWERABLE 인데 다른 영상에 답이 있어 보일 때 그 영상. */
 	suggested_source_id: number | null;
 	created_at: string;
