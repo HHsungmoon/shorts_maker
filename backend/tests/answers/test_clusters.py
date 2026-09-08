@@ -15,6 +15,7 @@ from unittest import mock
 
 import numpy as np
 import psycopg
+from psycopg.types.json import Jsonb
 
 from shorts_maker.adapters import gemini
 from shorts_maker.answers import clusters, embeddings
@@ -411,6 +412,45 @@ class EmbeddingStoreTest(ClusterTestCase):
         scores = embeddings.cosine(left, right)[0]
         self.assertAlmostEqual(float(scores[0]), 1.0, places=5)
         self.assertAlmostEqual(float(scores[1]), 0.0, places=5)
+
+
+
+class RunNoteTest(ClusterTestCase):
+    """🔴 상태만 보여주면 크리에이터는 왜 그렇게 됐는지 알 수 없다.
+
+    영상에 그 얘기가 정말 없어서 UNANSWERABLE 이 된 것과, 검색이 엉뚱한 데를 짚어서 그런 것은
+    대응이 다르다 — 전자는 받아들이고 후자는 대표 문장을 고쳐 다시 돌린다(2026-09-08).
+    """
+
+    def test_the_reason_travels_with_the_cluster(self):
+        cluster_id = self.cluster(status="OPEN")
+        run_id = self.conn.execute(
+            """insert into runs (source_id, status, ranked) values (%s, 'DONE', %s) returning id""",
+            (self.source_id, Jsonb({"answerable": False, "reason": "영상에 복지 얘기가 없다"})),
+        ).fetchone()["id"]
+        clusters.transition(self.conn, cluster_id, "IN_PROGRESS", run_id=run_id)
+        clusters.transition(self.conn, cluster_id, "UNANSWERABLE")
+        self.conn.commit()
+        found = clusters.demand(self.conn, self.source_id)[0]
+        self.assertEqual(found["status"], "UNANSWERABLE")
+        self.assertEqual(found["run_note"], "영상에 복지 얘기가 없다")
+
+    def test_a_failed_run_leaves_its_error(self):
+        cluster_id = self.cluster(status="OPEN")
+        run_id = self.conn.execute(
+            "insert into runs (source_id, status, error) values (%s, 'FAILED', '할당량 초과') returning id",
+            (self.source_id,),
+        ).fetchone()["id"]
+        clusters.transition(self.conn, cluster_id, "IN_PROGRESS", run_id=run_id)
+        clusters.transition(self.conn, cluster_id, "OPEN")
+        self.conn.commit()
+        found = clusters.demand(self.conn, self.source_id)[0]
+        self.assertEqual(found["run_error"], "할당량 초과")
+
+    def test_a_cluster_without_a_run_has_no_note(self):
+        self.cluster()
+        found = clusters.demand(self.conn, self.source_id)[0]
+        self.assertIsNone(found["run_note"])
 
 
 if __name__ == "__main__":
