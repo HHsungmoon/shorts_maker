@@ -25,7 +25,10 @@ function Gate() {
 	return (
 		<Routes>
 			<Route index element={<StudioHome />} />
-			<Route path="sources/:sourceId" element={<SourcePage />} />
+			{/* 영상 화면은 탭이 넷이고 그 탭도 주소다(`/sources/3/questions`). 탭 라우트는
+			    SourcePage 안에 있다 — 네 탭이 같은 상태·파생값을 나눠 쓰기 때문에 그걸 들고 있는
+			    쪽이 자식을 직접 그려야 한다. 그래서 여기는 `/*` 로 뒤를 열어만 준다. */}
+			<Route path="sources/:sourceId/*" element={<SourcePage />} />
 			<Route path="*" element={<p className="state">없는 페이지입니다.</p>} />
 		</Routes>
 	);
