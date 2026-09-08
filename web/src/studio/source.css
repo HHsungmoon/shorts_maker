@@ -128,3 +128,85 @@
 .sm-own[open] {
 	background: var(--bg);
 }
+
+/* 탭 -------------------------------------------------------------------- */
+
+/* 세로로 쌓여 있던 여섯 덩어리를 넷으로 갈랐다. 쓰는 빈도가 다르기 때문이다 — 질문은 매일,
+   영상 준비는 영상당 한 번, 기록은 뭔가 이상할 때만 연다. 같은 무게로 늘어놓으면 매일 하는
+   일이 한 번뿐인 일에 파묻힌다. */
+.sm-tabs {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 4px;
+	border-bottom: 1px solid var(--border);
+	margin: 14px 0 16px;
+}
+
+.sm-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 14px;
+	/* 비활성 탭도 같은 폭의 투명 테두리를 갖는다 — 없으면 활성/비활성 사이에서 글자가 흔들린다. */
+	border: 1px solid transparent;
+	border-bottom: none;
+	border-radius: var(--radius) var(--radius) 0 0;
+	/* 아래 경계선 위에 1px 얹혀 활성 탭이 선을 끊는다. */
+	margin-bottom: -1px;
+	font-size: 14px;
+	color: var(--text-muted);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.sm-tab:hover {
+	color: var(--text);
+}
+
+.sm-tab--on {
+	background: var(--surface);
+	border-color: var(--border);
+	color: var(--text);
+	font-weight: 600;
+}
+
+/* 답을 기다리는 질문 수. 이 탭에 갈 이유가 곧 이 숫자라서 탭 이름 옆에 붙인다. */
+.sm-tab__badge {
+	background: var(--accent);
+	color: #fff;
+	border-radius: 999px;
+	padding: 0 7px;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+/* 준비가 안 끝나면 질문에 답할 수 없다. 고장이 아니라 아직 안 한 일이라 위험(빨강)이 아니라
+   알림 배너와 같은 색을 쓴다. */
+.sm-tab__need {
+	padding: 0 7px;
+	border: 1px solid #f0dca8;
+	border-radius: 999px;
+	background: #fff8e6;
+	color: #6b5518;
+	font-size: 12px;
+	font-weight: 400;
+}
+
+/* 탭 맨 위의 한 줄 안내(질문 탭의 "준비가 끝나야 답할 수 있습니다"). */
+.sm-hint {
+	margin: 0 0 10px;
+}
+
+/* 플레이어 접기 ---------------------------------------------------------- */
+
+/* 🔴 95분짜리 영상의 임베드는 세로를 크게 먹는데, 답을 쓰는 동안 원본이 실제로 뭐라고
+   하는지 확인해야 해서 없앨 수도 없다. 그래서 접을 수 있게만 하고 기본은 펼쳐 둔다. */
+.sm-playerfold > summary {
+	/* 요약줄이 곧 영상 제목이다. 아래 <details> 들(전사·비용)과 같은 무게로 둔다. */
+	font-size: 14px;
+}
+
+.sm-playerfold .sm-player {
+	margin-bottom: 0;
+}

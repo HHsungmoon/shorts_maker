@@ -1,13 +1,5 @@
 import { useState } from "react";
-import {
-	aggregateQuestions,
-	answerCluster,
-	clipUrl,
-	fetchClusters,
-	patchCluster,
-	publishClip,
-} from "../api";
-import { useAsync } from "../../shared/useAsync";
+import { aggregateQuestions, answerCluster, clipUrl, patchCluster, publishClip } from "../api";
 import { ClipVideo } from "./ClipVideo";
 import type { ShortsCluster, ShortsClusterClip, ShortsClusterList, ShortsJob } from "../types";
 import "../clusters.css";
@@ -33,8 +25,12 @@ interface ClusterPanelProps {
 	/** 비공개면 시청자 화면에 안 보이니 질문이 애초에 들어올 수 없다. 빈 화면의 이유를 이걸로 설명한다. */
 	published: boolean;
 	busy: boolean;
-	/** 페이지의 reloadToken. 잡이 끝나면 올라가고, 그때 이 패널도 다시 읽는다. */
-	reloadToken: number;
+	/**
+	 * 페이지가 대신 읽어 온 질문 목록. 여기서 직접 읽지 않는 이유는 탭 바가 같은 목록으로
+	 * "답을 기다리는 질문 수" 배지를 그리기 때문이다 — 두 곳에서 읽으면 요청이 두 번 나가고
+	 * 두 숫자가 어긋난다.
+	 */
+	list: { data: ShortsClusterList | null; error: Error | null };
 	/** 페이지의 submit(). 집계와 [답하기] 둘 다 잡이라 진행 배너와 폴링을 그대로 공유한다. */
 	onJob: (start: () => Promise<ShortsJob>) => void;
 	/** 잡이 아닌 변경(대표 문장·상태·발행) 뒤 목록을 다시 읽게 한다(페이지가 reloadToken 을 올린다). */
@@ -45,7 +41,7 @@ export function ClusterPanel({
 	sourceId,
 	published,
 	busy,
-	reloadToken,
+	list,
 	onJob,
 	onChanged,
 }: ClusterPanelProps) {
@@ -57,7 +53,6 @@ export function ClusterPanel({
 	const [pending, setPending] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	const list = useAsync<ShortsClusterList>(() => fetchClusters(sourceId), [sourceId, reloadToken]);
 	const clusters = list.data?.clusters ?? [];
 	const unclustered = list.data?.unclustered ?? [];
 	const total = clusters.reduce((n, c) => n + c.question_count, 0) + unclustered.length;
