@@ -21,10 +21,11 @@ function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
 				onEnded={() => recordEvent("short_complete", sourceId, { clipId: clip.id })}
 			/>
 			<div className="watch-clip__body">
-				{clip.question && <p className="watch-clip__question">{clip.question}</p>}
+				{clip.title && <p className="watch-clip__question">{clip.title}</p>}
 				<p className="watch-clip__meta">
-					{/* 1명이면 "1명이 물어봤어요"가 오히려 초라하다 — 여럿일 때만 말한다. */}
-					{clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
+					{/* 🔴 질문에서 나온 숏폼만 "물어봤어요"를 붙인다. 크리에이터가 직접 뽑은 것에 붙이면
+					    거짓말이 된다. 1명이면 오히려 초라해서 여럿일 때만 말한다. */}
+					{clip.question && clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
 					{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
 				</p>
 			</div>
@@ -175,15 +176,17 @@ function SourceView({ sourceId }: { sourceId: number }) {
 	// 있어야 한다. 좁은 화면에서는 한 단으로 접히고 숏폼이 질문 폼보다 위로 온다.
 	const shorts = (
 		<section className="watch-shorts">
+			{/* 🔴 "질문에 대한 답" 이라고 부르지 않는다. 이 목록에는 크리에이터가 자기 기준으로
+			    뽑은 숏폼도 함께 올라간다 — 질문에서 나온 것만 있는 자리가 아니다. */}
 			<h2 className="watch-section watch-section--tight">
-				질문에 대한 답
+				이 영상의 숏폼
 				{clips.length > 0 && <span className="watch-count">{clips.length}</span>}
 			</h2>
 			{clips.length === 0 ? (
 				// 🔴 빈 칸으로 두지 않는다. 2단 레이아웃에서 오른쪽이 비면 깨져 보이고, 무엇보다
 				// 이 한 줄이 이 서비스가 무엇인지 설명한다 — 처음 온 사람이 질문을 남길 이유가 된다.
 				<p className="watch-empty">
-					아직 올라온 답이 없어요. 질문이 모이면 그 답만 잘라 숏폼으로 만들어 여기에 올립니다.
+					아직 올라온 숏폼이 없어요. 궁금한 걸 남기면 그 답만 잘라 숏폼으로 만들어 여기에 올립니다.
 				</p>
 			) : (
 				<ul className="watch-clips">

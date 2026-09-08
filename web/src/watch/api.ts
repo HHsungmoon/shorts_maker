@@ -33,7 +33,9 @@ export interface WatchClip {
 	total_sec: number | null;
 	published_at: string;
 	question_cluster_id: number | null;
-	/** 이 숏폼이 답하는 질문(클러스터 대표 문장). 클러스터 없이 발행된 클립은 null 이다. */
+	/** 목록에 보이는 제목. 크리에이터가 고친 문장이 있으면 그것, 없으면 질문이 온다. */
+	title: string | null;
+	/** 이 숏폼이 답하는 질문(클러스터 대표 문장). 질문에서 나오지 않은 클립은 null 이다. */
 	question: string | null;
 	/** 그 클러스터에 묶인 질문 수. 1 이면 "몇 명이 물어봤다"를 말할 이유가 없다. */
 	asked_by: number;
