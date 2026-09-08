@@ -7,8 +7,8 @@ import type {
 	ShortsJob,
 	ShortsMediaList,
 	ShortsRemoval,
-	ShortsSource,
 	ShortsSourceDetail,
+	ShortsSourceListItem,
 	ShortsStatus,
 	ShortsUtterance,
 } from "./types";
@@ -83,8 +83,18 @@ export function publishSource(sourceId: number, published: boolean): Promise<{ p
 	return request<{ published: boolean }>(`/api/sources/${sourceId}/${action}`, { method: "POST" });
 }
 
-export function fetchShortsSources(): Promise<ShortsSource[]> {
-	return request<ShortsSource[]>("/api/sources");
+export function fetchShortsSources(): Promise<ShortsSourceListItem[]> {
+	return request<ShortsSourceListItem[]>("/api/sources");
+}
+
+/**
+ * 유튜브 썸네일. 저장하지 않고 id 에서 만든다 — 영상이 바뀌면 썸네일도 따라 바뀐다.
+ *
+ * watch/api.ts 에 같은 함수가 있지만 가져오지 않는다. 두 트리는 lazy 로 갈라져 있어서(App.tsx)
+ * import 하나로 시청자 코드가 스튜디오 청크에 딸려 들어온다.
+ */
+export function thumbnailUrl(youtubeId: string): string {
+	return `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`;
 }
 
 export function fetchShortsSource(sourceId: number): Promise<ShortsSourceDetail> {

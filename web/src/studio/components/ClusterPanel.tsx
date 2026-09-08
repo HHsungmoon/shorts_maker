@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<ShortsCluster["status"], string> = {
 	UNANSWERABLE: "답할 구간 없음",
 };
 
-// mm:ss. ShortsPage 에도 같은 함수가 있지만 가져오면 페이지와 컴포넌트가 서로를 import 한다.
+// mm:ss. SourcePage 에도 같은 함수가 있지만 가져오면 페이지와 컴포넌트가 서로를 import 한다.
 function time(seconds: number): string {
 	const total = Math.round(seconds);
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;

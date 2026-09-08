@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import {
 	clipUrl,
 	createChunk,
-	deleteMedia,
-	fetchJob,
-	fetchMedia,
 	fetchShortsSource,
 	fetchStatus,
 	patchClipTitle,
@@ -19,19 +17,15 @@ import {
 	runStt,
 	segmentPreviewUrl,
 } from "./api";
-import { useAuth } from "./AuthContext";
-import { PRODUCT_NAME, REPO_NAME } from "../shared/brand";
 import { ClipVideo } from "./components/ClipVideo";
 import { ClusterPanel } from "./components/ClusterPanel";
-import { MediaLibrary } from "./components/MediaLibrary";
-import { NewSourceModal } from "./components/NewSourceModal";
 import { Step } from "./components/Step";
+import { StudioBanners, StudioHead } from "./components/StudioChrome";
+import { STAGE_LABEL, useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type {
 	ShortsClip,
 	ShortsCost,
-	ShortsJob,
-	ShortsMediaList,
 	ShortsSegment,
 	ShortsSourceDetail,
 	ShortsStatus,
@@ -44,41 +38,30 @@ const DEFAULT_CRITERIA = "한 문장으로 인용할 만한 핵심 논지";
 // 후보를 한 번에 몇 개 보여줄까. 구간이 40개면 후보도 40개라 전부 그리면 화면이 그것만으로 찬다.
 const RANKED_PREVIEW = 7;
 
-const STAGE_LABEL: Record<string, string> = {
-	download: "영상 받기",
-	register: "원본 등록",
-	chunk: "구간 추출",
-	stt: "음성 인식",
-	segment: "주제 분할",
-	rank: "선정",
-	cut: "클립 만들기",
-	render: "렌더",
-	pipeline: "전체 실행",
-	cluster: "질문 집계",
-	answer: "질문에 답하기",
-};
-
 function time(seconds: number): string {
 	const total = Math.round(seconds);
 	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-function elapsed(since: string): string {
-	return `${Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 1000))}초`;
-}
+/**
+ * 영상 하나의 작업 화면.
+ *
+ * 무엇을 작업 중인지는 **URL 이** 정한다(`/sources/:sourceId`). 예전엔 목록과 한 화면이라
+ * 로컬 state 로 골랐는데, 그러면 지금 보는 영상을 링크로 줄 수도 북마크할 수도 없었다.
+ */
+export function SourcePage() {
+	const params = useParams();
+	// 숫자가 아니면 소스일 수 없다 — 서버에 물어보기 전에 여기서 거른다.
+	const raw = params.sourceId ?? "";
+	const sourceId = /^\d+$/.test(raw) ? Number(raw) : null;
 
-export function ShortsPage() {
-	const { authRequired, signOut } = useAuth();
-	const [picked, setPicked] = useState<number | null>(null);
-	const [reloadToken, setReloadToken] = useState(0);
-	const [job, setJob] = useState<ShortsJob | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const [notice, setNotice] = useState<string | null>(null);
+	const studio = useStudioJob();
+	const { jobBusy, reloadToken, reload, submit, act } = studio;
+
 	const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
 	const [openPreview, setOpenPreview] = useState<number | null>(null);
 	const [transcript, setTranscript] = useState<ShortsUtterance[] | null>(null);
 	const [language, setLanguage] = useState<string | null>(null);
-	const [modalOpen, setModalOpen] = useState(false);
 	const [showAllRanked, setShowAllRanked] = useState(false);
 	const [titleEdit, setTitleEdit] = useState<number | null>(null);
 	const [titleDraft, setTitleDraft] = useState("");
@@ -87,85 +70,17 @@ export function ShortsPage() {
 	const [range, setRange] = useState<{ start: number; end: number } | null>(null);
 	// 조각이 이미 있는데도 범위를 다시 고르는 중인가("다시 추출" 을 누른 뒤).
 	const [rangeOpen, setRangeOpen] = useState(false);
-	const pollRef = useRef<number | null>(null);
 
 	const status = useAsync<ShortsStatus>(fetchStatus, [reloadToken]);
-	const media = useAsync<ShortsMediaList>(fetchMedia, [reloadToken]);
-	const registered = (media.data?.items ?? []).filter((i) => i.sourceId !== null);
-	const sourceId = picked ?? registered[0]?.sourceId ?? null;
 	const detail = useAsync<ShortsSourceDetail | null>(
 		() => (sourceId === null ? Promise.resolve(null) : fetchShortsSource(sourceId)),
 		[sourceId, reloadToken],
 	);
 
-	const jobBusy = job !== null && job.status !== "DONE" && job.status !== "FAILED";
-
-	useEffect(() => {
-		if (!job || !jobBusy) {
-			return;
-		}
-		pollRef.current = window.setTimeout(async () => {
-			try {
-				const next = await fetchJob(job.id);
-				setJob(next);
-				if (next.status === "DONE" || next.status === "FAILED") {
-					setReloadToken((n) => n + 1);
-					setError(next.error);
-				}
-			} catch (e: unknown) {
-				setError(e instanceof Error ? e.message : String(e));
-			}
-		}, 2000);
-		return () => {
-			if (pollRef.current) {
-				window.clearTimeout(pollRef.current);
-			}
-		};
-	}, [job, jobBusy]);
-
-	const submit = useCallback(async (start: () => Promise<ShortsJob>) => {
-		setError(null);
-		setNotice(null);
-		try {
-			setJob(await start());
-		} catch (e: unknown) {
-			setError(e instanceof Error ? e.message : String(e));
-		}
-	}, []);
-
-	const act = useCallback(async (run: () => Promise<unknown>) => {
-		setError(null);
-		try {
-			await run();
-			setReloadToken((n) => n + 1);
-		} catch (e: unknown) {
-			setError(e instanceof Error ? e.message : String(e));
-		}
-	}, []);
-
-	// 🔴 서버에서 파일과 파생물을 실제로 지운다. 되돌릴 수 없어 무엇이 사라지는지 먼저 말한다.
-	const remove = useCallback(
-		async (name: string) => {
-			const item = media.data?.items.find((i) => i.name === name);
-			const extra = item?.sourceId ? "\n전사·구간·클립도 함께 지워집니다." : "";
-			if (!window.confirm(`${name} 을(를) 서버에서 삭제합니다.${extra}\n되돌릴 수 없습니다.`)) {
-				return;
-			}
-			setError(null);
-			try {
-				const result = await deleteMedia(name);
-				const freed = (result.freedBytes / (1 << 20)).toFixed(0);
-				setNotice(`${result.removed.length}개 파일 삭제 · ${freed}MB 확보`);
-				if (item?.sourceId === sourceId) {
-					setPicked(null);
-				}
-				setReloadToken((n) => n + 1);
-			} catch (e: unknown) {
-				setError(e instanceof Error ? e.message : String(e));
-			}
-		},
-		[media.data, sourceId],
-	);
+	// 🔴 훅을 전부 부른 뒤에 돌려보낸다. 위에서 return 하면 렌더마다 훅 개수가 달라진다.
+	if (sourceId === null) {
+		return <NotFound />;
+	}
 
 	const data = detail.data;
 	const geminiReady = status.data?.geminiKey === true;
@@ -239,68 +154,29 @@ export function ShortsPage() {
 
 	return (
 		<div className="page">
-			<div className="page-head">
-				<h1 className="page-title">{PRODUCT_NAME}</h1>
-				{data && (
-					<span className="page-count">
-						발화 {utterances} · 구간 {segments.length} · 클립 {data.clips.length}
-					</span>
-				)}
-				<span className="sm-actions sm-actions--end">
-					<button
-						type="button"
-						className="button button--small sm-go"
-						onClick={() => setModalOpen(true)}
-					>
-						+ 새로 만들기
-					</button>
-					{authRequired && (
-						<button type="button" className="button button--small" onClick={signOut}>
-							로그아웃
-						</button>
-					)}
-				</span>
-			</div>
+			{/* 브라우저 뒤로가기로도 돌아가지만, 링크로 열린 화면에는 그 길이 없다. */}
+			<Link to="/" className="sm-back">
+				← 영상 목록
+			</Link>
 
-			{status.error && (
-				<div className="notice">
-					서버 상태를 읽지 못했습니다. {REPO_NAME} 가 떠 있는지 확인하세요 ({status.error.message}).
-				</div>
-			)}
-			{status.data && !geminiReady && (
-				<div className="notice">GEMINI_API_KEY 가 없어 4·5단계를 실행할 수 없습니다.</div>
-			)}
-			{error && <p className="state state--error">{error}</p>}
-			{notice && <div className="notice">{notice}</div>}
-			{jobBusy && job && (
-				<div className="notice">
-					{STAGE_LABEL[job.kind] ?? job.kind} 진행 중… ({elapsed(job.createdAt)} 경과) · 끝날
-					때까지 다른 실행은 대기합니다
-				</div>
-			)}
-
-			<NewSourceModal
-				open={modalOpen}
-				onClose={() => setModalOpen(false)}
-				unregistered={(media.data?.items ?? []).filter((i) => i.sourceId === null)}
-				languages={status.data?.languages ?? { ko: "한국어", en: "영어" }}
-				onStarted={setJob}
+			<StudioHead
+				title={data ? data.source.title : "불러오는 중…"}
+				count={
+					data && `발화 ${utterances} · 구간 ${segments.length} · 클립 ${data.clips.length}`
+				}
 			/>
 
-			{media.data && (
-				<MediaLibrary
-					media={media.data}
-					selectedSourceId={sourceId}
-					onSelect={(id) => {
-						setPicked(id);
-						setTranscript(null);
-						setOpenPreview(null);
-						setRange(null);
-						setRangeOpen(false);
-					}}
-					onDelete={remove}
-					busy={jobBusy}
-				/>
+			<StudioBanners status={status} studio={studio} />
+
+			{detail.error && (
+				<>
+					<p className="state state--error">
+						이 영상을 찾을 수 없습니다. ({detail.error.message})
+					</p>
+					<p className="sm-meta" style={{ textAlign: "center" }}>
+						<Link to="/">영상 목록으로 돌아가기</Link>
+					</p>
+				</>
 			)}
 
 			{/* 무엇을 뽑을지 정하려면 원본을 봐야 한다. 자체 <video> 가 아니라 유튜브 임베드다 —
@@ -330,7 +206,7 @@ export function ShortsPage() {
 					busy={jobBusy}
 					reloadToken={reloadToken}
 					onJob={submit}
-					onChanged={() => setReloadToken((n) => n + 1)}
+					onChanged={reload}
 				/>
 			)}
 
@@ -344,9 +220,7 @@ export function ShortsPage() {
 				done={data !== null}
 				next={nextStep === 1}
 				detail={
-					data
-						? `${data.source.title} · ${time(data.source.duration_sec ?? 0)}`
-						: "위에서 선택하거나 새로 만드세요"
+					data ? `${data.source.title} · ${time(data.source.duration_sec ?? 0)}` : "불러오는 중…"
 				}
 				actions={
 					data && (
@@ -366,7 +240,7 @@ export function ShortsPage() {
 								onClick={() =>
 									act(async () => {
 										await publishSource(data.source.id, !data.source.published);
-										setReloadToken((n) => n + 1);
+										reload();
 									})
 								}
 							>
@@ -623,7 +497,7 @@ export function ShortsPage() {
 												act(async () => {
 													await patchClipTitle(clip.id, titleDraft);
 													setTitleEdit(null);
-													setReloadToken((n) => n + 1);
+													reload();
 												})
 											}
 										>
@@ -694,7 +568,7 @@ export function ShortsPage() {
 											onClick={() =>
 												act(async () => {
 													await publishClip(clip.id, !clip.published_at);
-													setReloadToken((n) => n + 1);
+													reload();
 												})
 											}
 										>
@@ -1048,5 +922,17 @@ function CostDetail({ cost }: { cost: ShortsCost }) {
 				/1M · ₩{cost.rate.usdKrw}/$ 기준
 			</p>
 		</>
+	);
+}
+
+/** 주소를 손으로 고쳤거나 지워진 영상이다. 막다른 화면을 만들지 않고 목록으로 되돌린다. */
+function NotFound() {
+	return (
+		<div className="page">
+			<p className="state">찾을 수 없습니다.</p>
+			<p className="sm-meta" style={{ textAlign: "center" }}>
+				<Link to="/">영상 목록으로 돌아가기</Link>
+			</p>
+		</div>
 	);
 }
