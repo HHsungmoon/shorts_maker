@@ -162,6 +162,8 @@ export function ClusterPanel({
 							</div>
 						) : (
 							<>
+								{/* 질문 문장이 첫 줄을 통째로 쓴다. 배지·버튼과 같은 줄에 두면 오른쪽 끝이
+								    붐벼서 정작 읽어야 할 문장이 뒤로 밀린다. */}
 								<button
 									type="button"
 									className="sm-cluster__toggle"
@@ -170,52 +172,67 @@ export function ClusterPanel({
 									<span className="sm-cluster__mark">{open === cluster.id ? "▾" : "▸"}</span>
 									{cluster.canonical_text}
 								</button>
-								<span className="sm-meta">
-									질문 {cluster.question_count} · 좋아요 {cluster.like_count}
-								</span>
-								<span className={`sm-status sm-status--${badge(cluster.status)}`}>
-									{STATUS_LABEL[cluster.status]}
-								</span>
-								{/* 상태가 곧 다음 행동이다 — 무엇을 누를 수 있는지 배지 옆에서 바로 끝난다. */}
-								{cluster.status === "OPEN" && (
-									<button
-										type="button"
-										className="button button--small sm-go"
-										disabled={busy}
-										title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : undefined}
-										onClick={() => onJob(() => answerCluster(cluster.id))}
-									>
-										답하기
-									</button>
-								)}
-								{cluster.status === "IN_PROGRESS" && <span className="sm-meta">만드는 중…</span>}
-								{/* 보류(DECLINED)와 답할 구간 없음(UNANSWERABLE)은 둘 다 되돌릴 수 있는 상태다
-								    (answers/clusters.TRANSITIONS). 화면에 길을 두지 않으면 한 번 보류한 질문이
-								    영원히 묻힌다 — 대표 문장을 고치거나 구간을 더 나눈 뒤 다시 시도할 수 있어야 한다. */}
-								{(cluster.status === "UNANSWERABLE" || cluster.status === "DECLINED") && (
+								<div className="sm-cluster__row">
+									<span className="sm-meta">
+										질문 {cluster.question_count} · 좋아요 {cluster.like_count}
+									</span>
+									<span className={`sm-status sm-status--${badge(cluster.status)}`}>
+										{STATUS_LABEL[cluster.status]}
+									</span>
+									{/* 상태가 곧 다음 행동이다 — 무엇을 누를 수 있는지 배지 옆에서 바로 끝난다. */}
+									{cluster.status === "OPEN" && (
+										<button
+											type="button"
+											className="button button--small sm-go"
+											disabled={busy}
+											title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : undefined}
+											onClick={() => onJob(() => answerCluster(cluster.id))}
+										>
+											답하기
+										</button>
+									)}
+									{cluster.status === "IN_PROGRESS" && <span className="sm-meta">만드는 중…</span>}
+									{/* 보류(DECLINED)와 답할 구간 없음(UNANSWERABLE)은 둘 다 되돌릴 수 있는 상태다
+									    (answers/clusters.TRANSITIONS). 화면에 길을 두지 않으면 한 번 보류한 질문이
+									    영원히 묻힌다 — 대표 문장을 고치거나 구간을 더 나눈 뒤 다시 시도할 수 있어야 한다. */}
+									{(cluster.status === "UNANSWERABLE" || cluster.status === "DECLINED") && (
+										<button
+											type="button"
+											className="button button--small"
+											disabled={pending === cluster.id}
+											onClick={() =>
+												act(cluster.id, () => patchCluster(cluster.id, { status: "OPEN" }))
+											}
+										>
+											다시 열기
+										</button>
+									)}
 									<button
 										type="button"
 										className="button button--small"
-										disabled={pending === cluster.id}
-										onClick={() => act(cluster.id, () => patchCluster(cluster.id, { status: "OPEN" }))}
+										onClick={() => {
+											setEditing(cluster.id);
+											setDraft(cluster.canonical_text);
+											setError(null);
+										}}
 									>
-										다시 열기
+										고치기
 									</button>
-								)}
-								<button
-									type="button"
-									className="button button--small"
-									onClick={() => {
-										setEditing(cluster.id);
-										setDraft(cluster.canonical_text);
-										setError(null);
-									}}
-								>
-									고치기
-								</button>
+								</div>
 							</>
 						)}
 					</div>
+
+					{/* 🔴 `답할 구간 없음` 배지만 보면 크리에이터는 아무것도 알 수 없다 — 영상이 정말 그
+					    주제를 안 다룬 건지, 검색이 엉뚱한 구간을 본 건지 구분이 안 된다. 실패가 아니라
+					    정직한 결과이므로 오류 상자가 아니라 옅은 본문으로 둔다. */}
+					{cluster.status === "UNANSWERABLE" && cluster.run_note && (
+						<p className="sm-cluster__why">{cluster.run_note}</p>
+					)}
+					{/* 이쪽은 진짜 실패다. 상태와 무관하게 보여준다 — 실패한 run 은 상태를 못 옮긴다. */}
+					{cluster.run_error && (
+						<p className="sm-cluster__why sm-cluster__why--error">{cluster.run_error}</p>
+					)}
 
 					{/* 발행 전 검토와 발행 뒤 확인이 같은 자리다. 발행된 클립도 계속 보여준다 —
 					    "지금 시청자에게 나가 있는 게 뭔가"를 여기 말고 볼 데가 없다. */}
