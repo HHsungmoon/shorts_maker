@@ -53,8 +53,29 @@ def status() -> dict:
 
 @router.get("/sources")
 def list_sources() -> list[dict]:
+    """등록된 영상과 **각각 어디까지 왔는지**.
+
+    홈 화면이 카드 하나에 진행 상황을 그리는 데 쓴다. 영상마다 상세를 따로 부르면 N+1 이 되고,
+    영상이 열 개만 돼도 홈이 느려진다 — 세는 건 SQL 한 번이면 된다.
+    """
     with connect() as conn:
-        return rows(conn, "select * from sources order by id desc")
+        return rows(
+            conn,
+            """select s.*,
+                      (select count(*) from chunks c where c.source_id = s.id) as chunk_count,
+                      (select count(*) from utterances u join chunks c on c.id = u.chunk_id
+                        where c.source_id = s.id) as utterance_count,
+                      (select count(*) from segments sg join chunks c on c.id = sg.chunk_id
+                        where c.source_id = s.id) as segment_count,
+                      (select count(*) from questions q where q.source_id = s.id) as question_count,
+                      (select count(*) from question_clusters qc
+                        where qc.source_id = s.id and qc.status = 'OPEN') as open_cluster_count,
+                      (select count(*) from clips cl join runs r on r.id = cl.run_id
+                        where r.source_id = s.id) as clip_count,
+                      (select count(*) from clips cl join runs r on r.id = cl.run_id
+                        where r.source_id = s.id and cl.published_at is not null) as published_clip_count
+               from sources s order by s.id desc""",
+        )
 
 
 @router.get("/sources/{source_id}")
