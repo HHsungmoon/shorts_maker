@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import pricing
 from ..adapters import ytdlp, ffmpeg
@@ -75,9 +75,18 @@ def get_source(source_id: int) -> dict:
         runs = rows(conn, "select * from runs where source_id = %s order by id desc", (source_id,))
         clips = rows(
             conn,
-            """select cl.*, sg.description from clips cl
+            # 🔴 클립이 **어디서 나왔는지**를 함께 준다. 질문에 답한 것과 크리에이터가 자기 기준으로
+            # 뽑은 것이 한 목록에 섞이면 "클립 3" 이라는 이름만으로는 구분할 수가 없다.
+            # 질문에서 나온 것은 대표 문장이, 기준에서 나온 것은 그때 쓴 기준 문장이 이름이 된다.
+            """select cl.*, sg.description,
+                      r.criteria_prompt, r.route,
+                      qc.canonical_text as question,
+                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
+               from clips cl
                join segments sg on sg.id = cl.segment_id
                join chunks ch on ch.id = sg.chunk_id
+               join runs r on r.id = cl.run_id
+               left join question_clusters qc on qc.id = cl.question_cluster_id
                where ch.source_id = %s order by cl.id desc""",
             (source_id,),
         )
@@ -160,6 +169,12 @@ class RankIn(BaseModel):
 class ReviewIn(BaseModel):
     verdict: str
     note: str | None = None
+
+
+class ClipPatchIn(BaseModel):
+    """숏폼 제목. 시청자 목록에서 보이는 문장이라 크리에이터가 고칠 수 있어야 한다."""
+
+    title: str = Field(min_length=1, max_length=200)
 
 
 class ClusterPatchIn(BaseModel):
@@ -501,6 +516,29 @@ def answer_cluster(cluster_id: int) -> dict:
             return answer.run(conn, deps.cfg, cluster_id)
 
     return submit("answer", f"cluster {cluster_id}", work)
+
+
+@router.patch("/clips/{clip_id}")
+def patch_clip(clip_id: int, body: ClipPatchIn) -> dict:
+    """제목을 고친다.
+
+    🔴 기본값은 질문(답하기 경로) 또는 구간 설명(기준 경로)이지만 둘 다 제목으로 쓰라고 쓴 문장이
+    아니다. 시청자 목록에 그대로 보이므로 고칠 길이 있어야 한다.
+    """
+    # 🔴 공백만 있는 제목은 min_length 를 통과한다. 그대로 저장하면 빈 문자열이 남아 목록에서
+    # 제목 자리가 사라지고, "제목이 없는 것"과 "빈 제목"이 구분되지 않는다.
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(422, "제목을 입력하세요")
+    with connect() as conn:
+        row = conn.execute(
+            "update clips set title = %s where id = %s returning id, title",
+            (title, clip_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "clip not found")
+        conn.commit()
+    return dict(row)
 
 
 @router.post("/clips/{clip_id}/publish")
