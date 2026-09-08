@@ -40,6 +40,24 @@ export interface ShortsSource {
 	channel: string | null;
 }
 
+/**
+ * 목록(GET /api/sources)이 주는 행 = `sources` 행 + **어디까지 왔는지** 세어 준 집계.
+ *
+ * 🔴 상세(GET /api/sources/{id})의 `source` 에는 이 집계가 없다 — 그래서 ShortsSource 에 얹지 않고
+ * 목록 전용 타입으로 갈랐다. 한 타입으로 합치면 상세 화면에서 `chunk_count` 를 읽을 수 있어 보이는데
+ * 실제로는 undefined 다.
+ */
+export interface ShortsSourceListItem extends ShortsSource {
+	chunk_count: number;
+	utterance_count: number;
+	segment_count: number;
+	question_count: number;
+	/** 🔴 아직 답하지 않은 질문 묶음. 홈에서 이 영상을 열 이유가 바로 이 숫자다(tease §3). */
+	open_cluster_count: number;
+	clip_count: number;
+	published_clip_count: number;
+}
+
 export interface ShortsSegment {
 	id: number;
 	idx: number;

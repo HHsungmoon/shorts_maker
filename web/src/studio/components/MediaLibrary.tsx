@@ -1,9 +1,12 @@
 import type { ShortsMediaList } from "../types";
 
+// 디스크에 실제로 있는 파일 목록이다 — 등록된 영상 목록(홈의 카드)과 겹치지만 같지 않다.
+// 여기에만 보이는 것이 둘 있다: 아직 등록하지 않은 파일(scp 로 올린 것)과 용량.
+//
+// 🔴 영상을 고르는 일은 이제 홈의 카드가 한다. 선택 버튼을 여기 두면 같은 일을 하는 길이 둘이
+// 되고, 고른 결과가 URL 에 남지 않는다.
 interface Props {
 	media: ShortsMediaList;
-	selectedSourceId: number | null;
-	onSelect: (sourceId: number) => void;
 	onDelete: (name: string) => void;
 	busy: boolean;
 }
@@ -19,7 +22,7 @@ function minutes(seconds: number | null): string {
 	return seconds ? `${Math.round(seconds / 60)}분` : "-";
 }
 
-export function MediaLibrary({ media, selectedSourceId, onSelect, onDelete, busy }: Props) {
+export function MediaLibrary({ media, onDelete, busy }: Props) {
 	const { disk } = media;
 	const usedPct = Math.round((disk.usedBytes / disk.totalBytes) * 100);
 
@@ -49,19 +52,7 @@ export function MediaLibrary({ media, selectedSourceId, onSelect, onDelete, busy
 						{size(item.sizeBytes)} · {minutes(item.durationSec)} · {item.name}
 					</span>
 					{item.sourceId === null && <span className="sm-badge">미등록</span>}
-					{item.sourceId !== null && item.sourceId === selectedSourceId && (
-						<span className="sm-score">선택됨</span>
-					)}
 					<span className="sm-actions sm-actions--end">
-						{item.sourceId !== null && item.sourceId !== selectedSourceId && (
-							<button
-								type="button"
-								className="button button--small"
-								onClick={() => onSelect(item.sourceId as number)}
-							>
-								선택
-							</button>
-						)}
 						<button
 							type="button"
 							className="button button--small button--danger"
