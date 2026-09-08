@@ -180,7 +180,9 @@ def _run_inside(
 
     # ⑥ 컷 — rank 가 범위를 이미 정했으므로 LLM 을 다시 부르지 않는다
     clip_id = cutting.create_answer_clip(
-        conn, run_id, winner.parts, float(winner.verdict.score), winner.candidate.reason
+        conn, run_id, winner.parts, float(winner.verdict.score), winner.candidate.reason,
+        # 질문이 곧 이 숏폼의 제목이다 — 시청자가 목록에서 보는 것도 이 문장이다.
+        title=question,
     )
     conn.execute(
         "update clips set question_cluster_id = %s where id = %s", (cluster["id"], clip_id)

@@ -130,9 +130,12 @@ def create_clip(
     cursor = conn.execute(
         # 🔴 total_sec 은 여기서도 채운다. 조각 하나짜리라 봉투와 같은 값이지만, "실제 길이는
         # total_sec 이다" 라는 규칙에 예외를 두면 읽는 쪽이 매번 null 을 처리해야 한다.
-        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec)
-           values (%s, %s, %s, %s, %s, %s, %s) returning id""",
-        (run_id, segment["id"], start_sec, end_sec, score, cut.reason, end_sec - start_sec),
+        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec, title)
+           values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+        # 제목의 기본값은 구간 설명이다. "…를 설명한다" 형태라 제목으로 완벽하지 않지만 빈 칸보다
+        # 낫고, 크리에이터가 고칠 수 있다(PATCH /api/clips/{id}).
+        (run_id, segment["id"], start_sec, end_sec, score, cut.reason, end_sec - start_sec,
+         (segment.get("description") or "").strip()[:200] or None),
     )
     clip_id = cursor.fetchone()["id"]
     conn.commit()
@@ -284,7 +287,8 @@ def enforce_budget(parts: list[PartSpec], max_sec: float, lines: list[dict]) -> 
 
 
 def create_answer_clip(
-    conn: psycopg.Connection, run_id: int, parts: list[PartSpec], score: float | None, reason: str
+    conn: psycopg.Connection, run_id: int, parts: list[PartSpec], score: float | None, reason: str,
+    title: str | None = None,
 ) -> int:
     """조각들로 클립 하나를 만든다. 단일 컷도 조각 1개 — 코드 경로가 하나다(tease §5-6).
 
@@ -295,9 +299,10 @@ def create_answer_clip(
         raise CuttingError("조각이 없다")
     total = sum(p.length for p in parts)
     clip_id = conn.execute(
-        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec)
-           values (%s, %s, %s, %s, %s, %s, %s) returning id""",
-        (run_id, parts[0].segment_id, parts[0].start_sec, parts[-1].end_sec, score, reason, total),
+        """insert into clips (run_id, segment_id, start_sec, end_sec, score, reason, total_sec, title)
+           values (%s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+        (run_id, parts[0].segment_id, parts[0].start_sec, parts[-1].end_sec, score, reason, total,
+         (title or "").strip() or None),
     ).fetchone()["id"]
     for ordinal, part in enumerate(parts):
         conn.execute(

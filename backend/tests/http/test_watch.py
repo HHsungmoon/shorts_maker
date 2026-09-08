@@ -292,9 +292,6 @@ class EventTest(WatchTestCase):
         self.assertEqual(self.client.post("/api/watch/events", json={"kind": "scroll"}).status_code, 422)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class PublishedClipTest(WatchTestCase):
     """발행된 클립이 시청자에게 어떻게 보이는가."""
@@ -384,3 +381,64 @@ class PublishedClipTest(WatchTestCase):
         theirs = self.source(title="다른 영상", fingerprint="sha256:d")
         self.make_clip(theirs)
         self.assertEqual(self.client.get(f"/api/watch/sources/{mine}").json()["clips"], [])
+
+
+class ClipTitleTest(WatchTestCase):
+    """🔴 숏폼 목록에는 질문에서 나온 클립과 그렇지 않은 클립이 **함께** 올라간다.
+
+    질문을 제목처럼 쓰던 시절에는 기준으로 뽑은 클립의 제목 자리가 비었다(2026-09-08).
+    이제 제목은 컬럼이고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
+    """
+
+    def publish(self, source_id: int, title: str | None, question: str | None) -> int:
+        with store.connect(self.url) as conn:
+            run_id = conn.execute(
+                "insert into runs (source_id) values (%s) returning id", (source_id,)
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 30, 0, 3) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            cluster_id = None
+            if question:
+                cluster_id = conn.execute(
+                    "insert into question_clusters (source_id, canonical_text) values (%s, %s)"
+                    " returning id", (source_id, question)
+                ).fetchone()["id"]
+            clip_id = conn.execute(
+                """insert into clips (run_id, segment_id, start_sec, end_sec, rendered,
+                                      question_cluster_id, title, published_at)
+                   values (%s, %s, 0, 30, true, %s, %s, now()) returning id""",
+                (run_id, segment_id, cluster_id, title),
+            ).fetchone()["id"]
+            conn.commit()
+        return clip_id
+
+    def titles(self, source_id: int) -> list[str | None]:
+        return [c["title"] for c in self.client.get(f"/api/watch/sources/{source_id}").json()["clips"]]
+
+    def test_a_clip_with_no_question_still_has_a_title(self):
+        source_id = self.source()
+        self.publish(source_id, title="쏘카의 기술 문화", question=None)
+        self.assertEqual(self.titles(source_id), ["쏘카의 기술 문화"])
+
+    def test_an_edited_title_wins_over_the_question(self):
+        source_id = self.source()
+        self.publish(source_id, title="크리에이터가 고친 제목", question="연봉은 얼마인가요?")
+        self.assertEqual(self.titles(source_id), ["크리에이터가 고친 제목"])
+
+    def test_the_question_is_the_fallback_title(self):
+        source_id = self.source()
+        self.publish(source_id, title=None, question="연봉은 얼마인가요?")
+        self.assertEqual(self.titles(source_id), ["연봉은 얼마인가요?"])
+        # 질문 자체도 따로 온다 — 화면이 "몇 명이 물어봤다"를 붙이는 데 쓴다.
+        clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertEqual(clip["question"], "연봉은 얼마인가요?")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -107,6 +107,9 @@ def get_source(source_id: int, viewer: str = Depends(viewers.viewer_id)) -> dict
         clips = rows(
             conn,
             """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
+                      -- 🔴 제목은 컬럼이다. 질문에서 나온 클립이든 크리에이터가 직접 뽑은 것이든
+                      -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
+                      coalesce(c.title, qc.canonical_text) as title,
                       qc.canonical_text as question,
                       (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
                from clips c
