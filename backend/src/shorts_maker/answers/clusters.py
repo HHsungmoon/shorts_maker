@@ -110,10 +110,15 @@ def demand(conn: psycopg.Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
         """select c.*,
                   count(distinct q.id) as question_count,
-                  count(l.id) as like_count
+                  count(l.id) as like_count,
+                  -- 🔴 이 묶음을 그 상태로 만든 이유. UNANSWERABLE 이 왜 그렇게 됐는지가 여기 있다.
+                  -- 안 보여주면 크리에이터는 "답할 구간 없음" 이라는 딱지만 보고 이유를 알 수 없다.
+                  max(r.ranked ->> 'reason') as run_note,
+                  max(r.error) as run_error
            from question_clusters c
            left join questions q on q.cluster_id = c.id
            left join question_likes l on l.question_id = q.id
+           left join runs r on r.id = c.run_id
            where c.source_id = %s
            group by c.id
            order by question_count desc, like_count desc, c.id""",
