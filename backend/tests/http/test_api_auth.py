@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from fastapi.routing import APIRoute
 
+from shorts_maker.db import store
 from shorts_maker.http import server, auth, deps, studio, watch
 
 from ..support import make_config, reset_db
@@ -253,6 +254,121 @@ class SpaRoutingTest(ApiAuthTestCase):
         for path in ("/api/nope", "/auth/nope"):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 404)
+
+
+
+class ClipOriginTest(ApiAuthTestCase):
+    """🔴 클립이 **어디서 나왔는지**가 응답에 있어야 한다.
+
+    질문에 답한 클립과 크리에이터가 자기 기준으로 뽑은 클립이 한 목록에 섞인다. "클립 3" 이라는
+    이름만으로는 구분할 수 없어서 화면이 둘을 갈라 보여줄 수가 없었다(2026-09-08).
+    """
+
+    def seed(self) -> int:
+        with store.connect(deps.cfg.database_url) as conn:
+            source_id = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status)"
+                " values ('강연', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE') returning id"
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 600, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 100, 0, 3) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            # ① 크리에이터 기준으로 뽑은 클립
+            criteria_run = conn.execute(
+                "insert into runs (source_id, criteria_prompt) values (%s, '회사 문화는?') returning id",
+                (source_id,),
+            ).fetchone()["id"]
+            conn.execute(
+                "insert into clips (run_id, segment_id, start_sec, end_sec) values (%s, %s, 0, 30)",
+                (criteria_run, segment_id),
+            )
+            # ② 시청자 질문에 답한 클립
+            cluster_id = conn.execute(
+                "insert into question_clusters (source_id, canonical_text) values (%s, '연봉은?')"
+                " returning id", (source_id,)
+            ).fetchone()["id"]
+            for viewer in ("a", "b"):
+                conn.execute(
+                    "insert into questions (source_id, text, viewer_id, cluster_id)"
+                    " values (%s, '연봉 얼마', %s, %s)", (source_id, viewer, cluster_id)
+                )
+            answer_run = conn.execute(
+                "insert into runs (source_id, criteria_prompt, route) values (%s, '연봉은?', 'retrieval')"
+                " returning id", (source_id,)
+            ).fetchone()["id"]
+            conn.execute(
+                """insert into clips (run_id, segment_id, start_sec, end_sec, question_cluster_id)
+                   values (%s, %s, 0, 30, %s)""",
+                (answer_run, segment_id, cluster_id),
+            )
+            conn.commit()
+        return source_id
+
+    def test_each_clip_says_where_it_came_from(self):
+        source_id = self.seed()
+        self.login()
+        clips = self.client.get(f"/api/sources/{source_id}").json()["clips"]
+        by_question = {c["question"]: c for c in clips}
+        self.assertEqual(set(by_question), {None, "연봉은?"})
+        # 질문에서 나온 클립은 몇 명이 물었는지까지 온다.
+        self.assertEqual(by_question["연봉은?"]["asked_by"], 2)
+        self.assertEqual(by_question["연봉은?"]["route"], "retrieval")
+        # 기준에서 나온 클립은 그때 쓴 기준 문장이 이름이 된다.
+        self.assertEqual(by_question[None]["criteria_prompt"], "회사 문화는?")
+        self.assertIsNone(by_question[None]["route"])
+
+
+
+class ClipTitleEditTest(ApiAuthTestCase):
+    """제목은 크리에이터가 고칠 수 있어야 한다 — 기본값(질문·구간 설명)은 제목으로 쓰라고 쓴 문장이 아니다."""
+
+    def seed(self) -> int:
+        with store.connect(deps.cfg.database_url) as conn:
+            source_id = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status)"
+                " values ('강연', 'LECTURE', 'a.mp4', 'sha256:t', 'DONE') returning id"
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 600, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 100, 0, 3) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            run_id = conn.execute(
+                "insert into runs (source_id) values (%s) returning id", (source_id,)
+            ).fetchone()["id"]
+            clip_id = conn.execute(
+                "insert into clips (run_id, segment_id, start_sec, end_sec, title)"
+                " values (%s, %s, 0, 30, '옛 제목') returning id", (run_id, segment_id)
+            ).fetchone()["id"]
+            conn.commit()
+        return clip_id
+
+    def test_the_title_can_be_replaced(self):
+        clip_id = self.seed()
+        self.login()
+        response = self.client.patch(f"/api/clips/{clip_id}", json={"title": "  새 제목  "})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["title"], "새 제목")
+
+    def test_a_blank_or_overlong_title_is_refused(self):
+        clip_id = self.seed()
+        self.login()
+        for title in ("", "   ", "가" * 201):
+            with self.subTest(title=title[:8]):
+                response = self.client.patch(f"/api/clips/{clip_id}", json={"title": title})
+                self.assertIn(response.status_code, (400, 422))
+
+    def test_editing_a_missing_clip_is_404(self):
+        self.login()
+        self.assertEqual(self.client.patch("/api/clips/9999", json={"title": "x"}).status_code, 404)
 
 
 if __name__ == "__main__":
