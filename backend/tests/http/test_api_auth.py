@@ -371,5 +371,77 @@ class ClipTitleEditTest(ApiAuthTestCase):
         self.assertEqual(self.client.patch("/api/clips/9999", json={"title": "x"}).status_code, 404)
 
 
+
+class SourceListingTest(ApiAuthTestCase):
+    """홈 화면이 카드 하나에 진행 상황을 그리려면 목록에 그 수치가 있어야 한다.
+
+    🔴 영상마다 상세를 따로 부르면 N+1 이다 — 영상이 열 개만 돼도 홈이 느려진다.
+    """
+
+    def seed(self) -> int:
+        with store.connect(deps.cfg.database_url) as conn:
+            source_id = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status, published)"
+                " values ('강연', 'LECTURE', 'a.mp4', 'sha256:L', 'DONE', true) returning id"
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 600, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            for idx in range(3):
+                conn.execute(
+                    "insert into utterances (chunk_id, idx, start_sec, end_sec, text)"
+                    " values (%s, %s, %s, %s, '말')", (chunk_id, idx, idx * 10, idx * 10 + 10)
+                )
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 30, 0, 2) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            cluster_id = conn.execute(
+                "insert into question_clusters (source_id, canonical_text) values (%s, '연봉은?')"
+                " returning id", (source_id,)
+            ).fetchone()["id"]
+            for viewer in ("a", "b"):
+                conn.execute(
+                    "insert into questions (source_id, text, viewer_id, cluster_id)"
+                    " values (%s, '연봉', %s, %s)", (source_id, viewer, cluster_id)
+                )
+            run_id = conn.execute(
+                "insert into runs (source_id) values (%s) returning id", (source_id,)
+            ).fetchone()["id"]
+            conn.execute(
+                "insert into clips (run_id, segment_id, start_sec, end_sec, published_at)"
+                " values (%s, %s, 0, 30, now())", (run_id, segment_id)
+            )
+            conn.commit()
+        return source_id
+
+    def test_the_listing_carries_the_progress_of_each_video(self):
+        self.seed()
+        self.login()
+        found = self.client.get("/api/sources").json()[0]
+        self.assertEqual(found["chunk_count"], 1)
+        self.assertEqual(found["utterance_count"], 3)
+        self.assertEqual(found["segment_count"], 1)
+        self.assertEqual(found["question_count"], 2)
+        self.assertEqual(found["open_cluster_count"], 1)
+        self.assertEqual(found["clip_count"], 1)
+        self.assertEqual(found["published_clip_count"], 1)
+
+    def test_a_video_with_nothing_done_reports_zeros(self):
+        with store.connect(deps.cfg.database_url) as conn:
+            conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status)"
+                " values ('새 영상', 'LECTURE', 'b.mp4', 'sha256:N', 'DONE')"
+            )
+            conn.commit()
+        self.login()
+        found = self.client.get("/api/sources").json()[0]
+        for key in ("chunk_count", "utterance_count", "segment_count", "question_count",
+                    "open_cluster_count", "clip_count", "published_clip_count"):
+            with self.subTest(key=key):
+                self.assertEqual(found[key], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
