@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from .. import pricing
 from ..adapters import ytdlp, ffmpeg
-from ..answers import answer, clusters
+from ..answers import answer, clusters, events
 from . import deps
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
@@ -500,6 +500,21 @@ def list_clusters(source_id: int) -> dict:
             # 이 묶음에 답한 클립과 judge 소견. 크리에이터가 발행 전에 봐야 하는 것들이다.
             cluster["clip"] = clusters.clip_of(conn, cluster["id"])
         return {"clusters": found, "unclustered": clusters.unclustered(conn, source_id)}
+
+
+@router.get("/sources/{source_id}/insights")
+def source_insights(source_id: int) -> dict:
+    """숏폼별 퍼널 — 재생 → 완주 → CTA → 원본 이동 → 원본 재생 (tease §9, update_plan M6b).
+
+    이 화면이 존재하는 이유는 이 제품의 주장을 데이터로 뒷받침하는 것이다. "숏폼이 원본
+    유입을 만든다"는 `viewer_events` 에 쌓인 행 없이는 말할 수 없다.
+
+    🔴 세는 단위는 **사람 수**이고 비율은 계산하지 않는다 — 근거는 `events.funnel` 주석.
+    """
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        return events.funnel(conn, source_id)
 
 
 @router.patch("/clusters/{cluster_id}")
