@@ -10,7 +10,7 @@ import {
 } from "../api";
 import { ClipVideo } from "./ClipVideo";
 import { Step } from "./Step";
-import { time } from "../format";
+import { time } from "../../shared/format";
 import type { SourceView } from "../SourcePage";
 
 // 후보를 한 번에 몇 개 보여줄까. 구간이 40개면 후보도 40개라 전부 그리면 화면이 그것만으로 찬다.

@@ -4,6 +4,7 @@ import type {
 	ShortsCluster,
 	ShortsClusterList,
 	ShortsCost,
+	ShortsInsights,
 	ShortsJob,
 	ShortsMediaList,
 	ShortsRemoval,
@@ -213,4 +214,9 @@ export function answerCluster(clusterId: number): Promise<ShortsJob> {
 export function publishClip(clipId: number, published: boolean): Promise<{ published: boolean }> {
 	const action = published ? "publish" : "unpublish";
 	return request<{ published: boolean }>(`/api/clips/${clipId}/${action}`, { method: "POST" });
+}
+
+/** 숏폼별 퍼널(재생 → 완주 → CTA → 원본 이동 → 원본 재생). */
+export function fetchInsights(sourceId: number): Promise<ShortsInsights> {
+	return request<ShortsInsights>(`/api/sources/${sourceId}/insights`);
 }

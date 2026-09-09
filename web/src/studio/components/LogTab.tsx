@@ -1,17 +1,24 @@
-import { fetchUtterances } from "../api";
-import { time } from "../format";
+import { fetchInsights, fetchUtterances } from "../api";
+import { time } from "../../shared/format";
+import { useAsync } from "../../shared/useAsync";
 import { STAGE_LABEL } from "../useStudioJob";
-import type { ShortsCost } from "../types";
+import type { ShortsCost, ShortsFunnelRow, ShortsInsights } from "../types";
 import type { SourceView } from "../SourcePage";
 
 /**
- * 기록 탭 — 전사·비용·단계 기록. 뭔가 이상해 보일 때만 여는 자리라 세 덩어리 모두 접어 둔다.
+ * 기록 탭 — **성과 기록**(퍼널)과 작업 기록(전사·비용·단계).
+ *
+ * 퍼널은 접지 않는다. 나머지는 뭔가 이상해 보일 때만 여는 자리라 접어 두지만, "숏폼이 원본
+ * 유입을 만들었나" 는 디버깅 질문이 아니라 이 제품이 옳은지를 묻는 질문이다(tease §9) —
+ * 접어 두면 아무도 안 본다.
  */
 export function LogTab({ view }: { view: SourceView }) {
-	const { data, act, chunks, hasChunks, utterances, transcript, setTranscript } = view;
+	const { sourceId, data, act, chunks, hasChunks, utterances, transcript, setTranscript } = view;
 
 	return (
 		<>
+			<FunnelSection sourceId={sourceId} />
+
 			{data && (
 				<>
 					<h2 className="section-title">참고</h2>
@@ -102,6 +109,93 @@ export function LogTab({ view }: { view: SourceView }) {
 					</details>
 				</>
 			)}
+		</>
+	);
+}
+
+// 퍼널 칸의 한글 이름. 순서는 서버(`events.FUNNEL_KINDS`)가 정하고 여기서는 이름만 붙인다 —
+// 순서를 두 곳에서 정하면 어긋난다.
+const FUNNEL_LABEL: Record<string, string> = {
+	short_play: "재생",
+	short_complete: "완주",
+	cta_click: "원본 보기 누름",
+	origin_seek: "원본으로 이동",
+	origin_play: "원본 재생",
+};
+
+// 서버가 정한 칸 순서대로 값을 꺼낸다. 칸 이름이 그대로 필드 이름이라 인덱스 접근이 필요하다 —
+// 화면에 순서를 다시 적지 않으려고 지불하는 비용이고, 모르는 칸은 0 으로 둔다.
+function funnelCount(row: ShortsFunnelRow, kind: string): number {
+	const value = (row as unknown as Record<string, unknown>)[kind];
+	return typeof value === "number" ? value : 0;
+}
+
+/**
+ * 숏폼별 퍼널 (tease §9, update_plan M6b).
+ *
+ * 🔴 **비율을 쓰지 않는다.** 3명 중 1명을 33% 로 적으면 거짓말이 된다. 분모가 수백이 되면
+ * 그때 다시 판단한다 — 지금은 사람 수를 그대로 보여주는 게 유일하게 정직한 표시다.
+ */
+function FunnelSection({ sourceId }: { sourceId: number }) {
+	const insights = useAsync<ShortsInsights>(() => fetchInsights(sourceId), [sourceId]);
+
+	if (insights.loading) {
+		return <p className="state">불러오는 중…</p>;
+	}
+	if (insights.error || !insights.data) {
+		return <p className="state state--error">퍼널을 읽지 못했습니다.</p>;
+	}
+	const { kinds, clips, totals } = insights.data;
+
+	return (
+		<>
+			<h2 className="section-title">시청자 반응</h2>
+			{clips.length === 0 ? (
+				<p className="state">
+					발행된 숏폼이 없습니다. 숏폼을 발행하면 시청자가 원본으로 넘어가는 흐름이 여기 쌓입니다.
+				</p>
+			) : (
+				<>
+					<div className="table-wrap">
+						<table className="table">
+							<thead>
+								<tr>
+									<th>숏폼</th>
+									{kinds.map((kind) => (
+										<th key={kind}>{FUNNEL_LABEL[kind] ?? kind}</th>
+									))}
+								</tr>
+							</thead>
+							<tbody>
+								{clips.map((row) => (
+									<tr key={row.clip_id}>
+										<td>
+											{row.label ?? <span className="sm-meta">제목 없음</span>}
+											{/* 질문에서 나온 것과 크리에이터가 직접 뽑은 것을 구분해 준다 —
+											    같은 표에 섞여 있어서 표시가 없으면 알 수 없다. */}
+											{row.question === null && <span className="tag">직접 선정</span>}
+										</td>
+										{kinds.map((kind) => (
+											<td key={kind} className="sm-meta">
+												{funnelCount(row, kind)}
+											</td>
+										))}
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+					<p className="sm-meta">
+						단위는 <strong>사람 수</strong>입니다 — 같은 사람이 여러 번 봐도 1로 셉니다. “원본 재생”은
+						원본 보기를 누른 뒤 30초 안에 재생이 시작된 경우만 셉니다(그 전부터 보고 있던 재생을
+						유입으로 세면 숫자가 거짓이 됩니다).
+					</p>
+				</>
+			)}
+			<p className="sm-meta">
+				이 영상에 다녀간 사람 {totals.viewers ?? 0}명 · 질문 남김 {totals.question_post ?? 0}명 ·
+				좋아요 누름 {totals.like ?? 0}명
+			</p>
 		</>
 	);
 }

@@ -1,6 +1,6 @@
 import { createChunk, publishSource, runSegment, runStt } from "../api";
 import { Step } from "./Step";
-import { time } from "../format";
+import { time } from "../../shared/format";
 import type { SourceView } from "../SourcePage";
 
 /**

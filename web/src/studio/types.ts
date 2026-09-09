@@ -263,3 +263,41 @@ export interface ShortsClusterList {
 	/** 아직 어느 그룹에도 안 붙은 질문. 이게 0 이면 [집계] 를 눌러도 할 일이 없다. */
 	unclustered: ShortsClusterQuestion[];
 }
+
+/**
+ * 숏폼 하나의 퍼널 (tease §9, `GET /api/sources/{id}/insights`).
+ *
+ * 🔴 값은 **사람 수**다(이벤트 수가 아니다). 같은 사람이 세 번 돌려 봐도 1이다 —
+ * 근거는 backend `answers/events.py::funnel` 주석.
+ */
+export interface ShortsFunnelRow {
+	clip_id: number;
+	cluster_id: number | null;
+	published_at: string;
+	total_sec: number | null;
+	/** 목록에 보이는 이름. 크리에이터가 고친 제목이 있으면 그것, 없으면 질문 대표 문장. */
+	label: string | null;
+	/** 질문에서 나온 숏폼만 값이 있다. null 이면 크리에이터가 자기 기준으로 뽑은 것이다. */
+	question: string | null;
+	short_play: number;
+	short_complete: number;
+	cta_click: number;
+	origin_seek: number;
+	origin_play: number;
+}
+
+export interface ShortsInsights {
+	/** 퍼널 칸의 순서. 서버가 정하고 화면은 그대로 그린다 — 두 곳에서 순서를 정하면 어긋난다. */
+	kinds: string[];
+	clips: ShortsFunnelRow[];
+	totals: {
+		viewers: number;
+		question_post: number;
+		like: number;
+		short_play: number;
+		short_complete: number;
+		cta_click: number;
+		origin_seek: number;
+		origin_play: number;
+	};
+}
