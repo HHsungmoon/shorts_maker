@@ -117,8 +117,17 @@ def get_source(source_id: int) -> dict:
                 "select * from clip_reviews where clip_id = %s order by id desc",
                 (clip["id"],),
             )
+        # 🔴 `select *` 를 쓰지 않는다. prompt·response 는 한 건이 수십 KB 라 화면 한 번에 수 MB 가
+        # 실린다(마이그레이션 005). 본문은 사용자가 그 행을 펼칠 때만 따로 읽는다 —
+        # `has_body` 로 펼칠 것이 있는지만 알려 준다.
         calls = rows(
-            conn, "select * from stage_calls where source_id = %s order by id desc", (source_id,)
+            conn,
+            """select id, source_id, run_id, segment_id, stage, model,
+                      input_tokens, output_tokens, thinking_tokens, total_tokens, cached_tokens,
+                      latency_ms, params, error, created_at,
+                      (prompt is not null or response is not null) as has_body
+               from stage_calls where source_id = %s order by id desc""",
+            (source_id,),
         )
         return {
             # 🔴 긴 작업이 도는 중인지. 화면이 "다시 추출" 을 잠그는 근거다 — 전사 중에 청크를
@@ -628,7 +637,31 @@ def unpublish_clip(clip_id: int) -> dict:
 @router.get("/cost")
 def total_cost() -> dict:
     with connect() as conn:
-        return pricing.estimate(rows(conn, "select * from stage_calls"), deps.cfg)
+        # 🔴 비용 계산에 필요한 컬럼만 읽는다. `select *` 면 전 기록의 프롬프트 본문을 통째로
+        # 끌어와 메모리에 올린다 — 비용 숫자 하나 보려고 수백 MB 를 읽을 수 있다.
+        return pricing.estimate(
+            rows(conn, "select stage, model, input_tokens, output_tokens, thinking_tokens,"
+                       " total_tokens, cached_tokens from stage_calls"),
+            deps.cfg,
+        )
+
+
+@router.get("/stage-calls/{call_id}")
+def get_stage_call_body(call_id: int) -> dict:
+    """그 호출의 **프롬프트와 원본 응답**. 사용자가 단계 기록의 한 행을 펼칠 때만 읽는다.
+
+    🔴 이게 있는 이유: 판정이 이상해 보일 때 "모델이 무엇을 보고 무엇을 답했는지" 를 확인할
+    방법이 없었다. 같은 호출을 다시 하는 것뿐이었고, 무료 등급에서는 그 재현이 할당량을 깎는다.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            """select id, stage, model, created_at, prompt, response, error
+               from stage_calls where id = %s""",
+            (call_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "stage call not found")
+    return dict(row)
 
 
 @router.get("/jobs/{job_id}")
