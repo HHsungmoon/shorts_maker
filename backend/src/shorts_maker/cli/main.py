@@ -382,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     agg.add_argument("source_id", type=int)
     agg_list = answers_sub.add_parser("list", help="클러스터와 수요를 본다")
     agg_list.add_argument("source_id", type=int)
-    index_p = answers_sub.add_parser("index", help="구간 설명을 검색용으로 임베딩한다 (M5 준비)")
+    index_p = answers_sub.add_parser("index", help="구간 설명을 검색용으로 임베딩한다 (답하기가 자동으로도 한다 — 미리 채워둘 때 쓴다)")
     index_p.add_argument("source_id", type=int)
     ev = answers_sub.add_parser(
         "eval-cluster",
