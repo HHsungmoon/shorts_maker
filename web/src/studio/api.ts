@@ -10,6 +10,7 @@ import type {
 	ShortsRemoval,
 	ShortsSourceDetail,
 	ShortsSourceListItem,
+	ShortsStageCallBody,
 	ShortsStatus,
 	ShortsUtterance,
 } from "./types";
@@ -219,4 +220,14 @@ export function publishClip(clipId: number, published: boolean): Promise<{ publi
 /** 숏폼별 퍼널(재생 → 완주 → CTA → 원본 이동 → 원본 재생). */
 export function fetchInsights(sourceId: number): Promise<ShortsInsights> {
 	return request<ShortsInsights>(`/api/sources/${sourceId}/insights`);
+}
+
+/**
+ * 한 호출의 프롬프트와 원본 응답.
+ *
+ * 🔴 목록(`GET /api/sources/{id}`)에는 본문이 오지 않는다 — 한 건이 수십 KB 다. 사용자가 그 행을
+ * 펼칠 때만 부른다.
+ */
+export function fetchStageCallBody(callId: number): Promise<ShortsStageCallBody> {
+	return request<ShortsStageCallBody>(`/api/stage-calls/${callId}`);
 }

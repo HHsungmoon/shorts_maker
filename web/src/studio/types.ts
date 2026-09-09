@@ -129,6 +129,24 @@ export interface ShortsStageCall {
 	thinking_tokens: number | null;
 	latency_ms: number | null;
 	error: string | null;
+	/**
+	 * 프롬프트나 원본 응답이 저장돼 있는가.
+	 *
+	 * 🔴 본문 자체는 목록에 오지 않는다 — 한 건이 수십 KB 라 화면 한 번에 수 MB 가 실린다.
+	 * 펼칠 때 `fetchStageCallBody` 로 따로 읽는다. 이 컬럼이 생긴 뒤의 호출만 값이 있다.
+	 */
+	has_body: boolean;
+}
+
+/** 한 호출의 프롬프트와 원본 응답. 목록 행을 펼칠 때만 읽는다. */
+export interface ShortsStageCallBody {
+	id: number;
+	stage: string;
+	model: string | null;
+	created_at: string;
+	prompt: string | null;
+	response: string | null;
+	error: string | null;
 }
 
 export interface ShortsUtterance {
