@@ -184,12 +184,14 @@ def run_for_segment(
     call = conn.execute(
         """insert into stage_calls
            (source_id, run_id, segment_id, stage, model, input_tokens, output_tokens,
-            thinking_tokens, total_tokens, cached_tokens, latency_ms)
-           values (%s, %s, %s, 'cut', %s, %s, %s, %s, %s, %s, %s) returning id""",
+            thinking_tokens, total_tokens, cached_tokens, latency_ms, prompt, response)
+           values (%s, %s, %s, 'cut', %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
         (
             source_id, run_id, segment_id, cfg.gemini_model,
             usage["input_tokens"], usage["output_tokens"], usage["thinking_tokens"],
             usage["total_tokens"], usage["cached_tokens"], latency_ms,
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
         ),
     )
     call_id = call.fetchone()["id"]

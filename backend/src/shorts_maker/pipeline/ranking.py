@@ -192,12 +192,14 @@ def run_for_source(
     conn.execute(
         """insert into stage_calls
            (source_id, run_id, stage, model, input_tokens, output_tokens, thinking_tokens,
-            total_tokens, cached_tokens, latency_ms)
-           values (%s, %s, 'rank', %s, %s, %s, %s, %s, %s, %s)""",
+            total_tokens, cached_tokens, latency_ms, prompt, response)
+           values (%s, %s, 'rank', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             source_id, run_id, cfg.gemini_model,
             usage["input_tokens"], usage["output_tokens"], usage["thinking_tokens"],
             usage["total_tokens"], usage["cached_tokens"], latency_ms,
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
         ),
     )
     conn.commit()
@@ -456,11 +458,14 @@ def plan_answer(
     conn.execute(
         """insert into stage_calls
            (source_id, run_id, stage, model, input_tokens, output_tokens, thinking_tokens,
-            total_tokens, cached_tokens, latency_ms)
-           values (%s, %s, 'rank', %s, %s, %s, %s, %s, %s, %s)""",
+            total_tokens, cached_tokens, latency_ms, prompt, response)
+           values (%s, %s, 'rank', %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             source_id, run_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
             usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"], latency_ms,
+            # 🔴 답하기의 핵심 프롬프트다. 어느 구간의 대사를 보고 어떻게 잘랐는지가 여기 다 있다.
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
         ),
     )
     return parse_answer(raw, lines), lines

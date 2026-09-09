@@ -28,6 +28,10 @@ DEFAULTS = {
     # 사용자는 분석할 범위만 고르고, 그 안을 몇 조각으로 나눌지는 코드가 정한다.
     "SHORTS_CHUNK_MAX_SEC": "1800",
     # 질문으로 구간을 검색할 때 가져올 후보 수와, "이 영상엔 답이 없다" 로 볼 최소 유사도.
+    # 🔴 프롬프트와 원본 응답을 stage_calls 에 남기는가. 판정이 이상할 때 **모델이 무엇을 보고
+    # 무엇을 답했는지**를 화면에서 확인하는 유일한 길이다(마이그레이션 005). 끄면 그 확인을
+    # 하려고 같은 호출을 다시 해야 하고, 무료 등급에서는 그 재현이 할당량을 깎는다.
+    "SHORTS_STORE_PROMPTS": "1",
     "SHORTS_RETRIEVAL_TOP_K": "5",
     "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
     "SHORTS_API_HOST": "127.0.0.1",
@@ -91,6 +95,7 @@ class Config:
     cluster_theta: float
     teaser_max_sec: float
     chunk_max_sec: float
+    store_prompts: bool
     retrieval_top_k: int
     retrieval_min_sim: float
     api_host: str
@@ -172,6 +177,7 @@ def load() -> Config:
         cluster_theta=float(get("SHORTS_CLUSTER_THETA")),
         teaser_max_sec=float(get("SHORTS_TEASER_MAX_SEC")),
         chunk_max_sec=float(get("SHORTS_CHUNK_MAX_SEC")),
+        store_prompts=get("SHORTS_STORE_PROMPTS") not in ("0", "false", "False", ""),
         retrieval_top_k=int(get("SHORTS_RETRIEVAL_TOP_K")),
         retrieval_min_sim=float(get("SHORTS_RETRIEVAL_MIN_SIM")),
         api_host=api_host,

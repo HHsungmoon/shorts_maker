@@ -220,8 +220,8 @@ def run_for_chunk(
     call = conn.execute(
         """insert into stage_calls
            (source_id, stage, model, input_tokens, output_tokens, thinking_tokens,
-            total_tokens, cached_tokens, latency_ms, params)
-           values (%s, 'segment', %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            total_tokens, cached_tokens, latency_ms, prompt, response, params)
+           values (%s, 'segment', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
         (
             chunk["source_id"],
             cfg.gemini_model,
@@ -231,6 +231,8 @@ def run_for_chunk(
             usage["total_tokens"],
             usage["cached_tokens"],
             latency_ms,
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
             Jsonb({"utterances": len(utterances), "attempts": usage.get("attempts")}),
         ),
     )

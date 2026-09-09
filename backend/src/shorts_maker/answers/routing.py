@@ -172,18 +172,24 @@ def decide(
     한 번 더 거른다. 반대로 rank 로 잘못 보내면 전 구간을 LLM 에 보내 비싸고 느리다.
     """
     allowed = {s["idx"] for s in segments}
-    raw, usage, latency_ms = gemini.generate_json(cfg, build_prompt(text, segments), SCHEMA)
+    prompt = build_prompt(text, segments)
+    raw, usage, latency_ms = gemini.generate_json(cfg, prompt, SCHEMA)
     try:
         decision = parse(raw, allowed)
     except ValueError as exc:
         decision = Decision(RETRIEVAL, None, f"판정 실패로 기본값 — {exc}")
     conn.execute(
         """insert into stage_calls (source_id, stage, model, input_tokens, output_tokens,
-                                    thinking_tokens, total_tokens, cached_tokens, latency_ms, params)
-           values (%s, 'classify', %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                    thinking_tokens, total_tokens, cached_tokens, latency_ms,
+                                    prompt, response, params)
+           values (%s, 'classify', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             source_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
             usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"], latency_ms,
+            # 🔴 모델이 무엇을 보고 무엇을 답했는지. 이게 없으면 판정이 이상할 때 같은 호출을
+            # 다시 하는 것 말고 확인할 방법이 없다(마이그레이션 005).
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
             # 규칙 판정을 함께 남긴다 — 나중에 `select params->>'rule' = params->>'route'` 로 일치율이 나온다.
             # `selected` 도 남긴다: 한 호출에 두 일을 시킨 것이 판정을 망치는지 보려면 이 값이 필요하다.
             Jsonb({
