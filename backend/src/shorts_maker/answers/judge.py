@@ -109,10 +109,25 @@ def parse(raw: str) -> Verdict:
     return verdict
 
 
-def judge(cfg: config.Config, question: str, part_texts: list[str]) -> tuple[Verdict, dict, int]:
-    """(판정, 사용량, 소요 ms). 🔴 **DB 를 만지지 않는다** — 여러 후보를 스레드로 동시에
-    판정하기 때문이다(answers/answer.py). 기록은 부른 쪽이 한 곳에서 한다."""
-    raw, usage, latency_ms = gemini.generate_json(
-        cfg, build_prompt(question, part_texts), SCHEMA
-    )
-    return parse(raw), usage, latency_ms
+@dataclass
+class Judged:
+    """판정 한 건과 그 호출의 흔적.
+
+    프롬프트와 원본 응답을 함께 들고 나오는 이유: "왜 NG 인가" 를 확인하려면 judge 가 **어떤
+    대사를 보았는지**를 알아야 한다. 자른 텍스트는 clip_parts 로 되짚을 수 있지만 그건 승자
+    하나뿐이고, 떨어진 후보 둘은 어디에도 남지 않는다(마이그레이션 005).
+    """
+
+    verdict: Verdict
+    usage: dict
+    latency_ms: int
+    prompt: str
+    raw: str
+
+
+def judge(cfg: config.Config, question: str, part_texts: list[str]) -> Judged:
+    """🔴 **DB 를 만지지 않는다** — 여러 후보를 스레드로 동시에 판정하기 때문이다
+    (answers/answer.py). 기록은 부른 쪽이 한 곳에서 한다."""
+    prompt = build_prompt(question, part_texts)
+    raw, usage, latency_ms = gemini.generate_json(cfg, prompt, SCHEMA)
+    return Judged(parse(raw), usage, latency_ms, prompt, raw)

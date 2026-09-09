@@ -271,11 +271,14 @@ def aggregate(conn: psycopg.Connection, cfg: config.Config, source_id: int) -> d
     raw, usage, latency_ms = gemini.generate_json(cfg, prompt, NAMING_SCHEMA)
     conn.execute(
         """insert into stage_calls (source_id, stage, model, input_tokens, output_tokens,
-                                    thinking_tokens, total_tokens, cached_tokens, latency_ms, params)
-           values (%s, 'cluster', %s, %s, %s, %s, %s, %s, %s, %s)""",
+                                    thinking_tokens, total_tokens, cached_tokens, latency_ms,
+                                    prompt, response, params)
+           values (%s, 'cluster', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
             source_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
             usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"], latency_ms,
+            prompt if cfg.store_prompts else None,
+            raw if cfg.store_prompts else None,
             Jsonb({"pending": len(pending), "existing": len(existing_texts)}),
         ),
     )

@@ -188,26 +188,32 @@ def _run_inside(
             lambda item: judge.judge(cfg, question, [p.text for p in item[1]]), prepared
         ))
     total_ms = int((time.monotonic() - started) * 1000)
-    for (candidate, parts), (verdict, usage, latency_ms) in zip(prepared, results):
+    for (candidate, parts), judged in zip(prepared, results):
+        usage = judged.usage
         conn.execute(
             """insert into stage_calls
                (source_id, run_id, stage, model, input_tokens, output_tokens, thinking_tokens,
-                total_tokens, cached_tokens, latency_ms, params)
-               values (%s, %s, 'judge', %s, %s, %s, %s, %s, %s, %s, %s)""",
+                total_tokens, cached_tokens, latency_ms, prompt, response, params)
+               values (%s, %s, 'judge', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 source_id, run_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
-                usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"], latency_ms,
+                usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"],
+                judged.latency_ms,
+                # 🔴 후보 셋 전부의 본문이 남는다. 떨어진 둘은 클립이 되지 않으므로 여기 없으면
+                # 어디에도 없다 — "왜 그게 아니라 이게 이겼나" 를 나중에 답할 수 없게 된다.
+                judged.prompt if cfg.store_prompts else None,
+                judged.raw if cfg.store_prompts else None,
                 Jsonb({
                     "label": candidate.label, "parts": len(parts),
                     "total_sec": round(sum(p.length for p in parts), 2),
-                    "standalone": verdict.standalone, "answers": verdict.answers,
-                    "score": verdict.score,
+                    "standalone": judged.verdict.standalone, "answers": judged.verdict.answers,
+                    "score": judged.verdict.score,
                 }),
             ),
         )
     scored = [
-        Scored(candidate, parts, verdict)
-        for (candidate, parts), (verdict, _, _) in zip(prepared, results)
+        Scored(candidate, parts, judged.verdict)
+        for (candidate, parts), judged in zip(prepared, results)
     ]
     winner = _pick(scored)
 

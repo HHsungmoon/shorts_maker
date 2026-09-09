@@ -17,6 +17,14 @@ from shorts_maker.pipeline import cutting, ranking, render
 from ..support import DbTestCase, make_config
 
 
+def _judged(payload: dict | None = None, prompt: str = "판정 프롬프트") -> judge.Judged:
+    """judge 대역. 프롬프트와 원본 응답까지 들고 나온다(마이그레이션 005)."""
+    import json as _json
+
+    body = _json.dumps(payload if payload is not None else verdict(), ensure_ascii=False)
+    return judge.Judged(judge.parse(body), usage(), 5, prompt, body)
+
+
 def _decision(route: str, selected: list[int] | None = None) -> routing.Decision:
     """라우팅 대역. `selected` 기본값은 None 이라 rank 경로에서는 쓰이지 않는다."""
     return routing.Decision(route=route, selected=selected, reason="대역")
@@ -78,7 +86,7 @@ class AnswerTestCase(DbTestCase):
         judged = iter(verdicts)
 
         def fake_judge(cfg, question, part_texts):
-            return judge.parse(json.dumps(next(judged))), usage(), 5
+            return _judged(next(judged), prompt=judge.build_prompt(question, part_texts))
 
         return (
             mock.patch.object(routing, "decide", return_value=_decision(route)),
@@ -256,7 +264,7 @@ class SegmentSelectionTest(AnswerTestCase):
             mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [1])),
             mock.patch.object(gemini, "generate_json",
                               return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
-            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(judge, "judge", return_value=_judged(verdict())),
             mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
         ):
             answer.run(self.conn, self.cfg, self.cluster_id)
@@ -275,7 +283,7 @@ class SegmentSelectionTest(AnswerTestCase):
             mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [1, 0])),
             mock.patch.object(gemini, "generate_json",
                               return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
-            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(judge, "judge", return_value=_judged(verdict())),
             mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
         ):
             answer.run(self.conn, self.cfg, self.cluster_id)
@@ -331,7 +339,7 @@ class SegmentSelectionTest(AnswerTestCase):
             mock.patch.object(routing, "decide", return_value=_decision(routing.RANK, [])),
             mock.patch.object(gemini, "generate_json",
                               return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
-            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(judge, "judge", return_value=_judged(verdict())),
             mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
         ):
             answer.run(self.conn, self.cfg, self.cluster_id)
@@ -370,7 +378,7 @@ class FailureTest(AnswerTestCase):
                 return_value=('{"answerable": true, "reason": "있다", "candidates": '
                               '[{"label": "single", "reason": "r", "parts": '
                               '[{"start_line": 0, "end_line": 2}]}]}', usage(), 7)),
-            mock.patch.object(judge, "judge", return_value=(judge.Verdict(True, True, 80, "ok"), usage(), 5)),
+            mock.patch.object(judge, "judge", return_value=_judged()),
             mock.patch.object(render, "run_for_clip", side_effect=render.RenderError("ffmpeg 죽음")),
         ]
         for patch in patches:
@@ -418,7 +426,7 @@ class BudgetTest(AnswerTestCase):
 
         def spy(cfg, question, part_texts):
             seen.append(part_texts)
-            return judge.Verdict(True, True, 80, "ok"), usage(), 5
+            return _judged()
 
         patches = [
             mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
