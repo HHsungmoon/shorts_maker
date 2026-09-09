@@ -312,6 +312,48 @@
 	color: var(--text-muted);
 }
 
+/* 원본으로 보내는 CTA.
+ *
+ * 🔴 숏폼 카드에서 **가장 눈에 띄는 요소**여야 한다. 이 버튼이 이 제품의 결론이고(tease §2-1),
+ * 여기가 눌리지 않으면 숏폼을 만든 값이 회수되지 않는다. 그래서 카드 안에서 유일하게 색을 쓴다.
+ *
+ * 다 본 뒤(--ready)에는 테두리만 있던 것이 채워진 버튼이 된다 — 답을 다 들은 그 순간이
+ * 원본으로 넘어갈 가장 좋은 때라서, 그때 시선을 가장 세게 끈다. */
+.watch-jump {
+	margin-top: 8px;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 9px;
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.2;
+	color: var(--accent);
+	background: transparent;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.watch-jump:hover {
+	background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.watch-jump--ready {
+	color: #fff;
+	background: var(--accent);
+}
+
+.watch-jump--ready:hover {
+	background: color-mix(in srgb, var(--accent) 88%, #000);
+}
+
+/* 이동할 지점. 유튜브 플레이어에 적히는 것과 같은 표기다(shared/format.time). */
+.watch-jump__at {
+	font-variant-numeric: tabular-nums;
+	opacity: 0.75;
+}
+
 /* 질문 목록 -------------------------------------------------------------- */
 
 .watch-questions {

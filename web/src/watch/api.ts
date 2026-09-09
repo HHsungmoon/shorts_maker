@@ -31,6 +31,13 @@ export interface WatchQuestion {
 export interface WatchClip {
 	id: number;
 	total_sec: number | null;
+	/**
+	 * 원본에서 이 이야기가 시작되는 초. **원본 유입의 목적지다.**
+	 *
+	 * 소스 절대 초라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다. 조합 클립이면 첫
+	 * 조각의 시작이다 — 뒤 조각으로 보내면 시청자가 이야기 중간에 떨어진다.
+	 */
+	start_sec: number;
 	published_at: string;
 	question_cluster_id: number | null;
 	/** 목록에 보이는 제목. 크리에이터가 고친 문장이 있으면 그것, 없으면 질문이 온다. */
@@ -96,11 +103,23 @@ export function toggleLike(questionId: number): Promise<{ liked: boolean; likes:
 	});
 }
 
-/** 퍼널 계측(§9). 🔴 실패해도 화면을 막지 않는다 — 계측 때문에 사용자가 멈추면 안 된다. */
-export function recordEvent(kind: string, sourceId: number, payload?: Record<string, unknown>): void {
-	void request("/api/watch/events", { method: "POST", body: { kind, sourceId, payload } }).catch(
-		() => undefined,
-	);
+/**
+ * 퍼널 계측(§9). 🔴 실패해도 화면을 막지 않는다 — 계측 때문에 사용자가 멈추면 안 된다.
+ *
+ * 🔴 `clipId` 는 **payload 가 아니라 최상위**로 보낸다. `viewer_events.clip_id` 는 진짜 컬럼이고
+ * 인덱스(`idx_events_clip`)가 걸려 있다. 예전에 payload 안에 넣어 보내던 동안 서버는 최상위
+ * 필드를 읽고 있어서 그 컬럼이 **한 줄도 채워지지 않았고**, 그래서 "어느 숏폼이 유입을
+ * 만들었나" 를 셀 수 없었다. jsonb 안의 값으로는 조인도 인덱스도 안 된다.
+ */
+export function recordEvent(
+	kind: string,
+	sourceId: number,
+	options: { clipId?: number | null; payload?: Record<string, unknown> } = {},
+): void {
+	void request("/api/watch/events", {
+		method: "POST",
+		body: { kind, sourceId, clipId: options.clipId ?? null, payload: options.payload },
+	}).catch(() => undefined);
 }
 
 /** 유튜브 썸네일. 저장하지 않고 id 에서 만든다 — 영상이 바뀌면 썸네일도 따라 바뀐다. */
