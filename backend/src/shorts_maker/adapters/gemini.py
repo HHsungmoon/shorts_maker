@@ -4,6 +4,8 @@
 호출 지점을 여기 한 곳으로 모아 두어야 A2 에서 기록을 빠뜨리지 않는다.
 """
 
+import re
+
 from google import genai
 
 from .. import config
@@ -82,14 +84,44 @@ def _status_of(exc: Exception) -> int | None:
 
 # 🔴 429 라고 다 같은 429 가 아니다. 분당 한도(잠깐 기다리면 풀림)와 **일일 한도**(내일까지 안 풀림)가
 # 같은 코드로 온다. 일일 한도에 백오프 재시도를 걸면 14초를 버리고 요청 3번을 더 쓰고도 똑같이 실패한다.
-# 구글은 quotaId 에 `PerDay` 를 넣어 구분해 준다(2026-09-06에 겪었다: 무료 등급 하루 20회).
-_DAILY_QUOTA_MARKS = ("PerDay", "per day", "free_tier_requests")
+# 구글은 quotaId 에 `PerDay` / `PerMinute` 를 넣어 구분해 준다(2026-09-06에 겪었다: 무료 등급 하루 20회).
+_DAILY_QUOTA_MARKS = ("PerDay", "per day")
+
+# 🔴 **분당 한도가 먼저 이긴다.** 2026-09-09 에 당했다: 임베딩이 분당 한도(100)에 걸렸는데
+# "일일 할당량을 다 썼다, 오늘은 안 풀린다" 로 죽었다. 응답에는 `retryDelay: 36s` 가 들어 있었다.
+# 원인은 옛 표식에 있던 `free_tier_requests` 였다 — 메트릭 이름
+# `embed_content_free_tier_requests` 에 그 조각이 들어 있어서 **분당 한도까지 일일로 읽었다.**
+# 무료 등급의 모든 한도 메시지가 저 조각을 갖고 있으니 그 표식은 애초에 일일을 가리키지 않았다.
+# 판단 근거는 quotaId 다.
+_PER_MINUTE_MARKS = ("PerMinute", "per minute")
+
+# 서버가 알려주는 대기 시간. `'retryDelay': '36s'` 처럼 페이로드 안에 온다.
+_RETRY_DELAY_RE = re.compile(r"retryDelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)s")
+
+# 서버가 아무리 길게 말해도 이보다는 안 기다린다. 잡 하나가 무한히 붙어 있으면 큐가 막힌다.
+MAX_SERVER_WAIT_SEC = 65.0
+
+
+def retry_after_sec(exc: Exception) -> float | None:
+    """서버가 지정한 재시도 대기(초). 없으면 None.
+
+    🔴 이걸 쓰는 이유: 분당 한도는 창이 끝나야 풀린다. 우리 백오프는 2·4·8초라 총 14초인데
+    서버가 36초를 기다리라고 하면 **네 번 다 실패하고 끝난다** — 기다릴 줄 몰라서 실패하는 셈이다.
+    """
+    found = _RETRY_DELAY_RE.search(str(exc))
+    if not found:
+        return None
+    return min(float(found.group(1)), MAX_SERVER_WAIT_SEC)
 
 
 def is_daily_quota(exc: Exception) -> bool:
     if _status_of(exc) != 429:
         return False
     text = str(exc)
+    # 🔴 순서가 중요하다. 분당이라고 적혀 있으면 일일이 아니다 — 한 응답에 두 낱말이 함께
+    # 나오는 경우(설명 링크·도움말 문구)에도 분당이 이긴다.
+    if any(mark in text for mark in _PER_MINUTE_MARKS):
+        return False
     return any(mark in text for mark in _DAILY_QUOTA_MARKS)
 
 
@@ -97,6 +129,11 @@ def is_transient(exc: Exception) -> bool:
     if is_daily_quota(exc):
         return False
     return _status_of(exc) in TRANSIENT_STATUS
+
+
+def backoff_sec(exc: Exception, attempt: int) -> float:
+    """이번 시도 뒤 기다릴 초. 서버가 말해 주면 그 값을, 아니면 지수 백오프."""
+    return retry_after_sec(exc) or BASE_BACKOFF_SEC * (2 ** (attempt - 1))
 
 
 DAILY_QUOTA_HINT = (
@@ -139,7 +176,9 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
                 raise GeminiError(f"{DAILY_QUOTA_HINT}\n\n원문: {exc}") from exc
             if attempt == MAX_ATTEMPTS or not is_transient(exc):
                 raise
-            wait = BASE_BACKOFF_SEC * (2 ** (attempt - 1))
+            # 🔴 서버가 대기 시간을 말해 주면 그걸 따른다 — 분당 한도는 창이 끝나야 풀리므로
+            # 우리 백오프(2·4·8초)로는 못 넘긴다. 근거는 backoff_sec 주석.
+            wait = backoff_sec(exc, attempt)
             logging.warning(
                 "Gemini call failed (%s), retrying in %.0fs [%d/%d]",
                 _status_of(exc), wait, attempt, MAX_ATTEMPTS,
@@ -236,7 +275,10 @@ def embed_texts(
                 import logging
                 import time as _time
 
-                wait = BASE_BACKOFF_SEC * (2 ** (attempt - 1))
+                # 🔴 임베딩이 분당 한도에 걸리는 건 흔하다 — 한도가 **호출 수가 아니라 텍스트
+                # 개수**로 세지는 것으로 보인다(2026-09-09 실측: 배치 100으로 두 번 부르니
+                # 44+44 에서 100/분을 넘겼다). 그래서 서버가 준 대기 시간이 특히 중요하다.
+                wait = backoff_sec(exc, attempt)
                 logging.warning("embed failed (%s), retrying in %.0fs", _status_of(exc), wait)
                 _time.sleep(wait)
         calls += 1
