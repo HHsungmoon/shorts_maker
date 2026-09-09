@@ -250,6 +250,11 @@ export interface ShortsCluster {
 	questions: ShortsClusterQuestion[];
 	/** 이 묶음에 답한 클립. 아직 [답하기] 를 안 눌렀거나 컷이 안 나왔으면 null 이다. */
 	clip: ShortsClusterClip | null;
+	/**
+	 * 겨룬 후보들. **클립보다 먼저 존재한다** — 무엇을 만들지 고르는 것이 크리에이터의 일이다.
+	 * 답하기를 돌리지 않았으면 빈 배열이다.
+	 */
+	candidates: ShortsCandidate[];
 }
 
 /**
@@ -273,6 +278,39 @@ export interface ShortsClusterClip {
 	llmNote: string | null;
 	/** 조각이 둘 이상이면 흩어진 구간을 이어붙인 클립이다 — 이 제품의 눈에 보이는 차별점. */
 	parts: { ordinal: number; start_sec: number; end_sec: number }[];
+}
+
+/**
+ * 겨룬 후보 하나. **대사 전문이 들어 있다** — 크리에이터가 이걸 읽고 무엇을 만들지 고른다.
+ *
+ * 🔴 판정만 보여주면 "조합, 2조각, 28초, 자립 X, 45점" 이 되는데 그걸로는 고를 수가 없다.
+ * 판정은 `recommended` 로 추천이 될 뿐이고 결정은 사람이 한다.
+ */
+export interface ShortsCandidate {
+	id: number;
+	/** single(직접 답하는 한 덩어리) · combo(흩어진 답을 이어붙임) · tight(핵심만 짧게) */
+	label: string | null;
+	/** rank 가 왜 이렇게 잘랐는지. */
+	reason: string | null;
+	parts: ShortsCandidatePart[];
+	totalSec: number;
+	standalone: boolean | null;
+	answers: boolean | null;
+	score: number | null;
+	/** judge 소견 한두 문장. 왜 자립하지 않는다고 봤는지가 여기 있다. */
+	judgeNote: string | null;
+	/** 이미 이걸로 만들었는가. run 당 하나만 참이다. */
+	chosen: boolean;
+	/** 두 관문을 통과한 것 중 최고점. **추천일 뿐 결정이 아니다.** */
+	recommended: boolean;
+}
+
+export interface ShortsCandidatePart {
+	ordinal: number;
+	start_sec: number;
+	end_sec: number;
+	/** 🔴 이 조각의 대사 전문. 이 화면이 존재하는 이유다. */
+	text: string;
 }
 
 export interface ShortsClusterList {

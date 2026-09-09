@@ -1,7 +1,21 @@
 import { useState } from "react";
-import { aggregateQuestions, answerCluster, clipUrl, patchCluster, publishClip } from "../api";
+import {
+	aggregateQuestions,
+	answerCluster,
+	buildCandidate,
+	clipUrl,
+	patchCluster,
+	publishClip,
+} from "../api";
 import { ClipVideo } from "./ClipVideo";
-import type { ShortsCluster, ShortsClusterClip, ShortsClusterList, ShortsJob } from "../types";
+import { time } from "../../shared/format";
+import type {
+	ShortsCandidate,
+	ShortsCluster,
+	ShortsClusterClip,
+	ShortsClusterList,
+	ShortsJob,
+} from "../types";
 import "../clusters.css";
 
 // 상태 이름은 DB 값 그대로 오므로(question_clusters.status) 화면 문구는 여기서만 정한다.
@@ -13,12 +27,6 @@ const STATUS_LABEL: Record<ShortsCluster["status"], string> = {
 	DECLINED: "보류",
 	UNANSWERABLE: "답할 구간 없음",
 };
-
-// mm:ss. SourcePage 에도 같은 함수가 있지만 가져오면 페이지와 컴포넌트가 서로를 import 한다.
-function time(seconds: number): string {
-	const total = Math.round(seconds);
-	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
-}
 
 interface ClusterPanelProps {
 	sourceId: number;
@@ -229,6 +237,18 @@ export function ClusterPanel({
 						<p className="sm-cluster__why sm-cluster__why--error">{cluster.run_error}</p>
 					)}
 
+					{/* 🔴 후보가 클립보다 **먼저** 온다. 아직 아무것도 안 만든 상태에서는 이게 유일한
+					    내용이고, 만든 뒤에도 남겨 둔다 — 다른 후보로 바꿔 볼 수 있어야 한다. */}
+					{cluster.status === "REVIEW" && (
+						<CandidatePicker
+							candidates={cluster.candidates}
+							busy={pending === cluster.id}
+							onBuild={(candidateId) =>
+								act(cluster.id, () => buildCandidate(candidateId))
+							}
+						/>
+					)}
+
 					{/* 발행 전 검토와 발행 뒤 확인이 같은 자리다. 발행된 클립도 계속 보여준다 —
 					    "지금 시청자에게 나가 있는 게 뭔가"를 여기 말고 볼 데가 없다. */}
 					{cluster.clip && (cluster.status === "REVIEW" || cluster.status === "PUBLISHED") && (
@@ -326,6 +346,7 @@ function ClusterClip({ clip, sourceId, status, busy, onPublish, onDecline }: Clu
 				)}
 				{clip.reason && <p className="sm-meta">{clip.reason}</p>}
 
+
 				<div className="sm-actions">
 					{status === "REVIEW" ? (
 						<>
@@ -378,3 +399,106 @@ function ClusterClip({ clip, sourceId, status, busy, onPublish, onDecline }: Clu
 function badge(status: ShortsCluster["status"]): string {
 	return status.toLowerCase().replace("_", "-");
 }
+
+
+/**
+ * 겨룬 후보들 — **대사를 읽고 고르는 자리**.
+ *
+ * 🔴 **이 화면이 이 제품의 사람 관문이다.** 예전에는 시스템이 승자를 골라 렌더까지 해 버렸다.
+ * 크리에이터에게는 클립 하나가 그냥 나온 것으로 보였고, 무엇과 겨뤘는지 알 수 없었다.
+ * 판정 결과만 표로 보여주는 것도 답이 아니었다 — "조합, 2조각, 28초, 자립 X, 45점" 만 보고는
+ * 고를 수가 없다. **사람은 내용을 읽어야 판단한다.**
+ *
+ * 판정은 남아 있지만 **추천**일 뿐이다. 점수가 낮아도 읽어 보고 쓸 만하다고 판단할 수 있다.
+ */
+function CandidatePicker({
+	candidates,
+	busy,
+	onBuild,
+}: {
+	candidates: ShortsCandidate[];
+	busy: boolean;
+	onBuild: (candidateId: number) => void;
+}) {
+	if (candidates.length === 0) {
+		return null;
+	}
+	return (
+		<div className="sm-cands">
+			<p className="sm-cands__lead">
+				답이 될 만한 방식 {candidates.length}가지를 만들고 판정까지 마쳤습니다. 대사를 읽어 보고
+				하나를 고르세요. <span className="sm-meta">고르는 데는 비용이 들지 않습니다.</span>
+			</p>
+			{candidates.map((candidate) => (
+				<CandidateCard key={candidate.id} candidate={candidate} busy={busy} onBuild={onBuild} />
+			))}
+		</div>
+	);
+}
+
+function CandidateCard({
+	candidate,
+	busy,
+	onBuild,
+}: {
+	candidate: ShortsCandidate;
+	busy: boolean;
+	onBuild: (candidateId: number) => void;
+}) {
+	// 🔴 통과 여부가 점수보다 중요하다. 자립하지 않는 클립은 점수가 높아도 시청자가 못 알아본다.
+	const passed = candidate.standalone === true && candidate.answers === true;
+	return (
+		<article className={`sm-cand${candidate.chosen ? " sm-cand--chosen" : ""}`}>
+			<header className="sm-cand__head">
+				<span className="sm-cand__label">
+					{CANDIDATE_LABEL[candidate.label ?? ""] ?? candidate.label ?? "후보"}
+				</span>
+				<span className="sm-meta">
+					{Math.round(candidate.totalSec)}초
+					{candidate.parts.length > 1 && ` · ${candidate.parts.length}조각을 이어붙임`}
+				</span>
+				{candidate.recommended && <span className="sm-badge">추천</span>}
+				{candidate.chosen && <span className="sm-badge">선택함</span>}
+				{/* 떨어진 관문만 표시한다. 통과한 것에 O 를 잔뜩 붙이면 실패가 눈에 안 띈다. */}
+				{candidate.standalone === false && <span className="tag tag--rejected">앞뒤 맥락 필요</span>}
+				{candidate.answers === false && <span className="tag tag--rejected">답이 아님</span>}
+				{candidate.score !== null && <span className="sm-meta">{candidate.score}점</span>}
+			</header>
+
+			{/* 🔴 **대사 전문.** 이게 이 카드의 본체다. 조각이 여럿이면 사이에 표시를 넣는다 —
+			    실제 영상에서도 그 자리에 "몇 분에서 이어집니다" 안내가 뜬다. */}
+			<div className="sm-cand__body">
+				{candidate.parts.map((part, index) => (
+					<div key={part.ordinal}>
+						{index > 0 && (
+							<p className="sm-cand__bridge">
+								↓ {time(part.start_sec)} 로 건너뜁니다 (영상에도 안내가 뜹니다)
+							</p>
+						)}
+						<p className="sm-cand__text">{part.text}</p>
+					</div>
+				))}
+			</div>
+
+			{candidate.judgeNote && <p className="sm-cand__note">{candidate.judgeNote}</p>}
+
+			<div className="sm-actions">
+				<button
+					type="button"
+					className={`button button--small${passed ? " sm-go" : ""}`}
+					disabled={busy}
+					onClick={() => onBuild(candidate.id)}
+				>
+					{candidate.chosen ? "다시 만들기" : "이걸로 만들기"}
+				</button>
+			</div>
+		</article>
+	);
+}
+
+// 후보의 뜻. 라벨만 보여주면 single 과 tight 의 차이를 알 수 없다.
+const CANDIDATE_LABEL: Record<string, string> = {
+	single: "단일 컷",
+	combo: "조합",
+	tight: "짧은 컷",
+};
