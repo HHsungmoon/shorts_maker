@@ -453,5 +453,88 @@ class RunNoteTest(ClusterTestCase):
         self.assertIsNone(found["run_note"])
 
 
+class CandidateListTest(ClusterTestCase):
+    """🔴 겨룬 후보가 **대사와 함께** 화면까지 간다.
+
+    판정 결과만 보여주는 것으로는 부족하다는 게 요지다 — "조합, 2조각, 28초, 자립 X, 45점" 만
+    보고는 무엇을 만들지 고를 수 없다. 사람은 내용을 읽어야 판단한다.
+    """
+
+    def run_with(self, *candidates: dict) -> int:
+        run_id = self.conn.execute(
+            "insert into runs (source_id) values (%s) returning id", (self.source_id,)
+        ).fetchone()["id"]
+        for ordinal, spec in enumerate(candidates):
+            self.conn.execute(
+                """insert into run_candidates (run_id, ordinal, label, reason, parts, total_sec,
+                                               standalone, answers, score, judge_note)
+                   values (%s, %s, %s, '이유', %s, %s, %s, %s, %s, '소견')""",
+                (
+                    run_id, ordinal, spec["label"],
+                    Jsonb(spec.get("parts") or [{"ordinal": 0, "segment_id": 1, "chunk_id": 1,
+                                                 "start_sec": 0.0, "end_sec": 26.0,
+                                                 "start_utterance_idx": 0, "end_utterance_idx": 3,
+                                                 "text": spec.get("text", "대사")}]),
+                    spec.get("total_sec", 26.0), spec["standalone"], spec.get("answers", True),
+                    spec["score"],
+                ),
+            )
+        return run_id
+
+    def test_the_transcript_comes_with_each_candidate(self):
+        """🔴 이 대사가 목록의 존재 이유다 — 크리에이터가 읽고 고르는 것이 그것이다."""
+        run_id = self.run_with({"label": "single", "standalone": True, "score": 90,
+                                "text": "쏘카의 프로덕트는 세 가지입니다"})
+        found = clusters.candidates_of(self.conn, run_id)
+        self.assertEqual(found[0]["parts"][0]["text"], "쏘카의 프로덕트는 세 가지입니다")
+
+    def test_candidates_come_back_best_first(self):
+        run_id = self.run_with(
+            {"label": "single", "standalone": True, "score": 90},
+            {"label": "combo", "standalone": False, "score": 45},
+            {"label": "tight", "standalone": False, "score": 40},
+        )
+        found = clusters.candidates_of(self.conn, run_id)
+        self.assertEqual([c["label"] for c in found], ["single", "combo", "tight"])
+
+    def test_the_recommendation_needs_both_gates_not_just_the_score(self):
+        """🔴 점수만으로 추천하면 자립하지 않는 클립을 권하게 된다.
+
+        실측에서 조합이 45점으로 2위였지만 자립성에서 떨어졌다 — 시청자가 앞뒤를 모른 채 본다.
+        """
+        run_id = self.run_with(
+            {"label": "combo", "standalone": False, "score": 95},
+            {"label": "single", "standalone": True, "score": 60},
+        )
+        found = clusters.candidates_of(self.conn, run_id)
+        recommended = [c["label"] for c in found if c["recommended"]]
+        self.assertEqual(recommended, ["single"])
+
+    def test_when_nothing_passes_the_best_score_is_still_recommended(self):
+        # 전부 떨어져도 하나는 권한다 — 사람이 읽어 보고 판단할 수 있다.
+        run_id = self.run_with(
+            {"label": "combo", "standalone": False, "score": 45},
+            {"label": "tight", "standalone": False, "score": 40},
+        )
+        found = clusters.candidates_of(self.conn, run_id)
+        self.assertEqual([c["label"] for c in found if c["recommended"]], ["combo"])
+
+    def test_a_run_without_candidates_gives_an_empty_list(self):
+        run_id = self.conn.execute(
+            "insert into runs (source_id) values (%s) returning id", (self.source_id,)
+        ).fetchone()["id"]
+        self.assertEqual(clusters.candidates_of(self.conn, run_id), [])
+
+    def test_no_run_at_all_is_not_an_error(self):
+        self.assertEqual(clusters.candidates_of(self.conn, None), [])
+
+    def test_another_runs_candidates_do_not_leak_in(self):
+        self.run_with({"label": "single", "standalone": True, "score": 90})
+        mine = self.conn.execute(
+            "insert into runs (source_id) values (%s) returning id", (self.source_id,)
+        ).fetchone()["id"]
+        self.assertEqual(clusters.candidates_of(self.conn, mine), [])
+
+
 if __name__ == "__main__":
     unittest.main()

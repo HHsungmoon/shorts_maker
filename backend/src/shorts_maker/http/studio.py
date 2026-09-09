@@ -508,6 +508,9 @@ def list_clusters(source_id: int) -> dict:
             cluster["questions"] = clusters.questions_of(conn, cluster["id"])
             # 이 묶음에 답한 클립과 judge 소견. 크리에이터가 발행 전에 봐야 하는 것들이다.
             cluster["clip"] = clusters.clip_of(conn, cluster["id"])
+            # 🔴 겨룬 후보는 **대사와 함께** 온다. 클립보다 먼저 존재한다 — 무엇을 만들지
+            # 고르는 것이 크리에이터의 일이기 때문이다(answers/answer.py 머리 주석).
+            cluster["candidates"] = clusters.candidates_of(conn, cluster["run_id"])
         return {"clusters": found, "unclustered": clusters.unclustered(conn, source_id)}
 
 
@@ -550,10 +553,13 @@ def patch_cluster(cluster_id: int, body: ClusterPatchIn) -> dict:
 
 @router.post("/clusters/{cluster_id}/answer")
 def answer_cluster(cluster_id: int) -> dict:
-    """**[답하기]** — 이 질문 묶음에 답하는 숏폼을 만든다.
+    """**[답하기]** — 이 질문에 답할 **후보들을 만든다.** 숏폼은 아직 만들지 않는다.
 
-    라우팅 → 검색 → 후보 3개 제안 → judge 병렬 판정 → 승자 컷 → 렌더. 고정 DAG 다
+    라우팅 + 구간 선택 → 후보 제안 → judge 병렬 판정 → 후보 저장. 고정 DAG 다
     (answers/answer.py). 실패하면 클러스터가 OPEN 으로 돌아와 다시 누를 수 있다.
+
+    🔴 여기서 멈추는 이유: 무엇을 숏폼으로 만들지는 크리에이터가 **대사를 읽고** 고른다.
+    다음 단계는 `POST /api/candidates/{id}/build` 다.
     """
 
     def work() -> dict:
@@ -561,6 +567,22 @@ def answer_cluster(cluster_id: int) -> dict:
             return answer.run(conn, deps.cfg, cluster_id)
 
     return submit("answer", f"cluster {cluster_id}", work)
+
+
+@router.post("/candidates/{candidate_id}/build")
+def build_candidate(candidate_id: int) -> dict:
+    """**[이걸로 만들기]** — 고른 후보를 컷하고 렌더한다.
+
+    🔴 LLM 을 부르지 않는다. 범위도 대사도 판정도 이미 있고 드는 건 ffmpeg 시간뿐이다 —
+    그래서 마음을 바꿔 다른 후보를 골라도 추가 비용이 없다. 다시 고르면 그 run 의 기존 클립을
+    지우고 새로 만든다(한 질문에 답하는 클립은 하나다, 불변식 I1).
+    """
+
+    def work() -> dict:
+        with connect() as conn:
+            return answer.build(conn, deps.cfg, candidate_id)
+
+    return submit("render", f"candidate {candidate_id}", work)
 
 
 @router.patch("/clips/{clip_id}")

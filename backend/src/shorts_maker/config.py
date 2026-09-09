@@ -31,6 +31,10 @@ DEFAULTS = {
     # 🔴 프롬프트와 원본 응답을 stage_calls 에 남기는가. 판정이 이상할 때 **모델이 무엇을 보고
     # 무엇을 답했는지**를 화면에서 확인하는 유일한 길이다(마이그레이션 005). 끄면 그 확인을
     # 하려고 같은 호출을 다시 해야 하고, 무료 등급에서는 그 재현이 할당량을 깎는다.
+    # 답하기가 낼 후보 수. 🔴 **하나 늘 때마다 judge 호출이 하나 는다** — 3이면 답변당 5회,
+    # 5면 7회다(무료 등급은 하루 수십 회). 늘리면 고를 것이 많아지지만 크리에이터가 읽을 것도
+    # 그만큼 늘어난다. 셋은 서로 뚜렷이 다른 방식(단일·조합·짧은 컷)이라 그 위는 변주에 가깝다.
+    "SHORTS_ANSWER_CANDIDATES": "3",
     "SHORTS_STORE_PROMPTS": "1",
     "SHORTS_RETRIEVAL_TOP_K": "5",
     "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
@@ -95,6 +99,7 @@ class Config:
     cluster_theta: float
     teaser_max_sec: float
     chunk_max_sec: float
+    answer_candidates: int
     store_prompts: bool
     retrieval_top_k: int
     retrieval_min_sim: float
@@ -177,6 +182,7 @@ def load() -> Config:
         cluster_theta=float(get("SHORTS_CLUSTER_THETA")),
         teaser_max_sec=float(get("SHORTS_TEASER_MAX_SEC")),
         chunk_max_sec=float(get("SHORTS_CHUNK_MAX_SEC")),
+        answer_candidates=max(1, int(get("SHORTS_ANSWER_CANDIDATES"))),
         store_prompts=get("SHORTS_STORE_PROMPTS") not in ("0", "false", "False", ""),
         retrieval_top_k=int(get("SHORTS_RETRIEVAL_TOP_K")),
         retrieval_min_sim=float(get("SHORTS_RETRIEVAL_MIN_SIM")),

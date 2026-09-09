@@ -250,7 +250,10 @@ ANSWER_SCHEMA = {
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "label": {"type": "STRING", "enum": ["single", "combo", "tight"]},
+                    # 🔴 값을 고정하지 않는다. 후보 수를 늘리면(SHORTS_ANSWER_CANDIDATES) 셋 말고
+                    # 다른 접근이 나오고 그 이름은 모델이 짓는다. 라벨은 **화면 표시용**일 뿐이라
+                    # 코드가 이 값으로 분기하지 않는다 — 판정은 verdict 가 한다.
+                    "label": {"type": "STRING"},
                     "reason": {"type": "STRING"},
                     "parts": {
                         "type": "ARRAY",
@@ -303,13 +306,16 @@ ANSWER_PROMPT = """아래는 한 영상에서 **이 질문과 관련 있을 만�
   - 반대로 **주제어만 등장하고 그에 대한 내용이 없으면** `answerable: false` 로 하고 reason 에
     무엇이 없는지 적는다. 없는 답을 억지로 만들지 마라.
 
-답이 있으면 **서로 다른 3가지 방식**으로 후보를 낸다:
+답이 있으면 **서로 다른 {count}가지 방식**으로 후보를 낸다. 크리에이터가 대사를 읽고 하나를 고를
+것이므로, **서로 뚜렷이 다르게** 만든다 — 거의 같은 범위를 두 번 내면 고를 이유가 없다.
+
+아래 셋은 반드시 넣는다:
 - `single`: 답을 가장 직접적으로 말하는 **연속된 한 덩어리**
 - `combo`: 답이 여러 곳에 흩어져 있으면 **2~3개 조각을 시간 순서대로** 이어붙인 것.
   조각 사이에는 화면에 "몇 분에서 이어집니다" 안내가 뜨므로 점프 자체는 괜찮다.
   흩어져 있지 않으면 single 과 같은 범위를 다시 내도 된다.
 - `tight`: 군더더기를 걷어낸 **가장 짧은** 컷. 핵심 문장만.
-
+{extra}
 규칙:
 - 각 조각은 `start_line`~`end_line` 이고, **같은 구간 안**이어야 한다(구간 머리글로 나뉘어 있다).
 - 앞을 듣지 않은 사람이 이해할 수 있는 지점에서 시작한다. 지시대명사로 시작하지 않는다.
@@ -342,9 +348,13 @@ class AnswerPlan:
 
 
 def build_answer_prompt(
-    question: str, lines: list[dict], budget_sec: float, context: str | None
+    question: str, lines: list[dict], budget_sec: float, context: str | None, count: int = 3
 ) -> str:
-    """`lines` 는 `number_lines()` 가 만든 것 — 구간 머리글과 연속 번호가 붙어 있다."""
+    """`lines` 는 `number_lines()` 가 만든 것 — 구간 머리글과 연속 번호가 붙어 있다.
+
+    `count` 는 낼 후보 수(`SHORTS_ANSWER_CANDIDATES`). 셋을 넘으면 이름 있는 셋 말고 **다른
+    접근**을 더 달라고 한다 — 같은 범위를 조금씩 바꿔 내면 크리에이터가 고를 이유가 없다.
+    """
     if not lines:
         raise RankingError("후보 대사가 없다 — 먼저 전사와 구간 분할을 돌린다")
     body: list[str] = []
@@ -355,8 +365,16 @@ def build_answer_prompt(
             body.append(f"\n[구간 {line['segment_idx']}] {line['description'] or ''}".rstrip())
         body.append(f"[{line['line']}] ({line['end_sec'] - line['start_sec']:.0f}초) {line['text']}")
     context_block = f"영상 개요: {context.strip()}\n\n" if context and context.strip() else ""
+    extra = ""
+    if count > 3:
+        extra = (
+            f"\n그리고 위 셋과 **겹치지 않는 다른 접근** {count - 3}개를 더 낸다 — 예를 들어 다른 구간에서\n"
+            "답하는 컷, 맥락을 더 넣어 이해가 쉬운 컷, 사례나 숫자가 들어간 컷. `label` 은 알아보기 쉬운\n"
+            "짧은 영어 낱말로 직접 짓는다(예: `context`, `example`).\n"
+        )
     return ANSWER_PROMPT.format(
-        question=question, budget=budget_sec, context_block=context_block, body="\n".join(body)
+        question=question, budget=budget_sec, context_block=context_block,
+        body="\n".join(body), count=count, extra=extra,
     )
 
 
@@ -453,7 +471,9 @@ def plan_answer(
 ) -> tuple[AnswerPlan, list[dict]]:
     """질문에 답하는 클립 후보 3개를 받는다. (계획, 번호 매긴 대사)."""
     lines = number_lines(conn, segments)
-    prompt = build_answer_prompt(question, lines, cfg.teaser_max_sec, context)
+    prompt = build_answer_prompt(
+        question, lines, cfg.teaser_max_sec, context, cfg.answer_candidates
+    )
     raw, usage, latency_ms = gemini.generate_json(cfg, prompt, ANSWER_SCHEMA)
     conn.execute(
         """insert into stage_calls

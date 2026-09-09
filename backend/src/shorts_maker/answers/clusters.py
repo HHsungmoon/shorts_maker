@@ -169,6 +169,47 @@ def clip_of(conn: psycopg.Connection, cluster_id: int) -> dict | None:
     return clip
 
 
+def candidates_of(conn: psycopg.Connection, run_id: int | None) -> list[dict]:
+    """이 run 의 **후보 전부 — 대사 전문과 판정까지** (best-of-N, tease §5-7).
+
+    🔴 **대사가 이 목록의 존재 이유다.** 크리에이터는 이걸 읽고 무엇을 숏폼으로 만들지 고른다.
+    판정(자립·답변·점수)만 보여주면 "조합, 2조각, 28초, 자립 X, 45점" 이 되는데 그걸로는
+    고를 수가 없다. 판정은 **추천**으로만 쓴다.
+    """
+    if run_id is None:
+        return []
+    rows = conn.execute(
+        """select id, ordinal, label, reason, parts, total_sec,
+                  standalone, answers, score, judge_note, chosen_at
+           from run_candidates where run_id = %s order by ordinal""",
+        (run_id,),
+    ).fetchall()
+    out = [
+        {
+            "id": row["id"],
+            "label": row["label"],
+            "reason": row["reason"],
+            "parts": row["parts"],
+            "totalSec": row["total_sec"],
+            "standalone": row["standalone"],
+            "answers": row["answers"],
+            "score": row["score"],
+            "judgeNote": row["judge_note"],
+            "chosen": row["chosen_at"] is not None,
+        }
+        for row in rows
+    ]
+    # 🔴 추천은 **두 관문을 다 통과한 것 중 최고점**이다. 점수만으로 정하지 않는다 —
+    # 자립하지 않는 클립은 점수가 높아도 시청자에게 내보낼 수 없다(answer.py `_pick` 과 같은 규칙).
+    passed = [c for c in out if c["standalone"] and c["answers"]]
+    best = max(passed or out, key=lambda c: c["score"] or 0, default=None)
+    for candidate in out:
+        candidate["recommended"] = best is not None and candidate["id"] == best["id"]
+    # 화면 순서는 점수 높은 순. 원래 순서(ordinal)는 그대로 남아 있다.
+    out.sort(key=lambda c: -(c["score"] or 0))
+    return out
+
+
 def unclustered(conn: psycopg.Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
         """select q.id, q.text, q.created_at, count(l.id) as likes

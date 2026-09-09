@@ -2,7 +2,17 @@
 
 **고정 DAG 다.** 다음에 뭘 할지 결정하는 주체가 없다 — 순서가 코드에 박혀 있다:
 
-    라우팅 → (검색) → 후보 3개 제안 → 예산 강제 → judge ×3 (병렬) → 승자 선택 → 컷 → 렌더
+    run()   라우팅 + 구간 선택 → 후보 제안 → 예산 강제 → judge ×N (병렬) → **후보 저장, 멈춤**
+    build() 크리에이터가 고른 후보 하나 → 컷 → 렌더
+
+🔴 **왜 두 조각인가 (2026-09-09).** 예전에는 한 번에 끝까지 갔다 — 시스템이 승자를 골라 렌더까지
+했다. 그러면 크리에이터에게는 클립 하나가 그냥 나온 것으로 보이고, 무엇과 겨뤘는지도 왜 그게
+이겼는지도 알 수 없다. 판정 결과(자립 O/X·점수)만 보여주는 것도 답이 아니었다 —
+**"조합, 2조각, 28초, 자립 X, 45점" 만 보고는 고를 수가 없다.** 사람은 내용을 읽어야 판단한다.
+그래서 후보를 **대사 전문과 함께** 남기고 멈춘다. 판정은 사라지지 않고 **추천**이 된다.
+
+`build()` 는 LLM 을 부르지 않는다 — 범위도 대사도 판정도 이미 있다. 그래서 마음을 바꿔
+다른 후보를 골라도 추가 비용이 없고, 그게 사람을 고리에 넣을 수 있는 이유다.
 
 ⚠️ 그래서 이건 "에이전트 하네스" 가 아니다. **경계가 있는 판정 하나**다. 제출 문서에도 그렇게
 쓴다 — 정확한 용어가 심사에서 더 강하다.
@@ -45,10 +55,13 @@ class Scored:
 
 
 def _pick(scored: list[Scored]) -> Scored:
-    """합격한 것 중 최고점. 하나도 합격하지 못하면 그중 최고점을 올리고 경고를 남긴다.
+    """**추천** 하나. 합격한 것 중 최고점, 하나도 합격 못 하면 그중 최고점.
 
-    🔴 전부 떨어졌다고 버리지 않는다. 크리에이터가 보고 판단할 수 있게 REVIEW 로 올리고 judge 의
-    소견을 붙인다 — 무한 재시도보다 사람의 눈이 낫다.
+    🔴 이건 결정이 아니라 추천이다(2026-09-09). 예전에는 이 함수가 고른 것이 곧 클립이 됐지만,
+    지금은 화면에서 "추천" 표시가 될 뿐이고 무엇을 만들지는 크리에이터가 고른다.
+
+    🔴 전부 떨어져도 버리지 않는다. 점수가 낮아도 사람이 읽어 보고 쓸 만하다고 판단할 수 있다 —
+    무한 재시도보다 사람의 눈이 낫다.
     """
     passed = [s for s in scored if s.verdict.passed]
     return max(passed or scored, key=lambda s: s.verdict.score)
@@ -215,17 +228,28 @@ def _run_inside(
         Scored(candidate, parts, judged.verdict)
         for (candidate, parts), judged in zip(prepared, results)
     ]
-    winner = _pick(scored)
+    recommended = _pick(scored)
 
-    # ⑥ 컷 — rank 가 범위를 이미 정했으므로 LLM 을 다시 부르지 않는다
-    clip_id = cutting.create_answer_clip(
-        conn, run_id, winner.parts, float(winner.verdict.score), winner.candidate.reason,
-        # 질문이 곧 이 숏폼의 제목이다 — 시청자가 목록에서 보는 것도 이 문장이다.
-        title=question,
-    )
-    conn.execute(
-        "update clips set question_cluster_id = %s where id = %s", (cluster["id"], clip_id)
-    )
+    # ⑥ 후보를 **대사와 함께** 남기고 멈춘다. 🔴 여기서 컷·렌더를 하지 않는다 —
+    # 무엇을 숏폼으로 만들지는 크리에이터가 고른다(`build`). 판정은 사라지지 않고 **추천**이 된다.
+    conn.execute("delete from run_candidates where run_id = %s", (run_id,))
+    saved: list[dict] = []
+    for ordinal, item in enumerate(scored):
+        row = conn.execute(
+            """insert into run_candidates (run_id, ordinal, label, reason, parts, total_sec,
+                                           standalone, answers, score, judge_note)
+               values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id""",
+            (
+                run_id, ordinal, item.candidate.label, item.candidate.reason,
+                Jsonb(_parts_json(item.parts)),
+                round(sum(p.length for p in item.parts), 3),
+                item.verdict.standalone, item.verdict.answers, item.verdict.score,
+                item.verdict.reason,
+            ),
+        ).fetchone()
+        saved.append({"id": row["id"], "label": item.candidate.label,
+                      "recommended": item is recommended})
+
     conn.execute(
         "update runs set status = 'DONE', ranked = %s, updated_at = now() where id = %s",
         (
@@ -233,51 +257,113 @@ def _run_inside(
                 "answerable": True,
                 "reason": plan.reason,
                 "route": decision.route,
-                "candidates": [
-                    {
-                        "label": s.candidate.label,
-                        "parts": [
-                            {"start_sec": p.start_sec, "end_sec": p.end_sec} for p in s.parts
-                        ],
-                        "total_sec": round(sum(p.length for p in s.parts), 2),
-                        "standalone": s.verdict.standalone,
-                        "answers": s.verdict.answers,
-                        "score": s.verdict.score,
-                        "reason": s.verdict.reason,
-                        "won": s is winner,
-                    }
-                    for s in scored
-                ],
+                "candidates": len(scored),
                 "judgeMs": total_ms,
             }),
             run_id,
         ),
     )
-    # judge 소견을 클립에 남긴다. 사람의 OK/NG 와 나란히 쌓여 둘의 일치율이 품질 지표가 된다(§11).
-    conn.execute(
-        """insert into clip_reviews (clip_id, verdict, note, reviewer)
-           values (%s, %s, %s, 'llm')""",
-        (clip_id, "OK" if winner.verdict.passed else "NG", winner.verdict.reason),
-    )
-    conn.commit()
-
-    # ⑦ 렌더 — 조각이 여럿이면 브릿지 카드를 끼워 이어붙인다
-    out = render.run_for_clip(conn, cfg, clip_id, force=True)
+    # 🔴 REVIEW 는 "사람 차례" 라는 뜻이다. 예전에는 클립이 이미 있는 상태였고, 지금은 고를
+    # 후보가 있는 상태다. 화면이 클립 유무로 갈라 그린다(ClusterPanel).
     clusters.transition(conn, cluster["id"], "REVIEW")
     conn.commit()
     return {
         "answerable": True,
         "runId": run_id,
-        "clipId": clip_id,
         "route": decision.route,
-        "label": winner.candidate.label,
-        "parts": len(winner.parts),
-        "totalSec": round(sum(p.length for p in winner.parts), 2),
-        "verdict": {
-            "standalone": winner.verdict.standalone,
-            "answers": winner.verdict.answers,
-            "score": winner.verdict.score,
-            "reason": winner.verdict.reason,
-        },
-        "path": str(out),
+        "candidates": saved,
+        "judgeMs": total_ms,
+    }
+
+
+def _parts_json(parts: list) -> list[dict]:
+    """조각을 저장 형태로. 🔴 `text` 를 반드시 넣는다 — 크리에이터가 읽고 고르는 것이 그것이다."""
+    return [
+        {
+            "ordinal": ordinal,
+            "segment_id": part.segment_id,
+            "chunk_id": part.chunk_id,
+            "start_sec": part.start_sec,
+            "end_sec": part.end_sec,
+            "start_utterance_idx": part.start_utterance_idx,
+            "end_utterance_idx": part.end_utterance_idx,
+            "text": part.text,
+        }
+        for ordinal, part in enumerate(parts)
+    ]
+
+
+def _parts_from_json(rows: list[dict]) -> list[cutting.PartSpec]:
+    return [
+        cutting.PartSpec(
+            segment_id=row["segment_id"], chunk_id=row["chunk_id"],
+            start_utterance_idx=row["start_utterance_idx"],
+            end_utterance_idx=row["end_utterance_idx"],
+            start_sec=float(row["start_sec"]), end_sec=float(row["end_sec"]),
+            text=row["text"],
+        )
+        for row in rows
+    ]
+
+
+def build(conn: psycopg.Connection, cfg: config.Config, candidate_id: int) -> dict:
+    """크리에이터가 고른 후보 하나를 **숏폼으로 만든다** — 컷 + 렌더.
+
+    🔴 **LLM 을 부르지 않는다.** 범위도 대사도 판정도 이미 있다. 여기서 드는 건 ffmpeg 시간뿐이다.
+    그래서 크리에이터가 마음을 바꿔 다른 후보를 골라도 추가 비용이 없다.
+
+    다시 고르면 그 run 의 기존 클립을 **지우고** 새로 만든다. `uq_clips_run_segment` 때문이기도
+    하지만, 무엇보다 한 질문에 답하는 클립은 하나여야 한다(불변식 I1).
+    """
+    row = conn.execute(
+        """select rc.*, r.source_id, r.criteria_prompt, qc.id as cluster_id, qc.status
+           from run_candidates rc
+           join runs r on r.id = rc.run_id
+           left join question_clusters qc on qc.run_id = r.id
+           where rc.id = %s""",
+        (candidate_id,),
+    ).fetchone()
+    if row is None:
+        raise AnswerError(f"candidate {candidate_id} 없음")
+    candidate = dict(row)
+    parts = _parts_from_json(candidate["parts"])
+    if not parts:
+        raise AnswerError("조각이 없는 후보다")
+
+    # 이전에 고른 것이 있으면 치운다. 파일은 남지만 DB 에서 떨어져 나가고 렌더가 새로 돈다.
+    conn.execute("delete from clips where run_id = %s", (candidate["run_id"],))
+    conn.execute(
+        "update run_candidates set chosen_at = null where run_id = %s", (candidate["run_id"],)
+    )
+
+    clip_id = cutting.create_answer_clip(
+        conn, candidate["run_id"], parts, candidate["score"], candidate["reason"] or "",
+        # 질문이 곧 이 숏폼의 제목이다 — 시청자가 목록에서 보는 것도 이 문장이다.
+        title=candidate["criteria_prompt"],
+    )
+    if candidate["cluster_id"] is not None:
+        conn.execute(
+            "update clips set question_cluster_id = %s where id = %s",
+            (candidate["cluster_id"], clip_id),
+        )
+    conn.execute(
+        "update run_candidates set chosen_at = now() where id = %s", (candidate_id,)
+    )
+    # judge 소견을 클립에 남긴다. 사람의 OK/NG 와 나란히 쌓여 둘의 일치율이 품질 지표가 된다(§11).
+    passed = bool(candidate["standalone"]) and bool(candidate["answers"])
+    conn.execute(
+        "insert into clip_reviews (clip_id, verdict, note, reviewer) values (%s, %s, %s, 'llm')",
+        (clip_id, "OK" if passed else "NG", candidate["judge_note"]),
+    )
+    conn.commit()
+
+    # 🔴 조각이 여럿이면 브릿지 카드를 끼워 **한 번의 인코딩**으로 이어붙인다.
+    render.run_for_clip(conn, cfg, clip_id, force=True)
+    conn.commit()
+    return {
+        "clipId": clip_id,
+        "runId": candidate["run_id"],
+        "label": candidate["label"],
+        "parts": len(parts),
+        "totalSec": round(sum(p.length for p in parts), 2),
     }
