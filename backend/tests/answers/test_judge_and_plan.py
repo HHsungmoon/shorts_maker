@@ -130,14 +130,71 @@ class JudgeParsingTest(unittest.TestCase):
 
 
 class RoutingTest(unittest.TestCase):
+    """경로 판정 + 구간 선택. 한 번의 LLM 호출이 둘 다 한다(routing 모듈 머리 주석).
+
+    🔴 여기서 지키는 것은 **`selected` 의 세 가지 뜻이 섞이지 않는 것**이다:
+      - 번호 목록: 그 구간들의 대사를 다음 단계에 넘긴다
+      - `[]`: 모델이 "이 영상엔 없다" 고 답했다 → 답변 불가
+      - `None`: 판정을 못 읽었다 → 임베딩 top-k 폴백
+    셋을 합치면 파싱 실패가 잘못된 시청자 안내로 바뀐다.
+    """
+
+    ALLOWED = {0, 1, 2, 7, 22}
+
+    def parse(self, raw: str):
+        return routing.parse(raw, self.ALLOWED)
+
     def test_a_valid_route_parses(self):
-        self.assertEqual(routing.parse('{"route": "retrieval", "reason": "r"}')[0], routing.RETRIEVAL)
+        self.assertEqual(self.parse('{"route": "retrieval", "segments": [], "reason": "r"}').route,
+                         routing.RETRIEVAL)
 
     def test_an_unknown_route_is_an_error(self):
-        for raw in ('{"route": "search", "reason": "r"}', '{"reason": "r"}', "nope"):
+        for raw in ('{"route": "search", "segments": [], "reason": "r"}', '{"reason": "r"}', "nope"):
             with self.subTest(raw=raw):
                 with self.assertRaises(ValueError):
-                    routing.parse(raw)
+                    self.parse(raw)
+
+    def test_the_chosen_segments_come_back_in_the_order_given(self):
+        # 관련 높은 순으로 온다고 보고 앞에서 자른다 — 시간 순 정렬은 호출부의 일이다.
+        decision = self.parse('{"route": "retrieval", "segments": [22, 7, 1], "reason": "r"}')
+        self.assertEqual(decision.selected, [22, 7, 1])
+
+    def test_a_number_outside_the_listing_is_dropped(self):
+        # 🔴 화이트리스트. 없는 번호로 대사를 찾으면 다음 단계가 엉뚱한 구간을 자른다.
+        self.assertEqual(self.parse('{"route": "retrieval", "segments": [7, 999], "reason": "r"}').selected, [7])
+
+    def test_all_numbers_outside_the_listing_is_an_error_not_an_empty_answer(self):
+        """🔴 빈 배열로 두면 "이 영상엔 없다" 로 읽힌다 — 모델이 엉뚱한 번호를 댄 것이
+        시청자에게 잘못된 안내로 바뀐다. 파싱 실패로 올려 폴백을 타게 한다."""
+        with self.assertRaises(ValueError):
+            self.parse('{"route": "retrieval", "segments": [998, 999], "reason": "r"}')
+
+    def test_an_honest_empty_answer_survives(self):
+        # 모델이 처음부터 빈 배열을 준 것은 판정이다 — 버리지 않는다.
+        self.assertEqual(self.parse('{"route": "retrieval", "segments": [], "reason": "없다"}').selected, [])
+
+    def test_duplicates_collapse(self):
+        self.assertEqual(self.parse('{"route": "retrieval", "segments": [7, 7, 1], "reason": "r"}').selected, [7, 1])
+
+    def test_too_many_segments_are_capped(self):
+        # 상한이 있는 이유는 비용이 아니라 다음 단계의 정밀도다(MAX_SEGMENTS 주석).
+        allowed = set(range(20))
+        decision = routing.parse(
+            '{"route": "retrieval", "segments": %s, "reason": "r"}' % list(range(20)), allowed
+        )
+        self.assertEqual(len(decision.selected), routing.MAX_SEGMENTS)
+
+    def test_the_listing_shows_every_segment_with_its_number(self):
+        segments = [{"idx": 0, "description": "인사"}, {"idx": 7, "description": "마이크로서비스"}]
+        prompt = routing.build_prompt("기술 스택은?", segments)
+        self.assertIn("[0] 인사", prompt)
+        self.assertIn("[7] 마이크로서비스", prompt)
+        self.assertIn("기술 스택은?", prompt)
+
+    def test_a_prompt_without_segments_is_refused(self):
+        # 구간이 없으면 고를 것이 없다. 호출부가 먼저 걸러야 한다.
+        with self.assertRaises(ValueError):
+            routing.build_prompt("질문", [])
 
     def test_the_rule_of_thumb_separates_the_obvious_cases(self):
         # LLM 과 나란히 기록해 "규칙만으로 충분했나" 를 나중에 데이터로 답한다.
