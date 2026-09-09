@@ -71,6 +71,44 @@ class WatchTestCase(unittest.TestCase):
             conn.commit()
         return row["id"]
 
+    def make_clip(self, source_id: int, question: str | None = "마케터 인재상은?",
+                  published: bool = True, asked: int = 1, start: float = 0.0) -> int:
+        """발행된 클립 하나. `start` 는 원본에서 이 이야기가 시작되는 **절대 초**다 —
+        시청자에게 내려가고 유튜브 플레이어가 그 값으로 이동한다."""
+        with store.connect(self.url) as conn:
+            run_id = conn.execute(
+                "insert into runs (source_id) values (%s) returning id", (source_id,)
+            ).fetchone()["id"]
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
+            ).fetchone()["id"]
+            segment_id = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 30, 0, 3) returning id", (chunk_id,)
+            ).fetchone()["id"]
+            cluster_id = None
+            if question:
+                cluster_id = conn.execute(
+                    "insert into question_clusters (source_id, canonical_text, status)"
+                    " values (%s, %s, 'PUBLISHED') returning id", (source_id, question)
+                ).fetchone()["id"]
+                for n in range(asked):
+                    conn.execute(
+                        "insert into questions (source_id, text, viewer_id, cluster_id)"
+                        " values (%s, %s, %s, %s)", (source_id, f"원문 {n}", f"v{n}", cluster_id)
+                    )
+            clip_id = conn.execute(
+                """insert into clips (run_id, segment_id, start_sec, end_sec, path, rendered,
+                                      total_sec, question_cluster_id, published_at)
+                   values (%s, %s, %s, %s, 'clips/clip001.mp4', true, 28.5, %s, %s) returning id""",
+                (run_id, segment_id, start, start + 30, cluster_id, "now()" if published else None),
+            ).fetchone()["id"]
+            if published:
+                conn.execute("update clips set published_at = now() where id = %s", (clip_id,))
+            conn.commit()
+        return clip_id
+
     def rows(self, sql, params=()):
         with store.connect(self.url) as conn:
             return [dict(r) for r in conn.execute(sql, params)]
@@ -291,46 +329,87 @@ class EventTest(WatchTestCase):
     def test_an_unknown_event_kind_is_refused(self):
         self.assertEqual(self.client.post("/api/watch/events", json={"kind": "scroll"}).status_code, 422)
 
+    def test_a_like_records_which_video_it_happened_on(self):
+        # 🔴 예전에 source_id 를 null 로 넣어서 좋아요가 어느 영상에서 눌렸는지 이벤트에
+        # 남지 않았다. 그러면 영상별 수요를 셀 수 없다 — 이 제품이 보려는 것이 그 수요다.
+        source_id = self.source()
+        question_id = self.question(source_id)
+        self.client.post(f"/api/watch/questions/{question_id}/like")
+        row = self.rows("select kind, source_id from viewer_events where kind = 'like'")[0]
+        self.assertEqual(row["source_id"], source_id)
+
+    def test_an_event_names_the_clip_in_a_real_column(self):
+        # 🔴 예전에 프론트가 clipId 를 payload 안에 넣고 서버는 최상위를 읽어서 clip_id 가
+        # 한 줄도 채워지지 않았다. jsonb 안의 값으로는 조인도 인덱스도 안 된다 — 그래서
+        # "어느 숏폼이 유입을 만들었나" 를 셀 수 없었다.
+        source_id = self.source()
+        clip_id = self.make_clip(source_id)
+        response = self.client.post(
+            "/api/watch/events",
+            json={"kind": "short_play", "sourceId": source_id, "clipId": clip_id},
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        row = self.rows("select clip_id from viewer_events")[0]
+        self.assertEqual(row["clip_id"], clip_id)
+
+    def test_an_event_for_an_unknown_source_is_404_not_500(self):
+        # 🔴 이 라우트는 인증이 없다. 없는 id 를 그대로 insert 하면 외래키 위반이 500 으로
+        # 새어 나간다 — 인터넷에 열린 면에서 500 은 스택트레이스를 흘릴 자리를 만든다.
+        response = self.client.post("/api/watch/events", json={"kind": "short_play", "sourceId": 999999})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.rows("select count(*) as n from viewer_events")[0]["n"], 0)
+
+    def test_an_event_for_an_unpublished_clip_is_404(self):
+        source_id = self.source()
+        clip_id = self.make_clip(source_id, published=False)
+        response = self.client.post(
+            "/api/watch/events",
+            json={"kind": "short_play", "sourceId": source_id, "clipId": clip_id},
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_an_event_cannot_pin_a_clip_from_another_video(self):
+        # 짝이 안 맞는 조합을 받아 두면 퍼널에서 클립별 합과 영상별 합이 어긋난다.
+        mine = self.source(fingerprint="sha256:mine")
+        other = self.source(title="다른 강연", fingerprint="sha256:other")
+        clip_id = self.make_clip(other)
+        response = self.client.post(
+            "/api/watch/events",
+            json={"kind": "short_play", "sourceId": mine, "clipId": clip_id},
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class OriginReturnTest(WatchTestCase):
+    """원본 유입 — 숏폼이 원본의 **어느 초로** 데려가는가 (tease §2-1 5단계).
+
+    이 제품의 주장이 "숏폼을 보고 원본으로 들어간다" 이고, 그 "어느 초로" 를 화면이 알아야
+    플레이어를 움직일 수 있다. 응답에 그 값이 없으면 프론트는 이동할 지점을 모른다.
+    """
+
+    def test_a_clip_tells_the_viewer_where_the_story_starts(self):
+        source_id = self.source()
+        self.make_clip(source_id, start=1234.5)
+        clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertEqual(clip["start_sec"], 1234.5)
+
+    def test_the_second_is_absolute_in_the_source_not_the_chunk(self):
+        """🔴 청크로 나뉜 영상에서도 유튜브 타임라인에 그대로 넣을 수 있어야 한다.
+
+        발화 타임스탬프는 `stt.to_utterance_rows` 가 청크 시작 초를 더해 절대 초로 저장하고,
+        클립의 초는 거기서 파생된다. 그래서 두 번째 청크에서 나온 클립도 소스 기준이다 —
+        여기서 청크 로컬 초가 새면 시청자가 엉뚱한 지점으로 떨어진다.
+        """
+        source_id = self.source(duration_sec=5700)
+        # 2번째 청크(1800초부터)의 한복판에서 나온 클립.
+        self.make_clip(source_id, start=2400.0)
+        clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertGreater(clip["start_sec"], 1800)
+
 
 
 class PublishedClipTest(WatchTestCase):
     """발행된 클립이 시청자에게 어떻게 보이는가."""
-
-    def make_clip(self, source_id: int, question: str | None = "마케터 인재상은?",
-                  published: bool = True, asked: int = 1) -> int:
-        with store.connect(self.url) as conn:
-            run_id = conn.execute(
-                "insert into runs (source_id) values (%s) returning id", (source_id,)
-            ).fetchone()["id"]
-            chunk_id = conn.execute(
-                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
-                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
-            ).fetchone()["id"]
-            segment_id = conn.execute(
-                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
-                " end_utterance_idx) values (%s, 0, 0, 30, 0, 3) returning id", (chunk_id,)
-            ).fetchone()["id"]
-            cluster_id = None
-            if question:
-                cluster_id = conn.execute(
-                    "insert into question_clusters (source_id, canonical_text, status)"
-                    " values (%s, %s, 'PUBLISHED') returning id", (source_id, question)
-                ).fetchone()["id"]
-                for n in range(asked):
-                    conn.execute(
-                        "insert into questions (source_id, text, viewer_id, cluster_id)"
-                        " values (%s, %s, %s, %s)", (source_id, f"원문 {n}", f"v{n}", cluster_id)
-                    )
-            clip_id = conn.execute(
-                """insert into clips (run_id, segment_id, start_sec, end_sec, path, rendered,
-                                      total_sec, question_cluster_id, published_at)
-                   values (%s, %s, 0, 30, 'clips/clip001.mp4', true, 28.5, %s, %s) returning id""",
-                (run_id, segment_id, cluster_id, "now()" if published else None),
-            ).fetchone()["id"]
-            if published:
-                conn.execute("update clips set published_at = now() where id = %s", (clip_id,))
-            conn.commit()
-        return clip_id
 
     def test_a_published_clip_carries_the_question_it_answers(self):
         # 🔴 클립만 주면 시청자가 "이게 왜 여기 있지" 가 된다. 이 제품의 요지는 "당신이 물어본 것에

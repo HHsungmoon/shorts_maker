@@ -107,6 +107,11 @@ def get_source(source_id: int, viewer: str = Depends(viewers.viewer_id)) -> dict
         clips = rows(
             conn,
             """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
+                      -- 🔴 원본 유입의 목적지다. 조합 클립에서 이 값은 봉투의 시작(첫 조각
+                      -- 시작)이고, 그게 정확히 "이 이야기가 시작되는 곳" 이다.
+                      -- 소스 **절대 초**라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다
+                      -- (청크 오프셋은 stt.to_utterance_rows 에서 이미 더해졌다).
+                      c.start_sec,
                       -- 🔴 제목은 컬럼이다. 질문에서 나온 클립이든 크리에이터가 직접 뽑은 것이든
                       -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
                       coalesce(c.title, qc.canonical_text) as title,
@@ -173,7 +178,7 @@ def toggle_like(
     with connect() as conn:
         # 발행된 영상의 질문만. 미발행 영상의 질문에 좋아요를 눌러 존재를 확인할 수 없게 한다.
         found = conn.execute(
-            """select q.id from questions q join sources s on s.id = q.source_id
+            """select q.id, q.source_id from questions q join sources s on s.id = q.source_id
                where q.id = %s and s.published""",
             (question_id,),
         ).fetchone()
@@ -189,7 +194,14 @@ def toggle_like(
                 "insert into question_likes (question_id, viewer_id) values (%s, %s)",
                 (question_id, viewer),
             )
-            events.record(conn, viewer, "like", source_id=None)
+            # 🔴 예전에 여기 source_id 를 null 로 넣었다. 그러면 `idx_events_source_kind` 로
+            # 영상별 수요를 셀 수 없다 — 좋아요가 어느 영상에서 눌렸는지가 이벤트에 안 남는다.
+            # 질문이 이미 영상을 알고 있으므로 그 값을 쓴다.
+            #
+            # 취소(un-like)는 줄을 남기지 않는다. kind CHECK 에 없는 값이라 마이그레이션이
+            # 필요한데, "지금 몇 개인가" 는 question_likes 가 정본으로 갖고 있어서 이벤트가
+            # 답해야 할 질문이 아니다. 이벤트가 답하는 건 "누르는 일이 일어났나" 다.
+            events.record(conn, viewer, "like", source_id=found["source_id"])
         likes = conn.execute(
             "select count(*) as n from question_likes where question_id = %s", (question_id,)
         ).fetchone()["n"]
@@ -203,12 +215,29 @@ def add_event(body: EventIn, request: Request, viewer: str = Depends(viewers.vie
 
     🔴 `question_post`·`like` 는 서버가 직접 넣는다 — 클라이언트가 위조해 넣으면 퍼널 수치가
     거짓이 된다. 그래서 여기서 받는 종류를 좁힌다(`events.KIND_FROM_CLIENT`).
+
+    🔴 **id 를 검증한다.** `source_id`·`clip_id` 는 외래키인데 이 라우트는 인증이 없다 —
+    없는 id 를 보내면 외래키 위반이 500 으로 새어 나간다. 값이 오면 발행된 것인지 확인하고,
+    아니면 404 다(다른 읽기 경로와 같은 규칙: 존재 자체를 알리지 않는다).
     """
     if body.kind not in events.KIND_FROM_CLIENT:
         raise HTTPException(422, f"보낼 수 없는 이벤트입니다: {body.kind}")
     # 재생 이벤트는 초 단위로 여러 번 올 수 있어 좋아요와 같은 한도를 쓴다.
     viewers.check_rate(request, viewer, "like")
     with connect() as conn:
+        if body.sourceId is not None:
+            _published_source(conn, body.sourceId)
+        if body.clipId is not None:
+            # 발행된 클립이어야 하고, source_id 를 함께 보냈으면 그 영상의 클립이어야 한다.
+            # 짝이 맞지 않는 조합을 받아 두면 퍼널에서 클립별 합과 영상별 합이 어긋난다.
+            found = conn.execute(
+                """select c.id from clips c join runs r on r.id = c.run_id
+                   where c.id = %s and c.published_at is not null
+                     and (%s::int is null or r.source_id = %s)""",
+                (body.clipId, body.sourceId, body.sourceId),
+            ).fetchone()
+            if found is None:
+                raise HTTPException(404, "클립을 찾을 수 없습니다")
         events.record(conn, viewer, body.kind, body.sourceId, body.clipId, body.payload)
         conn.commit()
     return {"ok": True}
