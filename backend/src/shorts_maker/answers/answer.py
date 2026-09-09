@@ -185,12 +185,25 @@ def _run_inside(
             conn, cluster["id"], run_id, plan.reason, _suggest(conn, cfg, cluster, everything)
         )
 
-    # ④ 예산 강제 — 🔴 LLM 이 말한 길이는 믿지 않는다
+    # ④ 시작점 보정 + 예산 강제 — 🔴 LLM 이 말한 길이도, 고른 시작점도 그대로 믿지 않는다
     prepared: list[tuple[object, list]] = []
+    shapes: set[tuple] = set()
     for candidate in plan.candidates:
+        # 🔴 앞을 가리키며 시작하면 시작점을 당긴다. 프롬프트에 "지시대명사로 시작하지 않는다" 가
+        # 있는데도 실측에서 후보 셋이 전부 그렇게 시작했다(cutting.LEAD_IN_MARKERS 주석).
+        # **예산 강제보다 먼저** 한다 — 늘린 만큼 뒤에서 잘라내야 총량이 맞는다.
+        ranges = cutting.lead_in(candidate.parts, lines, cfg.teaser_max_sec)
         parts = cutting.enforce_budget(
-            cutting.resolve_parts(candidate.parts, lines), cfg.teaser_max_sec, lines
+            cutting.resolve_parts(ranges, lines), cfg.teaser_max_sec, lines
         )
+        # 🔴 **같아진 후보는 버린다.** 시작점 보정과 예산 강제를 거치고 나면 서로 다르게 나온
+        # 후보가 같은 범위로 수렴할 수 있다(실측: tight 를 당겼더니 single 과 똑같아졌다).
+        # 크리에이터에게 똑같은 카드를 둘 보여주는 것은 고를 것을 주는 게 아니고, judge 호출도
+        # 하나 더 쓴다 — 무료 등급에서는 그게 곧 하루에 몇 번 답할 수 있느냐다.
+        shape = tuple((p.chunk_id, p.start_utterance_idx, p.end_utterance_idx) for p in parts)
+        if shape in shapes:
+            continue
+        shapes.add(shape)
         prepared.append((candidate, parts))
     conn.commit()
 

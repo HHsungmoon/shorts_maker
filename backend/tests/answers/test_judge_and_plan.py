@@ -8,7 +8,7 @@ import json
 import unittest
 
 from shorts_maker.answers import judge, routing
-from shorts_maker.pipeline import ranking, subtitles
+from shorts_maker.pipeline import cutting, ranking, subtitles
 
 
 def line(number: int, segment_id: int, utterance_idx: int, start: float, end: float) -> dict:
@@ -202,6 +202,121 @@ class RoutingTest(unittest.TestCase):
             self.assertEqual(routing.rule_of_thumb(text), routing.RETRIEVAL, text)
         for text in ("핵심만 30초로", "재밌는 부분"):
             self.assertEqual(routing.rule_of_thumb(text), routing.RANK, text)
+
+
+class LeadInTest(unittest.TestCase):
+    """🔴 앞을 가리키며 시작하는 컷의 시작점을 당긴다 (cutting.lead_in).
+
+    실측 근거(2026-09-09, "개발 직군의 주요 기술 스택"): 후보 **셋이 전부** 자립성 판정에서
+    떨어졌고 이유가 같았다 — "저희는 **이런 서비스들**을 …", "**이렇게** 수많은 AI 프로젝트들이 …".
+    검색도 rank 도 맞는 대사를 골랐는데 시작점이 한 발화 늦었다. 프롬프트에는 이미
+    "지시대명사로 시작하지 않는다" 가 있었고 지켜지지 않았다 — 그래서 코드가 고친다.
+    """
+
+    def lines(self, *texts: str, seconds: float = 5.0, segment_id: int = 1) -> list[dict]:
+        return [
+            {
+                "line": n, "segment_id": segment_id, "segment_idx": 0, "description": "",
+                "chunk_id": 1, "utterance_idx": n,
+                "start_sec": n * seconds, "end_sec": (n + 1) * seconds, "text": text,
+            }
+            for n, text in enumerate(texts)
+        ]
+
+    def pull(self, lines: list[dict], start: int, end: int, budget: float = 30.0):
+        return cutting.lead_in([ranking.Part(start, end)], lines, budget)[0]
+
+    def test_a_clip_starting_with_a_backward_reference_reaches_back(self):
+        lines = self.lines(
+            "저희 서비스는 차량 제어부터 개인화까지 여러 가지가 있습니다",
+            "저희는 이런 서비스들을 개발하기 위해 마이크로서비스 아키텍처를 씁니다",
+        )
+        self.assertEqual(self.pull(lines, 1, 1).start_line, 0)
+
+    def test_a_self_contained_opening_is_left_alone(self):
+        # 🔴 필요 없을 때 당기면 예산만 먹고 답이 짧아진다.
+        lines = self.lines(
+            "앞 문장입니다",
+            "쏘카는 마이크로서비스 아키텍처를 씁니다",
+        )
+        self.assertEqual(self.pull(lines, 1, 1).start_line, 1)
+
+    def test_a_demonstrative_deep_in_the_sentence_does_not_trigger(self):
+        """클립 한복판의 지시어는 정상이다 — 선행사가 클립 안에 있다."""
+        lines = self.lines(
+            "앞 문장입니다",
+            "쏘카는 마이크로서비스 아키텍처를 쓰고 있는데 이런 구조가 개발 속도를 높입니다",
+        )
+        self.assertEqual(self.pull(lines, 1, 1).start_line, 1)
+
+    def test_it_stops_at_the_segment_boundary(self):
+        # 🔴 조각은 한 구간 안에 있어야 한다(parse_answer 불변식). 넘으면 뒤에서 조용히 어긋난다.
+        lines = self.lines("다른 구간의 마지막 말") + [
+            {
+                "line": 1, "segment_id": 2, "segment_idx": 1, "description": "",
+                "chunk_id": 1, "utterance_idx": 1, "start_sec": 5.0, "end_sec": 10.0,
+                "text": "이런 서비스들을 만듭니다",
+            }
+        ]
+        self.assertEqual(self.pull(lines, 1, 1).start_line, 1)
+
+    def test_it_never_eats_the_budget(self):
+        """🔴 맥락 때문에 답을 잘라내지 않는다.
+
+        앞머리가 붙고 답이 반이 된 클립보다, 시작이 조금 어색해도 답이 온전한 편이 낫다.
+        남은 어색함은 판정이 잡고 크리에이터가 화면에서 읽는다.
+        """
+        lines = self.lines("앞 발화", "이런 것들을 만듭니다", seconds=20.0)
+        self.assertEqual(self.pull(lines, 1, 1, budget=30.0).start_line, 1)
+
+    def test_it_gives_up_rather_than_landing_in_mid_sentence(self):
+        """🔴 좋은 자리를 못 찾으면 그냥 둔다.
+
+        실측에서 지시어만 피하다 "해나가고 있고" 에서 시작한 적이 있다 — 앞을 가리키지는 않지만
+        문장 한복판이라 더 나빴다. 어중간하게 당기느니 원래대로 두고 판정에 맡긴다.
+        """
+        lines = self.lines("그래서 하나", "그리고 둘", "그런데 셋", "이렇게 만듭니다", seconds=2.0)
+        self.assertEqual(self.pull(lines, 3, 3).start_line, 3)
+
+    def test_it_only_reaches_back_so_far(self):
+        # 좋은 자리가 상한 밖이면 포기한다 — 그 위로는 30초 안에 답이 들어갈 자리가 없다.
+        lines = self.lines(
+            "깨끗한 시작입니다", "그래서 하나", "그리고 둘", "그런데 셋", "이렇게 넷", seconds=2.0,
+        )
+        self.assertEqual(self.pull(lines, 4, 4).start_line, 4)
+
+    def test_it_lands_where_the_previous_utterance_finished_a_sentence(self):
+        # 앞 발화가 문장을 끝냈으면 거기서부터가 새 문장이다.
+        lines = self.lines(
+            "쏘카는 여러 서비스를 운영하고 있습니다",
+            "차량 제어와 안전을 다룹니다",
+            "이런 서비스들을 만들기 위해",
+            seconds=3.0,
+        )
+        self.assertEqual(self.pull(lines, 2, 2).start_line, 1)
+
+    def test_the_second_part_of_a_combo_is_fixed_too(self):
+        """🔴 조합은 조각 사이에 점프가 있어서 **두 번째 조각도 그 자리에서 새로 시작**한다.
+
+        실측의 combo 가 정확히 그랬다 — 두 조각 다 지시어로 시작했다.
+        """
+        lines = self.lines(
+            "첫 조각 앞", "첫 조각 본문입니다", "둘째 조각 앞 맥락", "이렇게 만들고 있습니다",
+            seconds=3.0,
+        )
+        parts = cutting.lead_in([ranking.Part(1, 1), ranking.Part(3, 3)], lines, 30.0)
+        self.assertEqual([(p.start_line, p.end_line) for p in parts], [(1, 1), (2, 3)])
+
+    def test_it_never_overlaps_the_part_before_it(self):
+        # 겹치면 같은 대사가 두 번 나오고 자막 타임라인이 어긋난다.
+        lines = self.lines("앞", "첫 조각", "이런 것들을 만듭니다", seconds=3.0)
+        parts = cutting.lead_in([ranking.Part(0, 1), ranking.Part(2, 2)], lines, 30.0)
+        self.assertEqual([(p.start_line, p.end_line) for p in parts], [(0, 1), (2, 2)])
+
+    def test_the_markers_cover_what_the_measurement_found(self):
+        # 실측에서 실제로 걸린 두 문장. 목록을 줄일 때 이 둘이 빠지면 안 된다.
+        self.assertTrue(cutting.needs_lead_in("저희는 이런 서비스들을 1년으로 개발하기 위해서"))
+        self.assertTrue(cutting.needs_lead_in("이렇게 수많은 AI 프로젝트들이 원활하게"))
 
 
 class PartSubtitleTest(unittest.TestCase):
