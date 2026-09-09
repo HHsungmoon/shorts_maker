@@ -225,7 +225,9 @@ function funnelCount(row: ShortsFunnelRow, kind: string): number {
  * 그때 다시 판단한다 — 지금은 사람 수를 그대로 보여주는 게 유일하게 정직한 표시다.
  */
 function FunnelSection({ sourceId }: { sourceId: number }) {
-	const insights = useAsync<ShortsInsights>(() => fetchInsights(sourceId), [sourceId]);
+	const insights = useAsync<ShortsInsights>(
+		() => fetchInsights(sourceId), [sourceId], { keepPrevious: true, subject: sourceId },
+	);
 
 	if (insights.loading) {
 		return <p className="state">불러오는 중…</p>;
