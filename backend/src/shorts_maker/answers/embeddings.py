@@ -135,9 +135,12 @@ def embed_and_store(
 def index_segments(conn: psycopg.Connection, cfg: config.Config, source_id: int) -> int:
     """이 원본의 구간 설명을 검색 대상으로 임베딩한다. 이미 된 것은 건너뛴다.
 
-    M5 의 구간 검색이 쓴다. 지금은 자동으로 부르지 않는다 — segmentation 경로에 외부 호출을
-    얹으면 임베딩 실패가 구간 분할 실패가 된다. 검색이 실제로 생기는 M5 에서 "검색 직전에 없으면
-    만든다" 폴백과 함께 붙인다. 지금은 `sm answers index` 로 미리 만들어 둘 수 있다.
+    **자동 경로는 따로 있다** — `retrieval.ensure_indexed`(답하는 그 영상)와
+    `retrieval.ensure_siblings_indexed`(같은 채널의 발행된 다른 영상)가 검색 직전에 만든다.
+    segmentation 에 매달지 않은 이유는 그 함수들 주석에 있다(임베딩 실패가 구간 분할 실패가 된다).
+
+    이 함수는 `sm answers index` 가 쓴다 — 데모 전에 미리 만들어 두거나, 자동 경로가 할당량으로
+    건너뛴 것을 손으로 채울 때다.
     """
     rows = conn.execute(
         """select sg.id, sg.description from segments sg

@@ -17,6 +17,11 @@ from shorts_maker.pipeline import cutting, ranking, render
 from ..support import DbTestCase, make_config
 
 
+def _decision(route: str, selected: list[int] | None = None) -> routing.Decision:
+    """라우팅 대역. `selected` 기본값은 None 이라 rank 경로에서는 쓰이지 않는다."""
+    return routing.Decision(route=route, selected=selected, reason="대역")
+
+
 def usage() -> dict:
     return {"input_tokens": 10, "output_tokens": 5, "thinking_tokens": 0,
             "total_tokens": 15, "cached_tokens": 0, "attempts": 1}
@@ -76,7 +81,7 @@ class AnswerTestCase(DbTestCase):
             return judge.parse(json.dumps(next(judged))), usage(), 5
 
         return (
-            mock.patch.object(routing, "classify", return_value=route),
+            mock.patch.object(routing, "decide", return_value=_decision(route)),
             mock.patch.object(gemini, "generate_json",
                               return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)),
             mock.patch.object(judge, "judge", side_effect=fake_judge),
@@ -196,10 +201,12 @@ class UnanswerableTest(AnswerTestCase):
 
     def test_a_weak_retrieval_score_stops_before_the_rank_call(self):
         # 검색이 바닥이면 rank 를 부를 이유가 없다 — 비용을 아끼는 게 아니라 없는 답을 만들지 않는 것이다.
-        found = retrieval.Candidates(segments=[], best_score=0.1, elsewhere_source_id=None, elsewhere_score=0.0)
+        found = retrieval.Candidates(segments=[], best_score=0.1)
         with (
-            mock.patch.object(routing, "classify", return_value=routing.RETRIEVAL),
+            # selected=None 은 "판정을 못 읽었다" 다 — 그때만 임베딩 top-k 로 물러난다.
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, None)),
             mock.patch.object(retrieval, "candidates", return_value=found),
+            mock.patch.object(retrieval, "suggest_elsewhere", return_value=None),
             mock.patch.object(gemini, "generate_json", autospec=True) as llm,
         ):
             result = answer.run(self.conn, self.cfg, self.cluster_id)
@@ -213,10 +220,11 @@ class UnanswerableTest(AnswerTestCase):
             " values ('ep.2', 'LECTURE', 'b.mp4', 'sha256:b', 'DONE') returning id"
         ).fetchone()["id"]
         self.conn.commit()
-        found = retrieval.Candidates(segments=[], best_score=0.2, elsewhere_source_id=other, elsewhere_score=0.8)
+        found = retrieval.Candidates(segments=[], best_score=0.2)
         with (
-            mock.patch.object(routing, "classify", return_value=routing.RETRIEVAL),
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, None)),
             mock.patch.object(retrieval, "candidates", return_value=found),
+            mock.patch.object(retrieval, "suggest_elsewhere", return_value=other),
         ):
             result = answer.run(self.conn, self.cfg, self.cluster_id)
         self.assertEqual(result["suggestedSourceId"], other)
@@ -228,11 +236,115 @@ class UnanswerableTest(AnswerTestCase):
         )
 
 
+class SegmentSelectionTest(AnswerTestCase):
+    """🔴 구간을 LLM 이 고른다 (2026-09-09, update_plan M5 실측).
+
+    임베딩 top-k 로는 답이 담긴 구간이 44개 중 29위여서 못 찾았다. 그래서 라우팅 호출이 구간 목록을
+    함께 보고 고른다. 여기서 보는 건 그 선택이 **다음 단계에 제대로 전달되는가** 다.
+    """
+
+    def rank_prompt(self, llm) -> str:
+        """rank 호출에 실제로 들어간 프롬프트."""
+        self.assertTrue(llm.call_args_list, "rank 가 불리지 않았다")
+        return llm.call_args_list[0].args[1]
+
+    def test_only_the_chosen_segments_reach_the_rank_call(self):
+        import json
+
+        plan = {"answerable": True, "reason": "있다", "candidates": [SINGLE]}
+        with (
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [1])),
+            mock.patch.object(gemini, "generate_json",
+                              return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
+            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
+        ):
+            answer.run(self.conn, self.cfg, self.cluster_id)
+        prompt = self.rank_prompt(llm)
+        self.assertIn("[구간 1]", prompt)
+        self.assertNotIn("[구간 0]", prompt)
+
+    def test_the_chosen_segments_are_put_back_in_time_order(self):
+        """🔴 모델은 관련 높은 순으로 준다. 다음 단계는 시간 순을 전제한다 —
+        조합 후보의 조각이 시간 순이어야 하고(parse_answer) 발화 번호도 시간 순으로 매겨진다."""
+        import json
+
+        plan = {"answerable": True, "reason": "있다", "candidates": [SINGLE]}
+        with (
+            # 1번 구간이 더 관련 높다고 답한 경우.
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [1, 0])),
+            mock.patch.object(gemini, "generate_json",
+                              return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
+            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
+        ):
+            answer.run(self.conn, self.cfg, self.cluster_id)
+        prompt = self.rank_prompt(llm)
+        self.assertLess(prompt.index("[구간 0]"), prompt.index("[구간 1]"))
+
+    def test_an_empty_selection_is_unanswerable_without_calling_rank(self):
+        # 모델이 구간 목록 전체를 보고 "없다" 고 답했다. 없는 답을 만들려고 rank 를 부를 이유가 없다.
+        decision = _decision(routing.RETRIEVAL, [])
+        decision.reason = "복지에 대한 내용이 이 영상에 없습니다"
+        with (
+            mock.patch.object(routing, "decide", return_value=decision),
+            mock.patch.object(retrieval, "suggest_elsewhere", return_value=None),
+            mock.patch.object(gemini, "generate_json", autospec=True) as llm,
+        ):
+            result = answer.run(self.conn, self.cfg, self.cluster_id)
+        self.assertFalse(result["answerable"])
+        self.assertEqual(self.status(), "UNANSWERABLE")
+        llm.assert_not_called()
+        # 🔴 모델이 말한 이유가 그대로 남아야 한다 — 크리에이터가 화면에서 읽는 문장이다.
+        self.assertIn("복지", result["reason"])
+
+    def test_an_empty_selection_never_falls_back_to_embeddings(self):
+        """🔴 "없다" 는 판정이다. 폴백을 타면 약한 신호로 억지 답을 만들게 된다."""
+        with (
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [])),
+            mock.patch.object(retrieval, "suggest_elsewhere", return_value=None),
+            mock.patch.object(retrieval, "candidates", autospec=True) as fallback,
+            mock.patch.object(gemini, "generate_json", autospec=True),
+        ):
+            answer.run(self.conn, self.cfg, self.cluster_id)
+        fallback.assert_not_called()
+
+    def test_a_suggestion_failure_does_not_trap_the_cluster(self):
+        """🔴 안내는 부수 정보다. 임베딩 할당량이 떨어졌다고 답변 불가를 기록조차 못 하면
+        클러스터가 IN_PROGRESS 에 갇혀 크리에이터가 다시 누를 수도 없다."""
+        with (
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RETRIEVAL, [])),
+            mock.patch.object(retrieval, "suggest_elsewhere",
+                              side_effect=gemini.GeminiError("할당량 소진")),
+        ):
+            result = answer.run(self.conn, self.cfg, self.cluster_id)
+        self.assertFalse(result["answerable"])
+        self.assertEqual(self.status(), "UNANSWERABLE")
+        self.assertIsNone(result["suggestedSourceId"])
+
+    def test_the_rank_route_still_sees_every_segment(self):
+        # 크리에이터의 "핵심만 30초로" 경로다. 좁히지 않는다 — 찾을 대상이 없으니 전체가 후보다.
+        import json
+
+        plan = {"answerable": True, "reason": "있다", "candidates": [SINGLE]}
+        with (
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK, [])),
+            mock.patch.object(gemini, "generate_json",
+                              return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
+            mock.patch.object(judge, "judge", return_value=(judge.parse(json.dumps(verdict())), usage(), 5)),
+            mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
+        ):
+            answer.run(self.conn, self.cfg, self.cluster_id)
+        prompt = self.rank_prompt(llm)
+        self.assertIn("[구간 0]", prompt)
+        self.assertIn("[구간 1]", prompt)
+
+
 class FailureTest(AnswerTestCase):
     def test_a_failure_returns_the_cluster_to_open(self):
         # 🔴 IN_PROGRESS 로 남으면 크리에이터가 다시 누를 수 없다.
         with (
-            mock.patch.object(routing, "classify", return_value=routing.RANK),
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
             mock.patch.object(gemini, "generate_json", side_effect=gemini.GeminiError("과부하")),
         ):
             with self.assertRaises(gemini.GeminiError):
@@ -241,7 +353,7 @@ class FailureTest(AnswerTestCase):
 
     def test_the_reason_is_kept_on_the_run(self):
         with (
-            mock.patch.object(routing, "classify", return_value=routing.RANK),
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
             mock.patch.object(gemini, "generate_json", side_effect=gemini.GeminiError("과부하")),
         ):
             with self.assertRaises(gemini.GeminiError):
@@ -252,7 +364,7 @@ class FailureTest(AnswerTestCase):
 
     def test_a_render_failure_also_returns_to_open(self):
         patches = [
-            mock.patch.object(routing, "classify", return_value=routing.RANK),
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
             mock.patch.object(
                 gemini, "generate_json",
                 return_value=('{"answerable": true, "reason": "있다", "candidates": '
@@ -309,7 +421,7 @@ class BudgetTest(AnswerTestCase):
             return judge.Verdict(True, True, 80, "ok"), usage(), 5
 
         patches = [
-            mock.patch.object(routing, "classify", return_value=routing.RANK),
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
             mock.patch.object(
                 gemini, "generate_json",
                 return_value=('{"answerable": true, "reason": "있다", "candidates": '
