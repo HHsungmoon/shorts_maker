@@ -79,6 +79,61 @@ class DailyQuotaTest(unittest.TestCase):
         for hint in ("모델", "결제", "자정"):
             self.assertIn(hint, gemini.DAILY_QUOTA_HINT)
 
+    def test_a_per_minute_embed_limit_is_not_mistaken_for_the_daily_one(self):
+        """🔴 2026-09-09 실측. 임베딩이 분당 한도(100)에 걸렸는데 "오늘은 안 풀린다" 로 죽었다.
+
+        옛 표식에 `free_tier_requests` 가 있었고, 분당 한도의 메트릭 이름
+        `embed_content_free_tier_requests` 에 그 조각이 들어 있어서 일일로 읽혔다.
+        무료 등급의 **모든** 한도 메시지가 저 조각을 갖고 있으니 애초에 일일을 가리키지 않았다.
+        """
+        exc = self.Failure(
+            "429 RESOURCE_EXHAUSTED. Quota exceeded for metric:"
+            " generativelanguage.googleapis.com/embed_content_free_tier_requests, limit: 100."
+            " quotaId: EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier."
+            " retryDelay: 36s"
+        )
+        self.assertFalse(gemini.is_daily_quota(exc))
+        self.assertTrue(gemini.is_transient(exc))
+
+    def test_a_free_tier_daily_limit_is_still_daily(self):
+        # 반대 방향도 지킨다 — 무료 등급 일일 한도는 여전히 재시도하지 않는다.
+        exc = self.Failure(
+            "429 RESOURCE_EXHAUSTED. metric: generate_content_free_tier_requests."
+            " quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+        )
+        self.assertTrue(gemini.is_daily_quota(exc))
+        self.assertFalse(gemini.is_transient(exc))
+
+
+class RetryDelayTest(unittest.TestCase):
+    """🔴 서버가 "36초 뒤에" 라고 하면 그대로 기다린다.
+
+    우리 백오프는 2·4·8초로 총 14초다. 분당 한도는 창이 끝나야 풀리므로, 36초를 기다려야 하는
+    상황에서 네 번 다 실패하고 끝난다 — **기다릴 줄 몰라서** 실패하는 셈이다.
+    """
+
+    class Failure(Exception):
+        code = 429
+
+    def test_the_server_delay_is_used_when_present(self):
+        exc = self.Failure("429 ... {'retryDelay': '36s'} ...")
+        self.assertEqual(gemini.retry_after_sec(exc), 36.0)
+        self.assertEqual(gemini.backoff_sec(exc, 1), 36.0)
+
+    def test_a_quoteless_form_is_also_read(self):
+        self.assertEqual(gemini.retry_after_sec(self.Failure('retryDelay: 7s')), 7.0)
+
+    def test_without_a_server_delay_the_exponential_backoff_stands(self):
+        exc = self.Failure("429 no hint")
+        self.assertIsNone(gemini.retry_after_sec(exc))
+        self.assertEqual(gemini.backoff_sec(exc, 1), gemini.BASE_BACKOFF_SEC)
+        self.assertEqual(gemini.backoff_sec(exc, 3), gemini.BASE_BACKOFF_SEC * 4)
+
+    def test_an_absurd_server_delay_is_capped(self):
+        # 잡 하나가 무한히 붙어 있으면 워커가 하나뿐인 큐가 막힌다(jobs.py).
+        exc = self.Failure("retryDelay: 3600s")
+        self.assertEqual(gemini.retry_after_sec(exc), gemini.MAX_SERVER_WAIT_SEC)
+
 
 if __name__ == "__main__":
     unittest.main()
