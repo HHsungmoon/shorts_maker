@@ -48,6 +48,8 @@ export interface ClipGroup {
  * 따로 계산하면 같은 화면이 서로 다른 진행 상태를 말하게 된다.
  */
 export interface SourceView {
+	/** URL 이 정하는 작업 대상. 탭이 자기 몫의 API 를 부를 때 쓴다. */
+	sourceId: number;
 	/** 아직 못 읽었으면 null. 각 탭이 자기 자리에서 걸러 쓴다(1단계는 로딩 중에도 보인다). */
 	data: ShortsSourceDetail | null;
 	status: { data: ShortsStatus | null; error: Error | null };
@@ -220,6 +222,7 @@ export function SourcePage() {
 	const openCount = clusters.data?.clusters.filter((c) => c.status === "OPEN").length ?? 0;
 
 	const view: SourceView = {
+		sourceId,
 		data,
 		status,
 		clusters,
