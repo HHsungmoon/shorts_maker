@@ -475,3 +475,26 @@ img {
 	font-weight: 600;
 	font-size: 14px;
 }
+
+/* 프롬프트·원본 응답 본문.
+ *
+ * 🔴 줄바꿈과 공백을 그대로 살린다. 프롬프트는 구간 머리글과 번호 붙은 대사 줄로 이루어져 있어서
+ * 한 줄로 흘리면 어느 구간의 몇 번째 줄인지 읽을 수 없다 — 그걸 읽으려고 저장하는 것이다.
+ *
+ * 높이를 제한해 자체 스크롤을 준다. 프롬프트 한 건이 만 자를 넘어서, 제한이 없으면 표 한 줄을
+ * 펼치는 순간 페이지가 화면 수십 개 길이로 늘어난다. */
+.sm-pre {
+	margin: 8px 0 0;
+	max-height: 360px;
+	overflow: auto;
+	padding: 10px 12px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	tab-size: 2;
+}

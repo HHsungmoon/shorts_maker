@@ -1,8 +1,15 @@
-import { fetchInsights, fetchUtterances } from "../api";
+import { fetchInsights, fetchStageCallBody, fetchUtterances } from "../api";
 import { time } from "../../shared/format";
+import { useState } from "react";
 import { useAsync } from "../../shared/useAsync";
 import { STAGE_LABEL } from "../useStudioJob";
-import type { ShortsCost, ShortsFunnelRow, ShortsInsights } from "../types";
+import type {
+	ShortsCost,
+	ShortsFunnelRow,
+	ShortsInsights,
+	ShortsStageCall,
+	ShortsStageCallBody,
+} from "../types";
 import type { SourceView } from "../SourcePage";
 
 /**
@@ -83,25 +90,12 @@ export function LogTab({ view }: { view: SourceView }) {
 										<th>모델</th>
 										<th>토큰</th>
 										<th>소요</th>
+										<th>본문</th>
 									</tr>
 								</thead>
 								<tbody>
 									{data.stageCalls.map((call) => (
-										<tr key={call.id}>
-											<td>
-												{STAGE_LABEL[call.stage] ?? call.stage}
-												{call.error && <span className="tag tag--rejected">실패</span>}
-											</td>
-											<td className="sm-meta">{call.model ?? "-"}</td>
-											<td className="sm-meta">
-												{call.input_tokens === null
-													? "-"
-													: `in ${call.input_tokens} / out ${call.output_tokens} / think ${call.thinking_tokens ?? 0}`}
-											</td>
-											<td className="sm-meta">
-												{call.latency_ms === null ? "-" : `${(call.latency_ms / 1000).toFixed(1)}s`}
-											</td>
-										</tr>
+										<StageCallRow key={call.id} call={call} />
 									))}
 								</tbody>
 							</table>
@@ -110,6 +104,100 @@ export function LogTab({ view }: { view: SourceView }) {
 				</>
 			)}
 		</>
+	);
+}
+
+/**
+ * 단계 기록 한 줄. **프롬프트와 원본 응답을 펼쳐 볼 수 있다.**
+ *
+ * 🔴 이게 있는 이유: 판정이 이상해 보일 때 "모델이 무엇을 보고 무엇을 답했는지" 를 확인할 방법이
+ * 없었다. 같은 호출을 다시 하는 것뿐이었고, 무료 등급에서는 그 재현이 하루 할당량을 깎는다.
+ *
+ * 본문은 **누를 때 읽는다.** 목록에 미리 실으면 화면 한 번에 수 MB 가 오간다.
+ */
+function StageCallRow({ call }: { call: ShortsStageCall }) {
+	const [body, setBody] = useState<ShortsStageCallBody | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [failed, setFailed] = useState(false);
+
+	const toggle = async () => {
+		if (body) {
+			setBody(null);
+			return;
+		}
+		setBusy(true);
+		setFailed(false);
+		try {
+			setBody(await fetchStageCallBody(call.id));
+		} catch {
+			setFailed(true);
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<>
+			<tr>
+				<td>
+					{STAGE_LABEL[call.stage] ?? call.stage}
+					{call.error && <span className="tag tag--rejected">실패</span>}
+				</td>
+				<td className="sm-meta">{call.model ?? "-"}</td>
+				<td className="sm-meta">
+					{call.input_tokens === null
+						? "-"
+						: `in ${call.input_tokens} / out ${call.output_tokens} / think ${call.thinking_tokens ?? 0}`}
+				</td>
+				<td className="sm-meta">
+					{call.latency_ms === null ? "-" : `${(call.latency_ms / 1000).toFixed(1)}s`}
+				</td>
+				<td>
+					{/* 🔴 본문이 없는 기록도 많다 — LLM 이 아닌 단계(전사·렌더·청크)와, 이 컬럼이
+					    생기기 전(2026-09-09)의 호출이다. 없는 것에 버튼을 두면 눌러도 빈 칸이 나온다. */}
+					{call.has_body ? (
+						<button type="button" className="button button--small" onClick={toggle} disabled={busy}>
+							{busy ? "…" : body ? "닫기" : "보기"}
+						</button>
+					) : (
+						<span className="sm-meta">-</span>
+					)}
+				</td>
+			</tr>
+			{failed && (
+				<tr>
+					<td colSpan={5} className="state state--error">
+						본문을 읽지 못했습니다.
+					</td>
+				</tr>
+			)}
+			{body && (
+				<tr>
+					<td colSpan={5}>
+						{/* 프롬프트가 먼저다 — "무엇을 보았나" 를 알고 나서야 응답이 읽힌다. */}
+						<Pane title="프롬프트" text={body.prompt} />
+						<Pane title="원본 응답" text={body.response} />
+						{body.error && <Pane title="오류" text={body.error} />}
+					</td>
+				</tr>
+			)}
+		</>
+	);
+}
+
+function Pane({ title, text }: { title: string; text: string | null }) {
+	if (!text) {
+		return null;
+	}
+	return (
+		<details className="sm-fold" open>
+			<summary>
+				{title} <span className="sm-meta">{text.length.toLocaleString()}자</span>
+			</summary>
+			{/* 🔴 프롬프트는 줄바꿈과 들여쓰기가 뜻을 갖는다(구간 머리글·번호 붙은 대사 줄).
+			    한 줄로 흘리면 어느 구간의 몇 번째 줄인지 읽을 수 없다. */}
+			<pre className="sm-pre">{text}</pre>
+		</details>
 	);
 }
 
