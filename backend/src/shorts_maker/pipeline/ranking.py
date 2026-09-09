@@ -318,7 +318,10 @@ ANSWER_PROMPT = """아래는 한 영상에서 **이 질문과 관련 있을 만�
 {extra}
 규칙:
 - 각 조각은 `start_line`~`end_line` 이고, **같은 구간 안**이어야 한다(구간 머리글로 나뉘어 있다).
-- 앞을 듣지 않은 사람이 이해할 수 있는 지점에서 시작한다. 지시대명사로 시작하지 않는다.
+- 앞을 듣지 않은 사람이 이해할 수 있는 지점에서 시작한다.
+  🔴 **"이런"·"그렇게"·"그래서" 처럼 앞을 가리키는 말로 시작하지 않는다.** 그런 자리라면
+  **그 앞 발화부터 포함해서** 선행사가 클립 안에 들어오게 한다 — 목록에는 각 구간 머리 앞의
+  발화도 몇 개 함께 들어 있으니 더 앞에서 시작할 수 있다.
 - 말이 도중에 끊기지 않게 문장이 완결되는 지점에서 끝낸다.
 - 조각의 길이 합이 {budget:.0f}초를 넘지 않게 한다.
 - reason 은 왜 이렇게 잘랐는지 한 문장.
@@ -378,7 +381,19 @@ def build_answer_prompt(
     )
 
 
-def number_lines(conn, segments: list[dict]) -> list[dict]:
+# 🔴 구간 머리 **앞**의 발화를 몇 개까지 함께 보여줄까.
+#
+# 실측(2026-09-09): 답이 담긴 구간의 첫 발화가 "저희는 **이런 서비스들**을 …" 이었다. 앞을
+# 가리키는 말인데 그 선행사는 **앞 구간의 마지막 발화**에 있었고, 그 발화는 프롬프트에 아예
+# 없었다 — rank 는 더 앞에서 시작하고 싶어도 그럴 수가 없었다. 구간은 주제 경계일 뿐이고
+# 사람 말은 그 경계에서 끊기지 않는다.
+#
+# 이 발화들은 프롬프트에서 **그 구간의 일부처럼** 다룬다(같은 segment_id). 시간상 바로 앞이라
+# 이어 붙여도 점프가 없고, `parse_answer` 의 "같은 구간 안" 규칙도 그대로 산다.
+LEAD_IN_SHOULDER = 2
+
+
+def number_lines(conn, segments: list[dict], shoulder: int = LEAD_IN_SHOULDER) -> list[dict]:
     """후보 구간들의 발화를 **연속 번호**로 늘어놓는다.
 
     🔴 `utterances.idx` 는 청크 안에서 0부터라 청크가 여럿이면 같은 번호가 둘이 된다. 프롬프트에
@@ -386,13 +401,21 @@ def number_lines(conn, segments: list[dict]) -> list[dict]:
     코드가 매핑을 들고 있는다 — 모델은 번호만 고르면 되고, 초는 우리가 되찾는다(§12).
     """
     lines: list[dict] = []
+    seen: set[tuple[int, int]] = set()
     for segment in segments:
+        first = max(0, segment["start_utterance_idx"] - max(0, shoulder))
         rows = conn.execute(
             """select idx, start_sec, end_sec, text from utterances
                where chunk_id = %s and idx between %s and %s order by idx""",
-            (segment["chunk_id"], segment["start_utterance_idx"], segment["end_utterance_idx"]),
+            (segment["chunk_id"], first, segment["end_utterance_idx"]),
         ).fetchall()
         for row in rows:
+            # 앞 구간이 함께 뽑혔으면 그 꼬리가 이미 들어 있다 — 두 번 넣으면 같은 대사가
+            # 두 번 나오고 번호가 어긋난다.
+            key = (segment["chunk_id"], row["idx"])
+            if key in seen:
+                continue
+            seen.add(key)
             lines.append({
                 "line": len(lines),
                 "segment_id": segment["id"],
@@ -403,6 +426,8 @@ def number_lines(conn, segments: list[dict]) -> list[dict]:
                 "start_sec": float(row["start_sec"]),
                 "end_sec": float(row["end_sec"]),
                 "text": row["text"],
+                # 구간 머리 앞에서 끌어온 줄인가. 화면·디버깅용 표시다.
+                "shoulder": row["idx"] < segment["start_utterance_idx"],
             })
     return lines
 

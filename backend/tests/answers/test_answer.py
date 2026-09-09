@@ -252,6 +252,23 @@ class HappyPathTest(AnswerTestCase):
         ).fetchone()
         self.assertEqual((row["status"], row["run_id"]), ("REVIEW", result["runId"]))
 
+    def test_candidates_that_collapse_into_the_same_cut_are_dropped(self):
+        """🔴 시작점 보정과 예산 강제를 거치면 다른 후보가 같은 범위로 수렴할 수 있다.
+
+        실측(2026-09-09): tight 의 시작점을 당겼더니 single 과 똑같아졌다. 똑같은 카드를 둘
+        보여주는 건 고를 것을 주는 게 아니고, judge 호출도 하나 더 쓴다.
+        """
+        same = {"label": "tight", "reason": "핵심만", "parts": [{"start_line": 0, "end_line": 2}]}
+        result = self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, same]},
+            [verdict(score=80)],
+        )
+        self.assertEqual(len(result["candidates"]), 1)
+        self.assertEqual(
+            self.conn.execute("select count(*) as n from run_candidates").fetchone()["n"], 1
+        )
+        self.assertEqual(self.stages().count("judge"), 1)
+
     def test_the_run_records_how_many_competed(self):
         # 후보 상세는 run_candidates 로 옮겼다. run 에는 요약만 남는다.
         result = self.run_answer(

@@ -6,6 +6,7 @@
 잘리는 일이 구조적으로 없다 — 발화 경계가 곧 컷 지점이다.
 """
 
+import dataclasses
 import json
 from dataclasses import dataclass
 
@@ -227,6 +228,121 @@ class PartSpec:
     @property
     def length(self) -> float:
         return self.end_sec - self.start_sec
+
+
+# 🔴 **앞을 가리키는 표현.** 클립이 여기서 시작하면 앞을 못 본 시청자에게는 뜻이 없다.
+#
+# 실측 근거(2026-09-09, 클러스터 118 "개발 직군의 주요 기술 스택"): 후보 **셋이 전부** 자립성
+# 판정에서 떨어졌고 이유가 같았다 — "저희는 **이런 서비스들**을 …", "**이렇게** 수많은 AI
+# 프로젝트들이 …". 검색도 rank 도 맞는 대사를 골랐는데 **시작점이 한 발화 늦었다.**
+#
+# 프롬프트에는 이미 "지시대명사로 시작하지 않는다" 가 있었고 지켜지지 않았다. 그래서 규약대로
+# **모델에게 다시 부탁하는 대신 코드가 고친다**(make_shorts §12).
+LEAD_IN_MARKERS = (
+    # 앞의 것을 가리키는 말 — 선행사가 클립 밖에 있으면 뜻이 통하지 않는다
+    "이런", "그런", "저런", "이러한", "그러한",
+    "이렇게", "그렇게", "저렇게",
+    "이것", "그것", "저것", "이거", "그거", "저거", "이게", "그게", "저게",
+    "여기", "거기",
+    # 앞에서 이미 말했다고 명시하는 말
+    "아까", "앞서", "방금", "말씀드린", "말씀드렸", "설명드린",
+    # 이어 말하는 접속 — 문장 자체는 서지만 이야기 중간에서 시작한 티가 난다
+    "그래서", "그러니까", "그러면", "그럼", "그리고", "그런데", "근데",
+    "또한", "이어서", "다음으로", "마지막으로", "결국",
+)
+
+# 🔴 **첫머리만 본다.** 클립 한복판에 지시어가 나오는 건 정상이다 — 그때는 선행사가 클립 안에 있다.
+# 앞에서 이만큼만 훑는 이유가 그것이고, 실측 사례의 "저희는 이런 서비스들을" 은 4자째에서 걸린다.
+LEAD_IN_SCAN_CHARS = 25
+
+# 🔴 몇 발화까지 거슬러 올라가며 시작점을 찾을까. 그 위로는 30초 예산 안에서 답이 들어갈 자리가 없다.
+MAX_LEAD_IN = 3
+
+# 한국어 문장이 끝나는 어미. **착지 지점을 고르는 데만** 쓴다.
+#
+# 🔴 이게 없으면 지시어만 피하다가 문장 한복판에 떨어진다. 실측에서 실제로 그랬다 —
+# "이렇게 수많은 AI 프로젝트들이" 를 피해 당겼더니 "해나가고 있고" 에서 시작했다.
+# 지시어는 없지만 그게 더 나쁘다.
+SENTENCE_ENDINGS = (
+    "다", "요", "죠", "까", "네", "군", "니", "라", "자", "죠",
+)
+
+
+def needs_lead_in(text: str) -> bool:
+    """이 발화로 클립을 시작하면 앞 맥락이 필요한가."""
+    head = (text or "").strip()[:LEAD_IN_SCAN_CHARS]
+    return any(marker in head for marker in LEAD_IN_MARKERS)
+
+
+def ends_sentence(text: str) -> bool:
+    """이 발화가 문장을 끝내는가. 다음 발화가 새 문장으로 시작한다는 신호다."""
+    tail = (text or "").strip().rstrip(".?!… \"'")
+    return bool(tail) and tail.endswith(SENTENCE_ENDINGS)
+
+
+def lead_in(part_ranges: list, lines: list[dict], max_sec: float) -> list:
+    """앞을 가리키며 시작하는 조각의 **시작점을 앞으로 당긴다.**
+
+    조각마다 따로 본다 — 조합 클립은 조각 사이에 점프가 있어서 두 번째 조각도 그 자리에서
+    새로 시작하는 셈이다(실측 사례의 combo 가 정확히 그랬다).
+
+    **좋은 시작점**의 뜻이 둘이다: ① 앞을 가리키지 않고 ② 앞 발화가 문장을 끝냈다.
+    ②가 없으면 지시어만 피하다 문장 한복판에 떨어진다(`SENTENCE_ENDINGS` 주석의 실측).
+
+    🔴 **좋은 자리를 못 찾으면 그냥 둔다.** 어중간하게 당겨 놓는 것보다 원래대로 두는 편이 낫다 —
+    남은 어색함은 판정이 잡아내고 크리에이터가 화면에서 대사를 읽고 판단한다.
+
+    🔴 **맥락 때문에 답을 잘라내지 않는다.** 예산을 넘기면 당기지 않는다. 앞머리만 붙고 답이
+    반이 된 클립보다, 시작이 조금 어색해도 답이 온전한 편이 낫다.
+
+    🔴 구간을 넘지 않고 앞 조각과 겹치지도 않는다. 둘 다 `parse_answer` 가 세운 불변식이다.
+    """
+    if not part_ranges:
+        return part_ranges
+    by_line = {line["line"]: line for line in lines}
+    length_of = {n: line["end_sec"] - line["start_sec"] for n, line in by_line.items()}
+    total = sum(
+        length_of.get(n, 0.0)
+        for part in part_ranges
+        for n in range(part.start_line, part.end_line + 1)
+    )
+
+    def good_start(n: int, floor: int) -> bool:
+        line = by_line.get(n)
+        if line is None or needs_lead_in(line["text"]):
+            return False
+        before = by_line.get(n - 1)
+        # 앞이 없거나(목록의 처음), 앞 조각에 막혔거나, 앞이 문장을 끝냈으면 새 문장의 시작이다.
+        if before is None or n - 1 <= floor:
+            return True
+        if before["segment_id"] != line["segment_id"]:
+            return True
+        return ends_sentence(before["text"])
+
+    out: list = []
+    floor = -1  # 이 번호 아래로는 못 내려간다 — 앞 조각의 끝
+    for part in part_ranges:
+        start = part.start_line
+        head = by_line.get(start)
+        if head is not None and needs_lead_in(head["text"]):
+            grew = 0.0
+            for step in range(1, MAX_LEAD_IN + 1):
+                candidate = start - step
+                previous = by_line.get(candidate)
+                if previous is None or candidate <= floor:
+                    break
+                if previous["segment_id"] != head["segment_id"]:
+                    break
+                grew += length_of.get(candidate, 0.0)
+                if total + grew > max_sec:
+                    break
+                if good_start(candidate, floor):
+                    start = candidate
+                    total += grew
+                    break
+        out.append(dataclasses.replace(part, start_line=start))
+        floor = part.end_line
+    return out
 
 
 def resolve_parts(part_ranges: list, lines: list[dict]) -> list[PartSpec]:
