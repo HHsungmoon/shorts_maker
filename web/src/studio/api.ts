@@ -231,3 +231,13 @@ export function fetchInsights(sourceId: number): Promise<ShortsInsights> {
 export function fetchStageCallBody(callId: number): Promise<ShortsStageCallBody> {
 	return request<ShortsStageCallBody>(`/api/stage-calls/${callId}`);
 }
+
+/**
+ * **[이걸로 만들기]** — 고른 후보를 컷하고 렌더한다.
+ *
+ * 🔴 LLM 을 부르지 않는다. 범위도 대사도 판정도 이미 있어서 드는 건 ffmpeg 시간뿐이다 —
+ * 그래서 마음을 바꿔 다른 후보를 골라도 추가 비용이 없다.
+ */
+export function buildCandidate(candidateId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/candidates/${candidateId}/build`, { method: "POST" });
+}
