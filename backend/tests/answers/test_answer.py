@@ -97,11 +97,22 @@ class AnswerTestCase(DbTestCase):
         )
 
     def run_answer(self, plan: dict, verdicts: list[dict], route: str = routing.RANK) -> dict:
+        """후보를 만드는 데까지. 🔴 **클립은 안 만든다** — 무엇을 만들지는 크리에이터가 고른다."""
         patches = self.patched(plan, verdicts, route)
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
         return answer.run(self.conn, self.cfg, self.cluster_id)
+
+    def recommended(self, result: dict) -> int:
+        """추천 후보의 id. 화면에서 크리에이터가 대개 누를 것이 이것이다."""
+        picked = [c for c in result["candidates"] if c["recommended"]]
+        self.assertEqual(len(picked), 1, "추천은 정확히 하나여야 한다")
+        return picked[0]["id"]
+
+    def build(self, result: dict, candidate_id: int | None = None) -> dict:
+        """크리에이터가 고른 것을 실제로 만든다(컷 + 렌더)."""
+        return answer.build(self.conn, self.cfg, candidate_id or self.recommended(result))
 
 
 SINGLE = {"label": "single", "reason": "직접 답한다", "parts": [{"start_line": 0, "end_line": 2}]}
@@ -126,45 +137,109 @@ class HappyPathTest(AnswerTestCase):
         self.assertEqual(stages.count("judge"), 3)
         self.assertLess(stages.index("rank"), stages.index("judge"))
 
-    def test_the_highest_scoring_passing_candidate_wins(self):
+    def test_the_highest_scoring_passing_candidate_is_recommended(self):
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
             [verdict(score=60), verdict(score=90), verdict(score=70)],
         )
-        self.assertEqual(result["label"], "combo")
-        self.assertEqual(result["parts"], 2)
+        picked = [c for c in result["candidates"] if c["recommended"]]
+        self.assertEqual([c["label"] for c in picked], ["combo"])
+
+    def test_answering_does_not_make_a_clip_on_its_own(self):
+        """🔴 이게 이 설계의 요지다. 시스템이 골라 렌더까지 하면 크리에이터가 낄 자리가 없다."""
+        self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
+            [verdict(score=60), verdict(score=90), verdict(score=70)],
+        )
+        self.assertEqual(self.conn.execute("select count(*) as n from clips").fetchone()["n"], 0)
+
+    def test_every_candidate_is_stored_with_its_transcript(self):
+        """🔴 대사가 없으면 크리에이터는 고를 수가 없다 — 판정 O/X 와 점수만으로는 판단이 안 된다."""
+        self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
+            [verdict(score=60), verdict(score=90), verdict(score=70)],
+        )
+        rows = self.conn.execute(
+            "select label, parts from run_candidates order by ordinal"
+        ).fetchall()
+        self.assertEqual([r["label"] for r in rows], ["single", "combo", "tight"])
+        for row in rows:
+            for part in row["parts"]:
+                self.assertTrue(part["text"].strip(), "조각에 대사가 비어 있다")
+
+    def test_building_the_chosen_candidate_makes_the_clip(self):
+        result = self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
+            [verdict(score=60), verdict(score=90), verdict(score=70)],
+        )
+        built = self.build(result)
+        self.assertEqual(built["label"], "combo")
+        self.assertEqual(built["parts"], 2)
         parts = self.conn.execute(
-            "select count(*) as n from clip_parts where clip_id = %s", (result["clipId"],)
+            "select count(*) as n from clip_parts where clip_id = %s", (built["clipId"],)
         ).fetchone()["n"]
         self.assertEqual(parts, 2)
 
-    def test_a_failing_candidate_never_wins_over_a_passing_one(self):
+    def test_the_creator_can_pick_something_other_than_the_recommendation(self):
+        """🔴 추천은 추천일 뿐이다. 점수가 낮아도 사람이 읽어 보고 쓸 만하다고 판단할 수 있다."""
+        result = self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
+            [verdict(score=60), verdict(score=90), verdict(score=70)],
+        )
+        tight = self.conn.execute(
+            "select id from run_candidates where label = 'tight'"
+        ).fetchone()["id"]
+        built = self.build(result, tight)
+        self.assertEqual(built["label"], "tight")
+
+    def test_choosing_again_replaces_the_clip_instead_of_stacking(self):
+        # 한 질문에 답하는 클립은 하나다(불변식 I1).
+        result = self.run_answer(
+            {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
+            [verdict(score=60), verdict(score=90), verdict(score=70)],
+        )
+        self.build(result)
+        single = self.conn.execute(
+            "select id from run_candidates where label = 'single'"
+        ).fetchone()["id"]
+        self.build(result, single)
+        self.assertEqual(self.conn.execute("select count(*) as n from clips").fetchone()["n"], 1)
+        chosen = self.conn.execute(
+            "select label from run_candidates where chosen_at is not null"
+        ).fetchall()
+        self.assertEqual([r["label"] for r in chosen], ["single"])
+
+    def test_a_failing_candidate_is_never_recommended_over_a_passing_one(self):
         # 🔴 점수만 보면 안 된다 — 자립하지 않는 클립은 점수가 높아도 숏폼으로 못 쓴다.
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
             [verdict(score=50), verdict(standalone=False, score=99), verdict(score=40)],
         )
-        self.assertEqual(result["label"], "single")
+        picked = [c for c in result["candidates"] if c["recommended"]]
+        self.assertEqual([c["label"] for c in picked], ["single"])
 
-    def test_when_nothing_passes_the_best_still_goes_to_review_with_a_warning(self):
-        # 무한 재시도 대신 사람의 눈으로 넘긴다.
+    def test_when_nothing_passes_it_still_goes_to_review_for_a_human(self):
+        # 무한 재시도 대신 사람의 눈으로 넘긴다. 전부 떨어져도 후보는 남아 크리에이터가 읽는다.
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
             [verdict(answers=False, score=30), verdict(answers=False, score=55),
              verdict(standalone=False, score=20)],
         )
         self.assertEqual(self.status(), "REVIEW")
+        self.assertEqual(len(result["candidates"]), 3)
+        built = self.build(result)
         review = self.conn.execute(
-            "select verdict, reviewer from clip_reviews where clip_id = %s", (result["clipId"],)
+            "select verdict, reviewer from clip_reviews where clip_id = %s", (built["clipId"],)
         ).fetchone()
         self.assertEqual((review["verdict"], review["reviewer"]), ("NG", "llm"))
 
-    def test_a_passing_winner_is_recorded_as_an_llm_ok(self):
+    def test_a_passing_choice_is_recorded_as_an_llm_ok(self):
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE]}, [verdict()]
         )
+        built = self.build(result)
         review = self.conn.execute(
-            "select verdict, reviewer from clip_reviews where clip_id = %s", (result["clipId"],)
+            "select verdict, reviewer from clip_reviews where clip_id = %s", (built["clipId"],)
         ).fetchone()
         self.assertEqual((review["verdict"], review["reviewer"]), ("OK", "llm"))
 
@@ -177,7 +252,8 @@ class HappyPathTest(AnswerTestCase):
         ).fetchone()
         self.assertEqual((row["status"], row["run_id"]), ("REVIEW", result["runId"]))
 
-    def test_every_candidate_is_kept_in_the_run_for_the_creator_to_see(self):
+    def test_the_run_records_how_many_competed(self):
+        # 후보 상세는 run_candidates 로 옮겼다. run 에는 요약만 남는다.
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE, COMBO, TIGHT]},
             [verdict(score=60), verdict(score=90), verdict(score=70)],
@@ -185,18 +261,18 @@ class HappyPathTest(AnswerTestCase):
         ranked = self.conn.execute(
             "select ranked from runs where id = %s", (result["runId"],)
         ).fetchone()["ranked"]
-        self.assertEqual(len(ranked["candidates"]), 3)
-        self.assertEqual([c["won"] for c in ranked["candidates"]], [False, True, False])
+        self.assertEqual(ranked["candidates"], 3)
 
-    def test_the_clip_is_linked_to_the_cluster(self):
+    def test_the_built_clip_is_linked_to_the_cluster(self):
         result = self.run_answer(
             {"answerable": True, "reason": "있다", "candidates": [SINGLE]}, [verdict()]
         )
+        built = self.build(result)
         linked = self.conn.execute(
-            "select question_cluster_id, total_sec from clips where id = %s", (result["clipId"],)
+            "select question_cluster_id, total_sec from clips where id = %s", (built["clipId"],)
         ).fetchone()
         self.assertEqual(linked["question_cluster_id"], self.cluster_id)
-        self.assertEqual(linked["total_sec"], result["totalSec"])
+        self.assertEqual(linked["total_sec"], built["totalSec"])
 
 
 class UnanswerableTest(AnswerTestCase):
@@ -370,7 +446,12 @@ class FailureTest(AnswerTestCase):
         self.assertEqual(row["status"], "FAILED")
         self.assertIn("과부하", row["error"])
 
-    def test_a_render_failure_also_returns_to_open(self):
+    def test_a_render_failure_leaves_the_candidates_to_try_again(self):
+        """🔴 렌더는 이제 [이걸로 만들기] 에서 난다. 실패해도 클러스터를 OPEN 으로 되돌리지 않는다.
+
+        되돌리면 후보가 화면에서 사라지고 크리에이터는 **LLM 을 다시 태워야** 한다. 후보는 이미
+        있으므로 REVIEW 에 두고 다시 고르게 하는 것이 맞다 — 다시 만드는 데는 비용이 안 든다.
+        """
         patches = [
             mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
             mock.patch.object(
@@ -384,9 +465,16 @@ class FailureTest(AnswerTestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
+        result = answer.run(self.conn, self.cfg, self.cluster_id)
+        self.assertEqual(self.status(), "REVIEW")
+        candidate_id = [c for c in result["candidates"] if c["recommended"]][0]["id"]
         with self.assertRaises(render.RenderError):
-            answer.run(self.conn, self.cfg, self.cluster_id)
-        self.assertEqual(self.status(), "OPEN")
+            answer.build(self.conn, self.cfg, candidate_id)
+        self.conn.rollback()
+        self.assertEqual(self.status(), "REVIEW")
+        self.assertEqual(
+            self.conn.execute("select count(*) as n from run_candidates").fetchone()["n"], 1
+        )
 
 
 class BudgetTest(AnswerTestCase):
@@ -442,8 +530,9 @@ class BudgetTest(AnswerTestCase):
             patch.start()
             self.addCleanup(patch.stop)
         # 예산을 12초로 좁혀 30초짜리 후보가 반드시 잘리게 한다.
-        result = answer.run(self.conn, dataclasses.replace(self.cfg, teaser_max_sec=12.0), self.cluster_id)
-        self.assertLessEqual(result["totalSec"], 12.0)
+        answer.run(self.conn, dataclasses.replace(self.cfg, teaser_max_sec=12.0), self.cluster_id)
+        total = self.conn.execute("select total_sec from run_candidates").fetchone()["total_sec"]
+        self.assertLessEqual(total, 12.0)
         # 🔴 judge 는 **잘린 뒤**의 대사를 봐야 한다. 예산 전 대사를 보면 판정이 거짓이 된다.
         self.assertEqual(len(seen), 1)
         self.assertNotIn("5번째 발화", seen[0][0])

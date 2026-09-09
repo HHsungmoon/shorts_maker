@@ -24,7 +24,8 @@ MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 
 # `sm db status` 가 세는 테이블. 새 테이블을 만들면 여기도 넣는다(tests/db 가 확인한다).
 TABLES = (
-    "sources", "chunks", "utterances", "segments", "runs", "clips", "clip_parts", "clip_reviews",
+    "sources", "chunks", "utterances", "segments", "runs", "run_candidates",
+    "clips", "clip_parts", "clip_reviews",
     "stage_calls", "question_clusters", "questions", "question_likes", "embeddings", "viewer_events",
 )
 
