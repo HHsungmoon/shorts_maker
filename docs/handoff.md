@@ -1,6 +1,6 @@
 # 인수인계 — shorts_maker
 
-**2026-09-06 기준.** 이 레포를 처음 여는 사람(사람이든 새 Claude 세션이든)이 **10분 안에
+**2026-09-09 기준.** 이 레포를 처음 여는 사람(사람이든 새 Claude 세션이든)이 **10분 안에
 "지금 뭐가 있고, 다음에 뭘 하나"를 알게** 하는 문서다. 세부는 다른 문서로 보낸다.
 
 | 알고 싶은 것 | 문서 |
@@ -52,6 +52,24 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 4개가 엔드포인트만 있고 버튼이 없었다. 질문 패널을 맨 위로 올리고(제품의 출발점인데 맨 아래였다),
 [답하기]·[발행]·시청자 숏폼 줄을 채운다. API 는 클러스터별 클립 + judge 소견, 클립별 질문,
 답변 불가 안내를 주도록 확장했다.
+
+**2026-09-08 (10차): UI 재편.** 한 화면에 다 있던 것을 층으로 갈랐다 — 스튜디오 홈(영상 목록) →
+영상별 페이지 → 탭 넷(질문 · 클립 · 영상 준비 · 기록). 시청자 화면은 영상 오른쪽에 숏폼 열을 뒀고,
+클립 제목은 질문이 있으면 질문, 없으면 사용자가 붙인 제목이며 **둘 다 수정 가능**하다.
+후보 36개가 쏟아지던 곳은 상위 7개 + [더보기]로 줄였다. "답할 구간 없음" 의 **이유를 화면에 표시**한다 —
+저장은 되고 있었는데 아무도 보여주지 않았다.
+
+**2026-09-09 (11차): 미완성 기능 감사.** 코드를 세 문서와 한 줄씩 맞췄다. 결과는 §7 이다.
+M0~M6 은 완료(계획 문서의 M4·M6 체크박스가 낡아 있었다 — 고쳤다). **데모가 실제로 막히는 것은
+원본 유입 경로(IFrame Player API + `seekTo` CTA)와 insights 화면, 그리고 `viewer_events` 가
+쓰기 전용이라는 사실이다.** 🔴 **[답하기]가 만든 클립이 실데이터로 하나도 없다** —
+`clip_parts` 는 0행이고 조합 렌더는 합성 데이터로만 검증됐다.
+
+🔴 **judge/rank 가 질문을 너무 좁게 읽는 사례를 하나 잡았다.** "쏘카 개발 직군의 주요 기술 스택" 질문에서
+검색은 유사도 0.755 로 관련 구간을 제대로 찾았고 모델도 그것을 봤는데, "마이크로서비스·MLOps·딥러닝 얘기는
+있지만 프로그래밍 언어·프레임워크 이름은 없다" 며 답변 불가로 판정했다. **검색이 좁아서가 아니라 판정이
+빡빡해서다.** 질문의 핵심에 답이 되면 충분하다는 취지를 프롬프트에 넣어야 한다. 복지·인재상 질문 둘은
+영상에 정말 없어서 정상 판정이다.
 
 🔴 **Gemini 무료 등급 하루 20회에 걸렸다**(2026-09-06). 모델당 따로이므로 `SHORTS_GEMINI_MODEL` 을
 바꾸면 즉시 풀리고, 계속 쓸 거면 결제를 붙여야 한다. 코드는 두 가지를 고쳤다 —
@@ -330,31 +348,57 @@ rank 3위/제외 2 · cut · render · 미리보기 6.2MB · 클립 7.8MB · 비
 
 ## 7. 다음에 만들 것
 
-**`update_plan.md` 가 실행 순서다** — tease.md §12 를 마일스톤 M0~M9 로 자르고 완료 조건과 테스트를 붙였다.
-**M0 완료(9/6). 다음은 M1(스키마 v9).** 아래는 tease.md §12 의 원래 요약이고, update_plan.md 와 다르면 그쪽이 맞다:
+**`update_plan.md` 가 실행 순서다.** 2026-09-09 기준 **M0~M6 완료, M6b·M7·M8·M9 남음.**
+아래는 그 문서를 코드와 한 줄씩 맞춰 본 결과다(2026-09-09 감사). 항목마다 왜 남았는지가 붙어 있다.
 
-1. **스키마 v9** (§6) — 6 테이블 신규 · 컬럼 10개 · `stage_calls` 재생성(🔴 규칙 예외, §6-4)
-2. **임베딩 레이어** (§5-3) — 질문 묶기 + 세그먼트 검색. θ 튜닝
-3. **공개 API** `/api/watch/**` (§7-1) — 익명 쿠키 · 레이트리밋 · 🔴 발행 클립만
-4. **`web/` 재배치** — `shared/` · `studio/` · `watch/` + 라우터
-5. **`/watch`** — 모방 유튜브 (iframe · 질문 패널 · 숏폼 줄 · CTA)
-6. **rank 확장 + 조합 cut + judge** (§5-5~7)
-7. **`/studio` 확장** — 클러스터 패널 · 답하기 · 발행
-8. 자막 우선 · 챕터 씨앗 (허락 후)
-9. 캐싱 · 단어 타임스탬프 켜기
-10. 데모 리허설 (§10)
+### 7-1. 데모(tease §10-2 시나리오 1~8)가 실제로 막히는 것
 
-**첫 단계를 구체적으로:**
+| # | 남은 것 | 왜 막히나 |
+|---|---|---|
+| 1 | **원본 유입 경로 전체** — 유튜브 IFrame Player API + `player.seekTo()` CTA | 지금 `watch/SourcePage.tsx` 는 `enablejsapi` 없는 평범한 `<iframe>` 이고, CTA 는 새 탭으로 유튜브를 연다(`t=` 초조차 없다). **명세된 동작의 반대다.** 시나리오 3·5 가 이것이고 7 이 여기서 나온다. 선행: 클립 payload 에 `start_sec` 이 없다 |
+| 2 | `origin_seek` · `origin_play` 이벤트 | 위 1번이 없으면 발생 지점 자체가 없다. 퍼널 5칸 중 2칸이 영구히 0이다 |
+| 3 | 🔴 `viewer_events.clip_id` 가 **한 번도 채워지지 않는다** | 프론트가 클립 id 를 `payload.clipId` 로 보내고 서버는 top-level `clipId` 를 읽는다(`watch/api.ts` ↔ `http/watch.py` 의 `EventIn`). 한쪽만 고치면 된다. 지금은 클립별 퍼널이 원리적으로 불가능하고 `idx_events_clip` 은 죽은 인덱스다 |
+| 4 | 🔴 `like` 이벤트가 `source_id` 를 **null 로** 넣는다 | `http/watch.py` 가 명시적으로 `None` 을 넘긴다. 영상별 수요 집계가 안 된다. 취소(un-like)는 아예 기록하지 않는다 |
+| 5 | `GET /api/sources/{id}/insights` + 퍼널 화면 (M6b) | 코드에 `insights` 라는 문자열이 **한 곳도 없다.** `answers/events.py` 는 `record()` 뿐이고 집계 함수가 없다. 더 큰 문제: **`viewer_events` 를 SELECT 하는 코드가 전무하다 — 쓰기 전용 테이블이다.** 시나리오 7 이 이 화면이다 |
+| 6 | 채널 교차 안내가 **조용히 퇴화한다** | `retrieval._best_elsewhere` 는 **이미 임베딩된** 세그먼트만 본다. 자동 인덱싱은 답하는 그 영상에만 걸리므로(`ensure_indexed`), 다른 편을 손으로 `sm answers index` 하지 않으면 "ep.N 에서 다룹니다" 대신 일반 문구가 뜬다. **시나리오 6 이 이것이고, 데모에서 가장 똑똑해 보이는 장면이다** |
+| 7 | 답변 경로 평가 세트 (`eval-answer`) | `eval/questions.json` 은 `group` 만 있고 `type`·`expect` 가 없다. `sm tease` 명령군 자체가 없다. **라우팅·best-of-3·조합·UNANSWERABLE 이 질문 세트로 측정된 적이 없다** — 데모 당일이 첫 시험이 된다 |
+| 8 | M9 리허설 도구 일체 | `sm tease seed` 없음, `demo.sql` 없음, 리허설 0회. M9 는 "🔴 반드시" 인데 전 항목 미체크다 |
+| 9 | `useAsync` 깜빡임 | `shared/useAsync.ts` 가 의존성이 바뀔 때마다 `data: null` 로 되돌린다. 스튜디오가 잡을 폴링하는 동안 패널이 매 주기 빈 화면이 된다. **자기 주석이 "폴링 주기를 줄이기 전에 여기부터 고쳐야 한다"고 적어 놨다** |
+| 10 | `PATCH /api/clips/{id}/parts` (in/out 미세 조정) · 큐 위치 표시 | 둘 다 명세에 있고 없다. 데모는 없이도 돈다 |
 
-```
-backend/src/shorts_maker/db/schema.sql   ← tease.md §6-2 DDL 그대로 (SQLite 에서 파싱 검증됨)
-backend/src/shorts_maker/db/store.py     ← SCHEMA_VERSION = 9, MIGRATIONS[9] (§6-5),
-                                            값 타입을 list[str | Callable] 로 넓히기
-backend/tests/test_schema.py             ← v8→v9 마이그레이션이 clip_parts 백필 · 행 수 보존하는지,
-                                            새 DB 와 마이그레이션한 DB 의 table_info 가 같은지
-```
+### 7-2. 컷 라인 밖
 
-§13 은 결정됐다(9/6, 권고대로). M1 에서 `store.MIGRATIONS` 값 타입을 `list[str | Callable]` 로 넓히는 것이 첫 손질이다.
+- **M7 자막 우선 · 챕터 씨앗** — `sources.chapters` 와 `sources.caption_source` 는 **DDL 에만 있다.**
+  아무것도 쓰지 않고 아무것도 읽지 않는다. `stage_calls` 의 `'caption'` 값도 한 번도 삽입되지 않는다
+- **M8 단어 경계 cut** — `utterances.words` 는 전 행 채워져 있고 **자막이 이미 읽는다**(`subtitles._words_of`).
+  `cutting.py` 만 안 읽는다 — 발화 경계로만 자른다. 필러 목록은 존재하지 않는다
+- **컨텍스트 캐싱** — `adapters/gemini.py` 가 `cached_content_token_count` 를 저장하지만 캐시를 만드는 코드가 없다.
+  `stage_calls.cached_tokens` 는 영원히 null 로 채워진다. `pricing.py` 도 이 값을 안 본다
+- **`REVIEW → OPEN`(다시 열기) · `REVIEW → IN_PROGRESS`(다시 답하기)** — `update_plan.md` §2-3 표와
+  tease §6-6 그림에 있는데 `clusters.TRANSITIONS` 에 없다. **REVIEW 클립이 마음에 안 들면 DECLINED 를 거쳐야만
+  다시 열린다 — "다시 답하기" 경로가 없다.** 코드 표의 나머지 간선은 전부 도달 가능하다(고아 간선 없음)
+- **불변식 I2 를 아무도 검사하지 않는다** — "PUBLISHED 클러스터엔 발행 클립이 정확히 1개" 를
+  `transition()` 이 본다고 적혀 있지만 `transition()` 은 순수 상태 갱신이다
+- **죽은 컬럼** — `segments.describe_failed`(DDL 만), `utterances.no_speech_prob`(쓰지만 안 읽음.
+  형제인 `avg_logprob` 은 읽는다), `segments.excluded_by/excluded_reason`(**읽지만 아무도 쓰지 않는다** —
+  M0 에서 `'auto'` 쓰기를 뺐고 `'human'` 쓰기는 만든 적이 없다. 즉 수동 구간 제외 기능이 미구현이고
+  `retrieval` 의 필터는 항상 무의미하다)
+- **측정하기로 한 지표 4개가 계산되지 않는다** — human/llm 판정 일치율(양쪽 다 저장되고 UI 도 있는데
+  일치율을 내는 코드가 없다), rule vs LLM 라우팅 일치율, 분할 경계 vs 챕터 경계 일치율(M7 에 종속),
+  질문당 평균 비용(`GET /api/cost` 는 총액만 준다 — 시나리오 8 이 "질문당 평균"을 요구한다)
+- **하드코딩된 설정 3개** — `SHORTS_BRIDGE_SEC`(0.4 가 `adapters/ffmpeg.py` 와 `pipeline/subtitles.py`
+  **두 곳에** 박혀 있다. 어긋나면 자막이 밀린다), `SHORTS_RATE_QUESTIONS_PER_MIN`·`SHORTS_RATE_LIKES_PER_MIN`
+- **FILM 은 등록은 되고 첫 단계에서 막힌다** — `sm source add --type FILM` 이 통과한 뒤
+  `ingest.py` 가 "아직 구현 안 됨(2단계)" 로 던진다. 되살릴 수 없는 상태의 행이 남는다
+
+### 7-3. 문서가 코드와 어긋난 곳
+
+- `tease.md` §8-2 의 라우트 배치와 코드가 **반대**다 → D12 로 미결 등록했다
+- `tease.md` §8-3 은 `youtube-nocookie.com`, 코드는 `www.youtube.com/embed`
+- `tease.md` §5-8 은 아직 단어 타임스탬프를 "켜기만 하면 되는 것"이라 한다 — `update_plan.md` §1 이 이미
+  틀렸다고 적었는데 §5-8 본문은 안 고쳤다
+- `update_plan.md` Appendix A·§3 은 `eval/questions.yaml`, 실제 파일은 `.json`
+- `update_plan.md` M5 의 mermaid 그림이 아직 순차 재시도(judge 실패 → 재cut → judge2)다. 코드는 best-of-3 다
 
 ---
 
