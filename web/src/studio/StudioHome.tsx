@@ -77,10 +77,13 @@ export function StudioHome() {
 	const studio = useStudioJob();
 	const [modalOpen, setModalOpen] = useState(false);
 
-	const status = useAsync<ShortsStatus>(fetchStatus, [studio.reloadToken]);
-	const sources = useAsync<ShortsSourceListItem[]>(fetchShortsSources, [studio.reloadToken]);
+	// 목록은 늘 같은 대상(전체)이라 subject 가 없다 — 언제나 유지해도 틀린 내용이 될 일이 없다.
+	const status = useAsync<ShortsStatus>(fetchStatus, [studio.reloadToken], { keepPrevious: true });
+	const sources = useAsync<ShortsSourceListItem[]>(
+		fetchShortsSources, [studio.reloadToken], { keepPrevious: true },
+	);
 	// 파일 목록은 소스 목록과 다르다 — 등록되지 않은 파일(scp 로 올린 것)이 여기에만 보인다.
-	const media = useAsync<ShortsMediaList>(fetchMedia, [studio.reloadToken]);
+	const media = useAsync<ShortsMediaList>(fetchMedia, [studio.reloadToken], { keepPrevious: true });
 
 	const { setError, setNotice, reload } = studio;
 	// 🔴 서버에서 파일과 파생물을 실제로 지운다. 되돌릴 수 없어 무엇이 사라지는지 먼저 말한다.
@@ -132,7 +135,12 @@ export function StudioHome() {
 
 			{sources.loading && <p className="state">불러오는 중…</p>}
 			{sources.error && (
-				<p className="state state--error">목록을 불러오지 못했습니다. {sources.error.message}</p>
+				// 목록이 남아 있으면 갱신 실패다 — 통째로 못 읽은 것과 문구를 나눈다.
+				<p className={sources.data ? "sm-meta" : "state state--error"}>
+					{sources.data
+						? `잠시 갱신하지 못했습니다. (${sources.error.message})`
+						: `목록을 불러오지 못했습니다. ${sources.error.message}`}
+				</p>
 			)}
 			{sources.data && items.length === 0 && (
 				<p className="state">

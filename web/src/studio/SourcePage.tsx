@@ -137,16 +137,21 @@ export function SourcePage() {
 	// 조각이 이미 있는데도 범위를 다시 고르는 중인가("다시 추출" 을 누른 뒤).
 	const [rangeOpen, setRangeOpen] = useState(false);
 
-	const status = useAsync<ShortsStatus>(fetchStatus, [reloadToken]);
+	// 🔴 셋 다 `keepPrevious` 다. 잡이 도는 동안 `reloadToken` 이 올라가며 통째로 다시 읽는데,
+	// 유지하지 않으면 그때마다 화면이 비어 작업이 사라진 것처럼 보인다. `subject` 를 주는 이유는
+	// **다른 영상으로 옮길 때는 비워야** 하기 때문이다 — 안 그러면 옛 영상의 내용이 잠깐 남는다.
+	const status = useAsync<ShortsStatus>(fetchStatus, [reloadToken], { keepPrevious: true });
 	const detail = useAsync<ShortsSourceDetail | null>(
 		() => (sourceId === null ? Promise.resolve(null) : fetchShortsSource(sourceId)),
 		[sourceId, reloadToken],
+		{ keepPrevious: true, subject: sourceId },
 	);
 	// 🔴 질문 목록을 패널이 아니라 여기서 읽는다. 탭 배지가 "답을 기다리는 질문 수" 를 보여줘야
 	// 하는데, 패널과 따로 읽으면 요청이 두 번 나가고 두 숫자가 서로 어긋난다.
 	const clusters = useAsync<ShortsClusterList | null>(
 		() => (sourceId === null ? Promise.resolve(null) : fetchClusters(sourceId)),
 		[sourceId, reloadToken],
+		{ keepPrevious: true, subject: sourceId },
 	);
 
 	// 🔴 훅을 전부 부른 뒤에 돌려보낸다. 위에서 return 하면 렌더마다 훅 개수가 달라진다.
@@ -287,7 +292,10 @@ export function SourcePage() {
 			{/* 배너는 탭 위에 둔다 — 한 탭에서 띄운 잡은 탭을 옮겨도 계속 돌고 있다. */}
 			<StudioBanners status={status} studio={studio} />
 
-			{detail.error && (
+			{/* 🔴 오류를 둘로 나눈다. 이전 데이터를 들고 있게 되면서(useAsync keepPrevious) 잡이 도는
+			    동안의 일시적인 실패와 "정말 없는 영상" 이 같은 문구로 나올 수 있게 됐다 —
+			    내용이 멀쩡히 보이는데 "영상을 찾을 수 없습니다" 가 뜨면 그게 거짓말이다. */}
+			{detail.error && !data && (
 				<>
 					<p className="state state--error">
 						이 영상을 찾을 수 없습니다. ({detail.error.message})
@@ -296,6 +304,12 @@ export function SourcePage() {
 						<Link to="/">영상 목록으로 돌아가기</Link>
 					</p>
 				</>
+			)}
+			{detail.error && data && (
+				// 화면은 그대로 두고 알리기만 한다. 다음 폴링이 성공하면 조용히 사라진다.
+				<p className="sm-meta" style={{ textAlign: "center" }}>
+					잠시 갱신하지 못했습니다. 화면은 마지막으로 읽은 내용입니다. ({detail.error.message})
+				</p>
 			)}
 
 			{/* 무엇을 뽑을지 정하려면 원본을 봐야 한다. 자체 <video> 가 아니라 유튜브 임베드다 —
