@@ -38,10 +38,13 @@ class IsTransientTest(unittest.TestCase):
     def test_unknown_failures_are_not_retried(self):
         self.assertFalse(gemini.is_transient(Boom("connection reset by peer")))
 
-    def test_backoff_grows(self):
+    def test_backoff_grows_but_stays_bounded(self):
+        """🔴 상한이 있어야 한다 — 잡 워커가 하나라 한 호출이 큐 전체를 멈춘다."""
         waits = [gemini.BASE_BACKOFF_SEC * (2 ** (n - 1)) for n in range(1, gemini.MAX_ATTEMPTS)]
         self.assertEqual(waits, sorted(waits))
-        self.assertLess(sum(waits), 60)
+        # 넉넉하되 무한하지 않게. 503 이 몇 분 이어지는 걸 겪고 14초에서 늘렸다(2026-09-09).
+        self.assertGreater(sum(waits), 30)
+        self.assertLess(sum(waits), 120)
 
 
 
