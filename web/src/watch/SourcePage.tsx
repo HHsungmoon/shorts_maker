@@ -1,12 +1,26 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { time } from "../shared/format";
 import { useAsync } from "../shared/useAsync";
 import { clipFileUrl, fetchWatchSource, postQuestion, recordEvent, toggleLike } from "./api";
 import type { WatchClip, WatchQuestion, WatchUnanswerable } from "./api";
+import { OriginPlayer } from "./OriginPlayer";
+import type { OriginPlayerHandle } from "./OriginPlayer";
 
 const MAX_LENGTH = 200;
 
-function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
+function ClipCard({
+	clip,
+	sourceId,
+	onJump,
+}: {
+	clip: WatchClip;
+	sourceId: number;
+	onJump: (clip: WatchClip) => void;
+}) {
+	// 끝까지 본 사람에게는 버튼이 달라진다 — 아래 주석 참고.
+	const [ended, setEnded] = useState(false);
+
 	return (
 		<li className="watch-clip">
 			{/* preload="metadata" — 목록에 여러 개가 있어 전부 받아오면 첫 화면이 느려진다.
@@ -18,7 +32,10 @@ function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
 				preload="metadata"
 				playsInline
 				onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
-				onEnded={() => recordEvent("short_complete", sourceId, { clipId: clip.id })}
+				onEnded={() => {
+					setEnded(true);
+					recordEvent("short_complete", sourceId, { clipId: clip.id });
+				}}
 			/>
 			<div className="watch-clip__body">
 				{clip.title && <p className="watch-clip__question">{clip.title}</p>}
@@ -28,6 +45,20 @@ function ClipCard({ clip, sourceId }: { clip: WatchClip; sourceId: number }) {
 					{clip.question && clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
 					{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
 				</p>
+				{/* 🔴 **이 버튼이 이 제품의 결론이다**(tease §2-1 5단계). 숏폼은 답을 주고 끝나는
+				    물건이 아니라 원본으로 데려가는 입구다. 그래서 답을 다 들은 자리에 놓는다.
+				
+				    끝까지 본 뒤에만 보여주지는 않는다. 앞부분만 듣고 "더 듣고 싶다" 가 되는 게
+				    오히려 흔하고, 그때 버튼이 없으면 그 마음이 갈 곳이 없다. 대신 다 본 뒤에는
+				    문구와 색이 바뀐다 — 그 순간이 원본으로 넘어갈 가장 좋은 때다. */}
+				<button
+					type="button"
+					className={`watch-jump${ended ? " watch-jump--ready" : ""}`}
+					onClick={() => onJump(clip)}
+				>
+					<span>{ended ? "원본에서 이어 보기" : "이 구간부터 원본 보기"}</span>
+					<span className="watch-jump__at">{time(clip.start_sec)}</span>
+				</button>
 			</div>
 		</li>
 	);
@@ -150,6 +181,49 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		}
 	}, []);
 
+	// 🔴 이 아래 훅 셋은 이른 return(로딩·오류) **앞**에 있어야 한다 — 훅은 순서가 계약이라
+	// 조건부 return 뒤에 두면 렌더마다 개수가 달라져 React 가 상태를 잘못 짚는다. 그래서
+	// youtube_id 도 여기서 옵셔널 체이닝으로 미리 꺼낸다.
+	const youtubeId = detail.data?.source.youtube_id ?? null;
+	const playerRef = useRef<OriginPlayerHandle | null>(null);
+
+	/**
+	 * 숏폼 CTA — 원본의 그 초로 옮긴다. **이 함수가 이 제품의 주장을 실행한다.**
+	 *
+	 * 퍼널은 여기서 두 칸이 찍힌다: 누른 것(`cta_click`)과 실제로 옮겨진 것(`origin_seek`).
+	 * 둘을 나눈 이유는 플레이어가 없어서 못 옮기는 경우를 구분해야 하기 때문이다 —
+	 * 하나로 합치면 "눌렀는데 아무 일도 없었다" 가 성공으로 집계된다.
+	 */
+	const jump = useCallback(
+		(clip: WatchClip) => {
+			recordEvent("cta_click", sourceId, { clipId: clip.id });
+			if (playerRef.current?.jumpTo(clip.start_sec, clip.id)) {
+				recordEvent("origin_seek", sourceId, {
+					clipId: clip.id,
+					payload: { at: Math.round(clip.start_sec) },
+				});
+				return;
+			}
+			// 플레이어 API 가 막혔다. 유튜브를 그 초로 열어 주는 것이 아무것도 안 하는 것보다 낫다.
+			// 🔴 이때 origin_seek 은 남기지 않는다 — 새 탭에서 실제로 봤는지 우리는 관측할 수
+			// 없고, 관측할 수 없는 것을 퍼널에 넣으면 뒤 칸(origin_play)이 영원히 비어 보인다.
+			if (youtubeId) {
+				window.open(
+					`https://www.youtube.com/watch?v=${youtubeId}&t=${Math.floor(clip.start_sec)}s`,
+					"_blank",
+					"noreferrer",
+				);
+			}
+		},
+		[sourceId, youtubeId],
+	);
+
+	// 퍼널의 마지막 칸. CTA 뒤 30초 안에 원본 재생이 시작됐다는 뜻이다(OriginPlayer 의 창).
+	const originPlay = useCallback(
+		(clipId: number) => recordEvent("origin_play", sourceId, { clipId }),
+		[sourceId],
+	);
+
 	if (detail.loading) {
 		return <p className="state">불러오는 중…</p>;
 	}
@@ -191,7 +265,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			) : (
 				<ul className="watch-clips">
 					{clips.map((clip) => (
-						<ClipCard key={clip.id} clip={clip} sourceId={sourceId} />
+						<ClipCard key={clip.id} clip={clip} sourceId={sourceId} onJump={jump} />
 					))}
 				</ul>
 			)}
@@ -208,15 +282,15 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			<div className="watch-main">
 
 			{source.youtube_id ? (
-				<div className="watch-player">
-					{/* 자체 <video> 가 아니라 임베드다 — 여기서의 시청이 실제 유튜브 시청 시간이 된다(tease §8-3). */}
-					<iframe
-						src={`https://www.youtube.com/embed/${source.youtube_id}`}
-						title={source.title}
-						allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-						allowFullScreen
-					/>
-				</div>
+				// 자체 <video> 가 아니라 임베드다 — 여기서의 시청이 실제 유튜브 시청 시간이 된다(tease §8-3).
+				// 🔴 평범한 <iframe> 이 아니라 IFrame Player API 다. 숏폼 CTA 가 이 플레이어를 그 초로
+				// 움직여야 하고, 그건 API 없이는 불가능하다(OriginPlayer 머리 주석).
+				<OriginPlayer
+					ref={playerRef}
+					youtubeId={source.youtube_id}
+					title={source.title}
+					onOriginPlay={originPlay}
+				/>
 			) : (
 				<p className="state">이 영상은 임베드 재생을 지원하지 않습니다.</p>
 			)}
@@ -224,12 +298,14 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			<h1 className="watch-title">{source.title}</h1>
 			{source.channel && <p className="watch-channel">{source.channel}</p>}
 			{source.youtube_id && (
+				// 🔴 여기에는 `cta_click` 을 붙이지 않는다. 그 이벤트는 퍼널에서 "숏폼을 보고 원본으로
+				// 가려 했다" 를 뜻하는데, 이 링크는 숏폼을 한 번도 안 본 사람도 누른다 — 섞으면
+				// 재생·완주보다 CTA 가 많아지는 일이 생기고 퍼널이 거짓이 된다. 계측 없이 둔다.
 				<a
 					className="watch-origin"
 					href={`https://www.youtube.com/watch?v=${source.youtube_id}`}
 					target="_blank"
 					rel="noreferrer"
-					onClick={() => recordEvent("cta_click", sourceId, { from: "source_page" })}
 				>
 					유튜브에서 보기
 				</a>
