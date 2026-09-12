@@ -7,7 +7,9 @@
 |---|---|
 | 지금 상태 · 다음 할 일 · 함정 | **이 문서** |
 | 제품(TEASE) · 아키텍처 · 스키마 v9 · 미결 사항 | [`tease.md`](tease.md) |
-| **개발 순서 · 마일스톤별 완료 조건 · 상태 관리 방식** | [`update_plan.md`](update_plan.md) |
+| **지나온 기록 · 마일스톤 · 실측 · 결정 로그** | [`update_plan.md`](update_plan.md) |
+| **앞으로 할 일 · 우선순위 · 제출 전/후 구분** | [`upgrade_plan.md`](upgrade_plan.md) |
+| PM 기획서와 구현의 차이 | [`기획서_리뷰.md`](기획서_리뷰.md) |
 | 파이프라인 내부 · 비용 기준선 · 코딩 규약 | [`make_shorts.md`](make_shorts.md) |
 | 실행 · 테스트 · 배포 명령 | [`../README.md`](../README.md) |
 | 작업 규약(커밋 정책, 주석, 언어) | [`../CLAUDE.md`](../CLAUDE.md) — 새 세션이 자동으로 읽는다 |
