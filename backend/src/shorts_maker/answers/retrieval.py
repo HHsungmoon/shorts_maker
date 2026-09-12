@@ -109,7 +109,8 @@ def ensure_siblings_indexed(
 
 
 def candidates(
-    conn: psycopg.Connection, cfg: config.Config, cluster: dict, top_k: int | None = None
+    conn: psycopg.Connection, cfg: config.Config, cluster: dict, top_k: int | None = None,
+    run_id: int | None = None,
 ) -> Candidates:
     """클러스터 대표 문장으로 구간을 찾는다. **지금은 폴백 경로다.**
 
@@ -148,9 +149,10 @@ def candidates(
     best = ranked[0]["score"] if ranked else 0.0
 
     conn.execute(
-        """insert into stage_calls (source_id, stage, params) values (%s, 'retrieve', %s)""",
+        """insert into stage_calls (source_id, run_id, stage, params)
+           values (%s, %s, 'retrieve', %s)""",
         (
-            source_id,
+            source_id, run_id,
             Jsonb({
                 "cluster_id": cluster["id"], "purpose": "fallback",
                 "segments": len(usable), "top_k": top_k,
@@ -162,7 +164,8 @@ def candidates(
 
 
 def suggest_elsewhere(
-    conn: psycopg.Connection, cfg: config.Config, cluster: dict, segments: list[dict]
+    conn: psycopg.Connection, cfg: config.Config, cluster: dict, segments: list[dict],
+    run_id: int | None = None,
 ) -> int | None:
     """"이 영상엔 없어요, 저 편에서 다룹니다" 의 **저 편**. 없으면 None.
 
@@ -192,9 +195,10 @@ def suggest_elsewhere(
     ensure_siblings_indexed(conn, cfg, cluster["source_id"])
     other_id, other_score = _best_elsewhere(conn, cfg, cluster, query)
     conn.execute(
-        "insert into stage_calls (source_id, stage, params) values (%s, 'retrieve', %s)",
+        "insert into stage_calls (source_id, run_id, stage, params)"
+        " values (%s, %s, 'retrieve', %s)",
         (
-            cluster["source_id"],
+            cluster["source_id"], run_id,
             Jsonb({
                 "cluster_id": cluster["id"], "purpose": "suggest",
                 "mine_best": round(mine, 4), "elsewhere_source_id": other_id,
