@@ -105,7 +105,8 @@ def run(conn: psycopg.Connection, cfg: config.Config, cluster_id: int) -> dict:
 
 
 def _suggest(
-    conn: psycopg.Connection, cfg: config.Config, cluster: dict, segments: list[dict]
+    conn: psycopg.Connection, cfg: config.Config, cluster: dict, segments: list[dict],
+    run_id: int | None = None,
 ) -> int | None:
     """다른 편 안내 대상. 🔴 **실패해도 답변 불가 처리를 막지 않는다.**
 
@@ -113,7 +114,7 @@ def _suggest(
     클러스터가 IN_PROGRESS 에 갇혀 크리에이터가 다시 누를 수도 없게 된다.
     """
     try:
-        return retrieval.suggest_elsewhere(conn, cfg, cluster, segments)
+        return retrieval.suggest_elsewhere(conn, cfg, cluster, segments, run_id)
     except Exception:
         conn.rollback()
         return None
@@ -140,7 +141,7 @@ def _run_inside(
         return _unanswerable(conn, cluster["id"], run_id, "구간이 없습니다", None)
 
     # ① 라우팅 + 구간 선택 — **LLM 1회로 둘 다.** 왜 합쳤는지는 routing 모듈 머리 주석에 있다.
-    decision = routing.decide(conn, cfg, question, everything, source_id)
+    decision = routing.decide(conn, cfg, question, everything, source_id, run_id)
     conn.execute("update runs set route = %s where id = %s", (decision.route, run_id))
     # 🔴 여기서 끊는다. 방금 돈을 쓴 LLM 호출의 기록(stage_calls)과 경로를 먼저 굳혀야 한다 —
     # 아래에서 실패해 롤백하면 그 기록까지 사라진다.
@@ -153,13 +154,13 @@ def _run_inside(
     elif decision.selected is None:
         # 🔴 판정을 못 읽었다. 임베딩 top-k 로 물러난다 — 실측에서 약한 신호로 드러났지만,
         # 아무것도 없이 포기하는 것보다는 낫다. 다음 단계가 한 번 더 거른다.
-        found = retrieval.candidates(conn, cfg, cluster)
+        found = retrieval.candidates(conn, cfg, cluster, run_id=run_id)
         segments = found.segments
         if not segments or found.best_score < cfg.retrieval_min_sim:
             return _unanswerable(
                 conn, cluster["id"], run_id,
                 f"이 영상에서 관련된 부분을 찾지 못했습니다 (최대 유사도 {found.best_score:.2f})",
-                _suggest(conn, cfg, cluster, everything),
+                _suggest(conn, cfg, cluster, everything, run_id),
             )
     elif not decision.selected:
         # 모델이 구간 목록 전체를 보고 "이 영상엔 없다" 고 답했다. 옛 검출기
@@ -167,7 +168,7 @@ def _run_inside(
         return _unanswerable(
             conn, cluster["id"], run_id,
             decision.reason or "이 영상에서 관련된 부분을 찾지 못했습니다",
-            _suggest(conn, cfg, cluster, everything),
+            _suggest(conn, cfg, cluster, everything, run_id),
         )
     else:
         # 🔴 **시간 순으로 정렬한다.** 모델은 관련 높은 순으로 주는데, 다음 단계의 조합 후보는
@@ -182,7 +183,7 @@ def _run_inside(
     )
     if not plan.answerable:
         return _unanswerable(
-            conn, cluster["id"], run_id, plan.reason, _suggest(conn, cfg, cluster, everything)
+            conn, cluster["id"], run_id, plan.reason, _suggest(conn, cfg, cluster, everything, run_id)
         )
 
     # ④ 시작점 보정 + 예산 강제 — 🔴 LLM 이 말한 길이도, 고른 시작점도 그대로 믿지 않는다

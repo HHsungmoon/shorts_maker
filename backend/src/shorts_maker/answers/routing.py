@@ -163,6 +163,7 @@ def decide(
     text: str,
     segments: list[dict],
     source_id: int | None = None,
+    run_id: int | None = None,
 ) -> Decision:
     """경로를 정하고, 검색 경로면 답이 있을 구간까지 고른다. **LLM 1회.**
 
@@ -179,12 +180,14 @@ def decide(
     except ValueError as exc:
         decision = Decision(RETRIEVAL, None, f"판정 실패로 기본값 — {exc}")
     conn.execute(
-        """insert into stage_calls (source_id, stage, model, input_tokens, output_tokens,
+        # 🔴 `run_id` 를 붙인다. 이게 없으면 이 호출이 어느 질문 때문에 일어났는지 알 수 없고,
+        # "질문당 비용" 이 계산되지 않는다 — 회차 준비 비용과 섞여 버린다.
+        """insert into stage_calls (source_id, run_id, stage, model, input_tokens, output_tokens,
                                     thinking_tokens, total_tokens, cached_tokens, latency_ms,
                                     prompt, response, params)
-           values (%s, 'classify', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+           values (%s, %s, 'classify', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (
-            source_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
+            source_id, run_id, cfg.gemini_model, usage["input_tokens"], usage["output_tokens"],
             usage["thinking_tokens"], usage["total_tokens"], usage["cached_tokens"], latency_ms,
             # 🔴 모델이 무엇을 보고 무엇을 답했는지. 이게 없으면 판정이 이상할 때 같은 호출을
             # 다시 하는 것 말고 확인할 방법이 없다(마이그레이션 005).
