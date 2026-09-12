@@ -210,3 +210,50 @@
 .sm-playerfold .sm-player {
 	margin-bottom: 0;
 }
+
+/* 회차 리포트 — 크리에이터가 **가져가는** 화면.
+ *
+ * 🔴 다른 탭보다 글이 크고 여백이 넓다. 작업하는 자리가 아니라 읽고 판단하는 자리이고,
+ * 이 내용이 그대로 메일과 보고로 나간다. */
+.sm-report__lead {
+	margin: 4px 0 20px;
+	font-size: 14px;
+	line-height: 1.7;
+}
+
+.sm-report__head {
+	margin: 24px 0 2px;
+	font-size: 15px;
+}
+
+.sm-report__missing {
+	margin: 10px 0 0;
+	padding-left: 20px;
+}
+
+.sm-report__missing > li {
+	margin-bottom: 14px;
+}
+
+.sm-report__q {
+	margin: 0 0 3px;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+/* 왜 답하지 못했는지. 실패가 아니라 정직한 결과라 오류 상자가 아니라 옅은 본문으로 둔다. */
+.sm-report__why {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--text-muted);
+	padding-left: 10px;
+	border-left: 2px solid var(--border);
+}
+
+.sm-report__list {
+	margin: 6px 0 0;
+	padding-left: 18px;
+	font-size: 13px;
+	line-height: 1.7;
+}
