@@ -357,3 +357,72 @@ export interface ShortsInsights {
 		origin_play: number;
 	};
 }
+
+/**
+ * 회차 리포트 (`GET /api/sources/{id}/report`, 기획서 §05-③).
+ *
+ * 🔴 대시보드가 아니라 **산출물**이다. 크리에이터가 다음 설명회 큐시트로 쓰고 공고에서 빠진
+ * 정보를 채우는 데 쓴다 — 그래서 화면에서 읽는 것만큼 **복사해 가져갈 수 있는 것**이 중요하다.
+ */
+export interface ShortsReport {
+	source: {
+		id: number;
+		title: string;
+		channel: string | null;
+		durationSec: number | null;
+		published: boolean;
+	};
+	summary: {
+		questions: number;
+		/** [집계] 를 아직 안 눌러 어느 묶음에도 안 붙은 질문. */
+		unclustered: number;
+		clusters: number;
+		answered: number;
+		/** 찾아봤는데 이 영상에 없는 것. 리포트의 본체다. */
+		missing: number;
+		/** 아직 [답하기] 를 안 누른 것. */
+		waiting: number;
+		/** 만들었는데 크리에이터가 물린 것. */
+		declined: number;
+	};
+	missing: ShortsReportQuestion[];
+	waiting: ShortsReportQuestion[];
+	declined: ShortsReportQuestion[];
+	answered: ShortsReportAnswered[];
+	cost: ShortsReportCost;
+}
+
+export interface ShortsReportQuestion {
+	clusterId: number;
+	question: string;
+	askedBy: number;
+	likes: number;
+	/** 🔴 왜 답하지 못했는지. 목록만으로는 다음 회차에 무엇을 준비할지 알 수 없다. */
+	reason: string | null;
+	error: string | null;
+	suggestedSourceId: number | null;
+	/** 같은 뜻으로 묶인 질문 원문들. 대표 문장은 LLM 이 지은 것이다. */
+	texts: string[];
+}
+
+export interface ShortsReportAnswered {
+	clusterId: number;
+	question: string;
+	askedBy: number;
+	likes: number;
+	clipId: number | null;
+	totalSec: number | null;
+	parts: number;
+	published: boolean;
+}
+
+export interface ShortsReportCost {
+	/** 영상당 한 번 드는 값 — 전사·구간 분할·임베딩. */
+	prepare: ShortsCost;
+	/** 질문마다 드는 값 — 분류·후보·판정·컷·렌더. */
+	answer: ShortsCost;
+	/** 🔴 답한 질문이 아니라 **답하기를 돌린 질문** 수. 못 답한 것도 돈을 썼다. */
+	attempted: number;
+	perQuestionKrw: number | null;
+	note: string;
+}

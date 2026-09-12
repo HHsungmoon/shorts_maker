@@ -8,6 +8,7 @@ import type {
 	ShortsJob,
 	ShortsMediaList,
 	ShortsRemoval,
+	ShortsReport,
 	ShortsSourceDetail,
 	ShortsSourceListItem,
 	ShortsStageCallBody,
@@ -240,4 +241,9 @@ export function fetchStageCallBody(callId: number): Promise<ShortsStageCallBody>
  */
 export function buildCandidate(candidateId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/candidates/${candidateId}/build`, { method: "POST" });
+}
+
+/** 회차 리포트 — 이 설명회가 답한 것과 답하지 않은 것. */
+export function fetchReport(sourceId: number): Promise<ShortsReport> {
+	return request<ShortsReport>(`/api/sources/${sourceId}/report`);
 }

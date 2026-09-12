@@ -4,6 +4,7 @@ import { Link, NavLink, Navigate, Route, Routes, useParams } from "react-router-
 import { fetchClusters, fetchShortsSource, fetchStatus } from "./api";
 import { ClipsTab } from "./components/ClipsTab";
 import { LogTab } from "./components/LogTab";
+import { ReportTab } from "./components/ReportTab";
 import { PrepareTab } from "./components/PrepareTab";
 import { QuestionsTab } from "./components/QuestionsTab";
 import { StudioBanners, StudioHead } from "./components/StudioChrome";
@@ -225,6 +226,10 @@ export function SourcePage() {
 	const prepDone = hasChunks && sttDone && segments.length > 0;
 	// 답을 기다리는 질문. 질문 탭에 갈 이유가 곧 이 숫자다.
 	const openCount = clusters.data?.clusters.filter((c) => c.status === "OPEN").length ?? 0;
+	// 🔴 리포트 배지는 "이 영상에 답이 없는 질문" 수다. 이미 읽어 둔 목록에서 센다 —
+	// 배지 하나 때문에 요청을 하나 더 내보내지 않는다.
+	const missingCount =
+		clusters.data?.clusters.filter((c) => c.status === "UNANSWERABLE").length ?? 0;
 
 	const view: SourceView = {
 		sourceId,
@@ -350,6 +355,11 @@ export function SourcePage() {
 					영상 준비
 					{!prepDone && <span className="sm-tab__need">준비 필요</span>}
 				</NavLink>
+				{/* 🔴 리포트는 **가져가는 것**이고 기록은 내부용이다. 앞에 둔다. */}
+				<NavLink to={`/sources/${sourceId}/report`} className={tabClass}>
+					리포트
+					{missingCount > 0 && <span className="sm-tab__badge">{missingCount}</span>}
+				</NavLink>
 				<NavLink to={`/sources/${sourceId}/log`} className={tabClass}>
 					기록
 				</NavLink>
@@ -361,6 +371,7 @@ export function SourcePage() {
 				<Route path="questions" element={<QuestionsTab view={view} />} />
 				<Route path="clips" element={<ClipsTab view={view} />} />
 				<Route path="prepare" element={<PrepareTab view={view} />} />
+				<Route path="report" element={<ReportTab view={view} />} />
 				<Route path="log" element={<LogTab view={view} />} />
 				{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.
 				    🔴 여기서 상대경로를 쓰면 /sources/3/bogus/questions 로 가고 그 주소가 다시
