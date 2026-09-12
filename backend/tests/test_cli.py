@@ -12,7 +12,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -240,3 +240,104 @@ class AnswersCommandTest(unittest.TestCase):
         self.assertEqual(row["text"], "진짜 시청자 질문")
         self.assertEqual(row["cluster_id"], real_cluster)
         self.assertEqual(names, ["원래 있던 그룹?"])
+
+
+class TeaseCliTest(unittest.TestCase):
+    """`sm tease` — 데모 리허설 도구의 배선.
+
+    🔴 CLI 는 런타임에만 깨진다. 인자 하나가 어긋나도 테스트가 없으면 **무대에서 처음 만난다** —
+    그건 이 명령군을 만든 이유와 정면으로 어긋난다.
+    """
+
+    def setUp(self):
+        self.url = reset_db()
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.cfg = make_config(Path(self._dir.name))
+        with store.connect(self.url) as conn:
+            self.source_id = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status, published)"
+                " values ('설명회', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE', true) returning id"
+            ).fetchone()["id"]
+            conn.commit()
+
+    def run_cli(self, argv: list[str]) -> tuple[int, str]:
+        # stderr 도 삼킨다 — 안 그러면 "없음" 같은 오류 문구가 테스트 출력에 섞여 흐른다.
+        with (
+            mock.patch.object(config, "load", return_value=self.cfg),
+            redirect_stdout(io.StringIO()) as out,
+            redirect_stderr(io.StringIO()) as err,
+        ):
+            code = cli.main(argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def rows(self, sql: str) -> int:
+        with store.connect(self.url) as conn:
+            return conn.execute(sql).fetchone()["n"]
+
+    def write_questions(self, payload) -> Path:
+        path = Path(self._dir.name) / "q.json"
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return path
+
+    def test_check_prints_all_eight_steps(self):
+        code, output = self.run_cli(["tease", "check", str(self.source_id)])
+        self.assertEqual(code, 0)
+        for step in range(1, 9):
+            self.assertIn(f"{step}.", output)
+
+    def test_check_succeeds_even_when_steps_are_blocked(self):
+        # 🔴 점검 도구가 실패한 게 아니라 결과를 보고한 것이다. 0 이 아니면 스크립트가 멈춘다.
+        code, output = self.run_cli(["tease", "check", str(self.source_id)])
+        self.assertEqual(code, 0)
+        self.assertIn("막힘", output)
+
+    def test_check_on_a_missing_source_does_not_crash(self):
+        code, output = self.run_cli(["tease", "check", "999999"])
+        self.assertEqual(code, 0)
+        self.assertIn("없음", output)
+
+    def test_seed_puts_questions_in_and_says_it_did_not_aggregate(self):
+        path = self.write_questions(
+            {"questions": [{"group": "a", "text": "연봉은?"}, {"group": "a", "text": "초봉은?"}]}
+        )
+        code, output = self.run_cli(["tease", "seed", str(self.source_id), "--file", str(path)])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.rows("select count(*) as n from questions"), 2)
+        self.assertEqual(self.rows("select count(*) as n from question_clusters"), 0)
+        self.assertIn("집계", output)
+
+    def test_seed_respects_the_limit(self):
+        path = self.write_questions([{"group": "a", "text": f"질문 {n}"} for n in range(5)])
+        self.run_cli(["tease", "seed", str(self.source_id), "--file", str(path), "--limit", "2"])
+        self.assertEqual(self.rows("select count(*) as n from questions"), 2)
+
+    def test_seed_on_a_missing_source_stops_before_writing(self):
+        code, _ = self.run_cli(["tease", "seed", "999999"])
+        self.assertEqual(code, 2)
+        self.assertEqual(self.rows("select count(*) as n from questions"), 0)
+
+    def test_reset_refuses_without_yes(self):
+        """🔴 되돌릴 수 없는 일이다. 실수로 준비 자산을 날리지 않게 한 번 막는다."""
+        with store.connect(self.url) as conn:
+            conn.execute(
+                "insert into questions (source_id, text, viewer_id) values (%s, 'q', 'v1')",
+                (self.source_id,),
+            )
+            conn.commit()
+        code, output = self.run_cli(["tease", "reset", str(self.source_id)])
+        self.assertEqual(code, 1)
+        self.assertIn("--yes", output)
+        self.assertEqual(self.rows("select count(*) as n from questions"), 1)
+
+    def test_reset_with_yes_clears_the_questions(self):
+        with store.connect(self.url) as conn:
+            conn.execute(
+                "insert into questions (source_id, text, viewer_id) values (%s, 'q', 'v1')",
+                (self.source_id,),
+            )
+            conn.commit()
+        code, output = self.run_cli(["tease", "reset", str(self.source_id), "--yes"])
+        self.assertEqual(code, 0)
+        self.assertEqual(self.rows("select count(*) as n from questions"), 0)
+        self.assertIn("준비물", output)
