@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from .. import pricing
 from ..adapters import ytdlp, ffmpeg
-from ..answers import answer, clusters, events
+from ..answers import answer, clusters, events, report
 from . import deps
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
@@ -527,6 +527,20 @@ def source_insights(source_id: int) -> dict:
         if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
             raise HTTPException(404, "source not found")
         return events.funnel(conn, source_id)
+
+
+@router.get("/sources/{source_id}/report")
+def source_report(source_id: int) -> dict:
+    """**회차 리포트** — 이 설명회가 답한 것과 답하지 않은 것 (기획서 §05-③).
+
+    🔴 대시보드가 아니라 **산출물**이다. 크리에이터가 다음 설명회의 큐시트로 쓰고, 공고에서
+    빠진 정보를 채우는 데 쓴다. 그래서 화면은 복사해서 가져갈 수 있게 그린다.
+    """
+    with connect() as conn:
+        try:
+            return report.build(conn, deps.cfg, source_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
 
 @router.patch("/clusters/{cluster_id}")
