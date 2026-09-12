@@ -8,7 +8,7 @@ import psycopg
 
 from .. import config, doctor
 from ..adapters import ffmpeg, gemini
-from ..answers import clusters, embeddings
+from ..answers import clusters, demo, embeddings
 from ..pipeline import cutting, ingest, ranking, render, segmentation, stt
 from ..db import store
 
@@ -285,6 +285,73 @@ def _cmd_clip_list(cfg: config.Config, args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- 데모 리허설
+
+def _cmd_tease_check(cfg: config.Config, args) -> int:
+    """데모 전에 한 번 돌린다. 🔴 무대에서 "어, 왜 안 되지" 를 여기서 먼저 만난다."""
+    with store.connect(cfg.database_url) as conn:
+        steps = demo.check(conn, args.source_id)
+    blocked = 0
+    for step in steps:
+        mark = "OK  " if step["ok"] else "막힘"
+        if not step["ok"]:
+            blocked += 1
+        print(f"[{mark}] {step['step']}. {step['name']}")
+        print(f"        {step['note']}")
+    print()
+    if blocked:
+        print(f"🔴 {blocked}단계가 막혀 있다. 위 설명을 보고 준비한다.")
+    else:
+        print("8단계가 전부 준비됐다.")
+    # 🔴 막힌 게 있어도 0 으로 끝낸다 — 점검 도구가 실패한 게 아니라 **점검 결과를 보고한 것**이다.
+    return 0
+
+
+def _cmd_tease_seed(cfg: config.Config, args) -> int:
+    path = Path(args.file) if args.file else Path(__file__).resolve().parents[3] / "eval" / "questions.json"
+    if not path.is_file():
+        print(f"질문 파일이 없다: {path}", file=sys.stderr)
+        return 2
+    questions = demo.load_questions(path)
+    if args.limit:
+        questions = questions[: args.limit]
+    with store.connect(cfg.database_url) as conn:
+        if conn.execute("select 1 from sources where id = %s", (args.source_id,)).fetchone() is None:
+            print(f"source {args.source_id} 없음", file=sys.stderr)
+            return 2
+        counted = demo.seed(conn, args.source_id, questions, args.likes)
+        conn.commit()
+    print(f"질문 {counted['questions']}개 · 좋아요 {counted['likes']}개를 넣었다 ({path.name})")
+    print("🔴 [집계]는 하지 않았다 — 그 버튼을 누르는 것이 데모 2단계다.")
+    return 0
+
+
+def _cmd_tease_unseed(cfg: config.Config, args) -> int:
+    """리허설 흔적만 걷어낸다. 🔴 진짜 시청자 질문과 섞이면 수요 순위가 거짓이 된다 —
+    그건 이 제품이 화면에서 보여주려는 바로 그 숫자다."""
+    with store.connect(cfg.database_url) as conn:
+        counted = demo.unseed(conn, args.source_id)
+        conn.commit()
+    for label, n in counted.items():
+        print(f"  {label:18s} {n}행 삭제")
+    return 0
+
+
+def _cmd_tease_reset(cfg: config.Config, args) -> int:
+    """🔴 되돌릴 수 없다. 그래서 무엇이 남고 무엇이 지워지는지 먼저 보여준다."""
+    if not args.yes:
+        print(f"source {args.source_id} — {demo.RESET_NOTE}")
+        print("정말 지우려면 --yes 를 준다.")
+        return 1
+    with store.connect(cfg.database_url) as conn:
+        counted = demo.reset(conn, args.source_id)
+        conn.commit()
+    for label, n in counted.items():
+        print(f"  {label:18s} {n}행 삭제")
+    print("영상 준비물(청크·발화·구간·구간 임베딩)은 그대로다.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sm", description="긴 영상 → 숏폼 클립 파이프라인")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -392,6 +459,29 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--theta", type=float, help="이번 실행에만 쓸 임계값 (기본: SHORTS_CLUSTER_THETA)")
     ev.add_argument("--keep", action="store_true",
                     help="끝나고 넣은 질문·클러스터를 지우지 않는다 (화면으로 확인할 때)")
+
+    # 🔴 데모 리허설 도구(update_plan M9). 리허설은 같은 자리에서 여러 번 돌려야 하고,
+    # 그러려면 매번 같은 출발점으로 되돌릴 수 있어야 한다.
+    tease_p = sub.add_parser("tease", help="데모 리허설 도구 (준비 점검 · 질문 시드 · 초기화)")
+    tease_sub = tease_p.add_subparsers(dest="tease_command", required=True)
+
+    check_p = tease_sub.add_parser("check", help="데모 시나리오 8단계의 전제가 갖춰졌는지 본다")
+    check_p.add_argument("source_id", type=int)
+
+    seed_p = tease_sub.add_parser("seed", help="질문을 좋아요와 함께 미리 넣는다 (집계는 하지 않는다)")
+    seed_p.add_argument("source_id", type=int)
+    seed_p.add_argument("--file", default=None, help="질문 파일 (기본: eval/questions.json)")
+    seed_p.add_argument("--limit", type=int, default=None, help="앞에서 이만큼만")
+    seed_p.add_argument("--likes", type=int, default=3, help="그룹 첫 질문의 좋아요 수 (기본 3)")
+
+    unseed_p = tease_sub.add_parser(
+        "unseed", help="시드한 질문만 지운다 (진짜 시청자 질문은 남는다)")
+    unseed_p.add_argument("source_id", type=int)
+
+    reset_p = tease_sub.add_parser(
+        "reset", help="질문·클러스터·답변·클립을 지운다 (영상 준비물은 남긴다)")
+    reset_p.add_argument("source_id", type=int)
+    reset_p.add_argument("--yes", action="store_true", help="확인 없이 지운다")
 
     args = parser.parse_args(argv)
     cfg = config.load()
@@ -613,6 +703,15 @@ def _dispatch(parser: argparse.ArgumentParser, cfg: config.Config, args) -> int:
             return _cmd_answers_index(cfg, args)
         if args.answers_command == "eval-cluster":
             return _cmd_answers_eval(cfg, args)
+    if args.command == "tease":
+        if args.tease_command == "check":
+            return _cmd_tease_check(cfg, args)
+        if args.tease_command == "seed":
+            return _cmd_tease_seed(cfg, args)
+        if args.tease_command == "unseed":
+            return _cmd_tease_unseed(cfg, args)
+        if args.tease_command == "reset":
+            return _cmd_tease_reset(cfg, args)
     if args.command == "render":
         return _cmd_render(cfg, args)
     if args.command == "stt":
