@@ -838,14 +838,38 @@ def get_segment_preview(segment_id: int) -> Any:
 
 @router.post("/clips/{clip_id}/review")
 def add_review(clip_id: int, body: ReviewIn) -> dict:
+    """사람 평가(쓸만함 / 아님). 🔴 **멱등이다** — 같은 평가를 여러 번 보내도 한 줄이다.
+
+    2026-09-14 에 당했다: 버튼을 연달아 누르자 클립 하나에 "쓸만함" 14줄 · "아님" 4줄이 3초 안에
+    쌓였다. 조건 없는 삽입이었다. 이 표는 사람·모델 판정 일치율(tease §11)의 입력이라, 행 단위로
+    세면 14번 누른 클립이 14표가 된다.
+
+    규칙: 그 클립의 **최신 사람 평가**와 평가·메모가 같으면 넣지 않고 지금 값을 돌려준다. 다르면
+    넣는다 — **마음을 바꾼 기록은 남는다**(append-only, 읽을 때 최신 행). 모델 평가(`reviewer='llm'`)는
+    비교 대상이 아니다. 사람이 판정에 동의하는 것도 한 표다.
+
+    🔴 **클립 행을 잠그고 확인한다.** 확인과 삽입 사이에 틈이 있으면 거의 동시에 온 두 요청이 둘 다
+    "아직 없음" 을 보고 둘 다 넣는다 — 연타가 정확히 그 경우다. `for update` 로 같은 클립의 평가 요청을
+    한 줄로 세우면 뒤 요청은 앞 요청이 커밋한 행을 보고 건너뛴다.
+    """
     if body.verdict not in ("OK", "NG"):
         raise HTTPException(400, "verdict must be OK or NG")
+    # 빈 메모와 메모 없음은 같은 것이다. 구분하면 "" 와 null 이 서로 다른 평가로 쌓인다.
+    note = (body.note or "").strip() or None
     with connect() as conn:
-        if conn.execute("select 1 from clips where id = %s", (clip_id,)).fetchone() is None:
+        if conn.execute("select id from clips where id = %s for update", (clip_id,)).fetchone() is None:
             raise HTTPException(404, "clip not found")
-        conn.execute(
-            "insert into clip_reviews (clip_id, verdict, note) values (%s, %s, %s)",
-            (clip_id, body.verdict, body.note),
-        )
+        latest = conn.execute(
+            """select id, verdict, note from clip_reviews
+               where clip_id = %s and reviewer = 'human' order by id desc limit 1""",
+            (clip_id,),
+        ).fetchone()
+        if latest is not None and latest["verdict"] == body.verdict and latest["note"] == note:
+            conn.commit()  # 잠금을 바로 푼다
+            return {"ok": True, "created": False, "reviewId": latest["id"], "verdict": latest["verdict"]}
+        row = conn.execute(
+            "insert into clip_reviews (clip_id, verdict, note) values (%s, %s, %s) returning id",
+            (clip_id, body.verdict, note),
+        ).fetchone()
         conn.commit()
-    return {"ok": True}
+    return {"ok": True, "created": True, "reviewId": row["id"], "verdict": body.verdict}

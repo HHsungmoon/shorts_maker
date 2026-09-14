@@ -97,6 +97,12 @@ export interface ShortsClipReview {
 	id: number;
 	verdict: "OK" | "NG";
 	note: string | null;
+	/**
+	 * 누가 매겼나. 🔴 사람 평가와 모델 판정이 **같은 목록**에 온다(최신순). "지금 사람 평가" 를 보이려면
+	 * `human` 중 첫 행을 쓴다 — 전부 이어 붙이면 모델 판정이 사람 평가처럼 읽힌다.
+	 */
+	reviewer: "human" | "llm";
+	created_at: string;
 }
 
 export interface ShortsClip {

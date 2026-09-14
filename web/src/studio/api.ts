@@ -159,11 +159,38 @@ export function fetchJob(jobId: string): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/jobs/${jobId}`);
 }
 
-export function reviewClip(clip: ShortsClip, verdict: "OK" | "NG", note?: string): Promise<void> {
-	return request<void>(`/api/clips/${clip.id}/review`, {
+// 날아가 있는 평가 요청. 🔴 같은 클립·같은 평가를 연달아 부르면 **새 요청을 보내지 않고** 이미 가 있는
+// 요청을 돌려준다(2026-09-14 버그: 연타로 클립 하나에 14줄이 쌓였다).
+//
+// 버튼을 잠그는 것은 그 버튼을 그리는 화면의 일이지만, 여기서도 막는 이유: 평가 버튼을 그리는 화면이
+// 바뀌어도(탭을 옮기거나 새로 만들어도) 이 함수를 거치는 한 연타가 요청으로 번지지 않는다.
+// 서버도 멱등이라 여기서 못 막아도 행은 불지 않는다 — 이건 헛요청을 줄이는 두 번째 울타리다.
+const pendingReviews = new Map<string, Promise<ShortsReviewResult>>();
+
+export interface ShortsReviewResult {
+	ok: boolean;
+	/** false 면 최신 사람 평가와 같아서 새 줄을 넣지 않았다는 뜻이다. */
+	created: boolean;
+	reviewId: number;
+	verdict: "OK" | "NG";
+}
+
+export function reviewClip(
+	clip: ShortsClip,
+	verdict: "OK" | "NG",
+	note?: string,
+): Promise<ShortsReviewResult> {
+	const key = `${clip.id}:${verdict}:${(note ?? "").trim()}`;
+	const inflight = pendingReviews.get(key);
+	if (inflight) {
+		return inflight;
+	}
+	const sent = request<ShortsReviewResult>(`/api/clips/${clip.id}/review`, {
 		method: "POST",
 		body: { verdict, note: note ?? null },
-	});
+	}).finally(() => pendingReviews.delete(key));
+	pendingReviews.set(key, sent);
+	return sent;
 }
 
 // 영상 주소는 <video src> 에 그대로 넣는다.
