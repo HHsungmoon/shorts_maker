@@ -2,8 +2,9 @@ import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 import { Link, NavLink, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { fetchClusters, fetchShortsSource, fetchStatus } from "./api";
-import { ClipsTab } from "./components/ClipsTab";
 import { LogTab } from "./components/LogTab";
+import { NewClipTab } from "./components/NewClipTab";
+import { PublishTab } from "./components/PublishTab";
 import { ReportTab } from "./components/ReportTab";
 import { PrepareTab } from "./components/PrepareTab";
 import { QuestionsTab } from "./components/QuestionsTab";
@@ -28,17 +29,6 @@ const DEFAULT_CRITERIA = "한 문장으로 인용할 만한 핵심 논지";
 type RankedPayload = NonNullable<ShortsRun["ranked"]>;
 export type RankedEntry = NonNullable<RankedPayload["ranked"]>[number];
 export type ExcludedEntry = NonNullable<RankedPayload["excluded"]>[number];
-
-/**
- * 클립 묶음 하나. 묶음의 제목이 곧 그 클립이 답하는 질문(또는 그때 쓴 기준)이다.
- */
-export interface ClipGroup {
-	key: string;
-	question: string | null;
-	criteria: string | null;
-	askedBy: number;
-	clips: ShortsClip[];
-}
 
 /**
  * 탭 넷이 나눠 쓰는 화면 상태 전부. 상태와 파생값은 전부 SourcePage 가 들고 있고 탭은
@@ -76,7 +66,6 @@ export interface SourceView {
 	ranked: RankedEntry[];
 	excluded: ExcludedEntry[];
 	clipBySegment: Map<number, ShortsClip>;
-	clipGroups: ClipGroup[];
 	nextStep: number;
 	/** 1~4단계가 다 끝났는가. 끝나야 질문에 답할 수 있다. */
 	prepDone: boolean;
@@ -202,25 +191,6 @@ export function SourcePage() {
 		}
 	}
 
-	// 클립을 출처별로 묶는다. 질문에서 나온 것은 그 질문끼리, 기준에서 나온 것은 기준 문장끼리.
-	// 순서는 clips 가 온 순서(최신 먼저)를 따른다 — 방금 만든 것이 위에 있어야 한다.
-	const clipGroups: ClipGroup[] = [];
-	for (const clip of data?.clips ?? []) {
-		const key = clip.question ? `q:${clip.question}` : `c:${clip.criteria_prompt ?? ""}`;
-		const found = clipGroups.find((g) => g.key === key);
-		if (found) {
-			found.clips.push(clip);
-		} else {
-			clipGroups.push({
-				key,
-				question: clip.question,
-				criteria: clip.criteria_prompt,
-				askedBy: clip.asked_by,
-				clips: [clip],
-			});
-		}
-	}
-
 	// 다음에 눌러야 할 단계 하나만 강조한다.
 	const nextStep = !data ? 1 : !hasChunks ? 2 : !sttDone ? 3 : segments.length === 0 ? 4 : 5;
 	const prepDone = hasChunks && sttDone && segments.length > 0;
@@ -255,7 +225,6 @@ export function SourcePage() {
 		ranked,
 		excluded,
 		clipBySegment,
-		clipGroups,
 		nextStep,
 		prepDone,
 		editingRange,
@@ -343,17 +312,25 @@ export function SourcePage() {
 			{/* 🔴 to 는 절대경로다. 이 화면 자체가 splat 라우트(`sources/:sourceId/*`) 안이라
 			    상대경로는 splat 구간까지 붙는다 — /sources/3/clips 에서 to="questions" 는
 			    /sources/3/clips/questions 가 된다(react-router 7 의 v7_relativeSplatPath 기본값). */}
+			{/* 🔴 순서가 곧 일하는 순서다 — 질문을 보고, 영상을 준비하고, 새로 뽑고, 내보낸다(2026-09-14).
+			    예전 "클립" 탭은 내보내기(완성 클립)와 새로 뽑기(직접 골라 만들기)를 한 화면에 쌓아서
+			    뽑기가 접힌 채 맨 아래에 묻혔다. 하는 일이 달라 둘로 갈랐다.
+			    공개 탭의 주소는 예전 클립 탭의 `clips` 를 그대로 쓴다 — 완성 클립이 있던 자리라
+			    옛 링크가 같은 내용을 연다. */}
 			<nav className="sm-tabs">
 				<NavLink to={`/sources/${sourceId}/questions`} className={tabClass}>
 					질문
 					{openCount > 0 && <span className="sm-tab__badge">{openCount}</span>}
 				</NavLink>
-				<NavLink to={`/sources/${sourceId}/clips`} className={tabClass}>
-					클립
-				</NavLink>
 				<NavLink to={`/sources/${sourceId}/prepare`} className={tabClass}>
 					영상 준비
 					{!prepDone && <span className="sm-tab__need">준비 필요</span>}
+				</NavLink>
+				<NavLink to={`/sources/${sourceId}/make`} className={tabClass}>
+					새 클립
+				</NavLink>
+				<NavLink to={`/sources/${sourceId}/clips`} className={tabClass}>
+					공개
 				</NavLink>
 				{/* 🔴 리포트는 **가져가는 것**이고 기록은 내부용이다. 앞에 둔다. */}
 				<NavLink to={`/sources/${sourceId}/report`} className={tabClass}>
@@ -369,8 +346,9 @@ export function SourcePage() {
 				{/* 탭이 없는 /sources/3 은 예전 링크와 북마크다. 매일 쓰는 질문 탭으로 보낸다. */}
 				<Route index element={<Navigate to="questions" replace />} />
 				<Route path="questions" element={<QuestionsTab view={view} />} />
-				<Route path="clips" element={<ClipsTab view={view} />} />
 				<Route path="prepare" element={<PrepareTab view={view} />} />
+				<Route path="make" element={<NewClipTab view={view} />} />
+				<Route path="clips" element={<PublishTab view={view} />} />
 				<Route path="report" element={<ReportTab view={view} />} />
 				<Route path="log" element={<LogTab view={view} />} />
 				{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.

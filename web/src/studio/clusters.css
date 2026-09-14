@@ -75,34 +75,6 @@
 	border-bottom: 1px solid var(--border);
 }
 
-.sm-qfilter__chip {
-	border: 1px solid var(--border);
-	border-radius: 999px;
-	background: var(--surface);
-	color: var(--text-muted);
-	padding: 4px 11px;
-	font: inherit;
-	font-size: 13px;
-	cursor: pointer;
-	white-space: nowrap;
-}
-
-.sm-qfilter__chip:hover {
-	color: var(--text);
-}
-
-.sm-qfilter__chip--on {
-	background: var(--text);
-	border-color: var(--text);
-	color: #fff;
-	font-weight: 600;
-}
-
-.sm-qfilter__n {
-	font-variant-numeric: tabular-nums;
-	opacity: 0.7;
-}
-
 .sm-qlist__empty {
 	margin: 0;
 	padding: 24px 16px;
@@ -458,35 +430,6 @@
 	margin-top: 4px;
 }
 
-
-/* 완성 클립의 출처 머리글 ------------------------------------------------- */
-
-/* 클립이 무엇의 답인지가 목록의 뼈대다. 시청자 질문에서 나온 것과 크리에이터가 자기 기준으로
-   뽑은 것은 성격이 달라서 라벨로 먼저 갈라 준다. */
-.sm-group {
-	margin: 22px 0 8px;
-	font-size: 14px;
-	font-weight: 600;
-	line-height: 1.5;
-	display: flex;
-	align-items: baseline;
-	gap: 6px;
-	flex-wrap: wrap;
-}
-
-.sm-group__kind {
-	flex: 0 0 auto;
-	padding: 2px 7px;
-	border-radius: 999px;
-	background: var(--accent);
-	color: #fff;
-	font-size: 11px;
-	font-weight: 600;
-}
-
-.sm-group__kind--own {
-	background: var(--text-muted);
-}
 
 /* 겨룬 후보들 — 대사를 읽고 고르는 자리.
  *

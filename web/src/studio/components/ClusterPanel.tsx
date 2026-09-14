@@ -198,10 +198,10 @@ export function ClusterPanel({
 										type="button"
 										role="tab"
 										aria-selected={filter === f.key}
-										className={`sm-qfilter__chip${filter === f.key ? " sm-qfilter__chip--on" : ""}`}
+										className={`sm-chip${filter === f.key ? " sm-chip--on" : ""}`}
 										onClick={() => setFilter(f.key)}
 									>
-										{f.label} <span className="sm-qfilter__n">{count}</span>
+										{f.label} <span className="sm-chip__n">{count}</span>
 									</button>
 								);
 							})}

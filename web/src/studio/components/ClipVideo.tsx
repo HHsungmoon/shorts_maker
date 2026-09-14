@@ -1,6 +1,7 @@
 interface ClipVideoProps {
 	src: string;
-	width: number;
+	/** px 숫자, 또는 칸을 채울 때 "100%". 공개 탭의 격자는 칸 폭을 CSS 가 정한다. */
+	width: number | string;
 }
 
 // admin-web 의 LazyVideo 를 대체한다.

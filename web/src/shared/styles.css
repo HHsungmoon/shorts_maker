@@ -393,10 +393,51 @@ img {
 	font-size: 13px;
 }
 
-.sm-clip {
+/* 거르개 칩 — 질문 목록과 공개 탭이 같이 쓴다. 한쪽만 고치면 두 화면의 거르개가 달라 보인다. */
+.sm-chips {
 	display: flex;
-	gap: 14px;
-	align-items: flex-start;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sm-chip {
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface);
+	color: var(--text-muted);
+	padding: 4px 11px;
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.sm-chip:hover {
+	color: var(--text);
+}
+
+.sm-chip--on,
+.sm-chip--on:hover {
+	background: var(--text);
+	border-color: var(--text);
+	color: #fff;
+	font-weight: 600;
+}
+
+.sm-chip__n {
+	font-variant-numeric: tabular-nums;
+	opacity: 0.7;
+}
+
+/* 누르면 다른 탭으로 가는 배지. 글자만 바뀌면 누를 수 있는 줄 모른다. */
+.sm-badge--link {
+	color: var(--accent);
+	border-color: #b7d6c5;
+	text-decoration: none;
+}
+
+.sm-badge--link:hover {
+	border-color: var(--accent);
 }
 
 /* 접히는 참고 영역 — 전사·비용·단계기록이 결과를 밀어내지 않게 기본은 접어둔다.
