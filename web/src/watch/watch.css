@@ -209,6 +209,16 @@
 	border-top: 1px solid var(--border);
 }
 
+/* 🔴 `.button--primary` 는 로그인 폼용이라 폭이 100% 다. 그대로 두면 글자 수 옆에서 초록 막대가
+   줄을 다 먹어 입력칸보다 버튼이 먼저 눈에 들어온다(2026-09-14). 내용만큼만 차지하고 오른쪽 끝에 선다. */
+.watch-submit {
+	flex: 0 0 auto;
+	width: auto;
+	margin-left: auto;
+	padding: 8px 18px;
+	font-size: 14px;
+}
+
 .watch-counter {
 	font-size: 12px;
 	color: var(--text-muted);

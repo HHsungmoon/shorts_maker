@@ -334,7 +334,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 						</span>
 						<button
 							type="submit"
-							className="button button--primary"
+							className="button button--primary watch-submit"
 							disabled={busy || text.trim().length === 0}
 						>
 							{busy ? "보내는 중…" : "질문 남기기"}
