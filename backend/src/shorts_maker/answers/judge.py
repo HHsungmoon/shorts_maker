@@ -13,7 +13,7 @@ judge 는 영상이 아니라 **텍스트**를 본다. 그래서 렌더하기 �
 import json
 from dataclasses import dataclass
 
-from .. import config
+from .. import config, standards
 from ..adapters import gemini
 
 SCHEMA = {
@@ -47,7 +47,7 @@ PROMPT = """아래는 긴 영상에서 잘라낸 짧은 클립의 **대사 전�
 
 `score` 는 숏폼으로서의 완성도 0~100. 위 둘이 모두 true 여야 높은 점수를 준다.
 `reason` 은 한두 문장. 크리에이터가 읽고 판단할 근거다.
-
+{standard_block}
 질문:
 {question}
 
@@ -72,7 +72,9 @@ class Verdict:
         return self.standalone and self.answers
 
 
-def build_prompt(question: str, part_texts: list[str]) -> str:
+def build_prompt(question: str, part_texts: list[str], standard: str | None = None) -> str:
+    """`standard` 는 관리자 기준. 🔴 **score 에만** 반영한다 — 두 관문에 섞으면 선호가 숨은 탈락
+    조건이 된다(standards.py 머리 주석)."""
     if not part_texts:
         raise JudgeError("판정할 대사가 없다")
     if len(part_texts) == 1:
@@ -87,7 +89,10 @@ def build_prompt(question: str, part_texts: list[str]) -> str:
             ' "몇 분에서 이어집니다" 안내가 뜨므로, 장면이 바뀌는 것 자체는 문제가 아니다.'
             " 이어붙인 결과가 하나의 답으로 읽히는지를 본다"
         )
-    return PROMPT.format(question=question, parts_note=note, body=body)
+    return PROMPT.format(
+        question=question, parts_note=note, body=body,
+        standard_block=standards.score_block(standard),
+    )
 
 
 def parse(raw: str) -> Verdict:
@@ -125,9 +130,11 @@ class Judged:
     raw: str
 
 
-def judge(cfg: config.Config, question: str, part_texts: list[str]) -> Judged:
+def judge(
+    cfg: config.Config, question: str, part_texts: list[str], standard: str | None = None
+) -> Judged:
     """🔴 **DB 를 만지지 않는다** — 여러 후보를 스레드로 동시에 판정하기 때문이다
     (answers/answer.py). 기록은 부른 쪽이 한 곳에서 한다."""
-    prompt = build_prompt(question, part_texts)
+    prompt = build_prompt(question, part_texts, standard)
     raw, usage, latency_ms = gemini.generate_json(cfg, prompt, SCHEMA)
     return Judged(parse(raw), usage, latency_ms, prompt, raw)

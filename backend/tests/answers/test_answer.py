@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from shorts_maker import standards
 from shorts_maker.adapters import gemini
 from shorts_maker.answers import answer, clusters, judge, retrieval, routing
 from shorts_maker.pipeline import cutting, ranking, render
@@ -85,8 +86,8 @@ class AnswerTestCase(DbTestCase):
 
         judged = iter(verdicts)
 
-        def fake_judge(cfg, question, part_texts):
-            return _judged(next(judged), prompt=judge.build_prompt(question, part_texts))
+        def fake_judge(cfg, question, part_texts, standard=None):
+            return _judged(next(judged), prompt=judge.build_prompt(question, part_texts, standard))
 
         return (
             mock.patch.object(routing, "decide", return_value=_decision(route)),
@@ -441,6 +442,54 @@ class SegmentSelectionTest(AnswerTestCase):
         self.assertIn("[구간 1]", prompt)
 
 
+class StandardPassThroughTest(AnswerTestCase):
+    """🔴 관리자 기준은 run 시작에 **한 번** 읽어 후보 생성과 판정에 같은 것을 넘긴다.
+
+    둘은 몇 분 떨어져 돈다. 각자 읽으면 그 사이 관리자가 기준을 고쳤을 때 후보는 옛 기준으로,
+    점수는 새 기준으로 매겨져 추천이 어긋난다(standards.py "한 run 에 한 번 읽는다").
+    """
+
+    MARK = "숫자·조건·기한이 있는 발화를 우선한다 [기준표식]"
+
+    def run_with_spy(self):
+        import json
+
+        seen: list[str | None] = []
+
+        def spy(cfg, question, part_texts, standard=None):
+            seen.append(standard)
+            return _judged()
+
+        plan = {"answerable": True, "reason": "있다", "candidates": [SINGLE, TIGHT]}
+        with (
+            mock.patch.object(routing, "decide", return_value=_decision(routing.RANK)),
+            mock.patch.object(gemini, "generate_json",
+                              return_value=(json.dumps(plan, ensure_ascii=False), usage(), 7)) as llm,
+            mock.patch.object(judge, "judge", side_effect=spy),
+            mock.patch.object(render, "run_for_clip", return_value=Path("clips/clip001.mp4")),
+        ):
+            answer.run(self.conn, self.cfg, self.cluster_id)
+        return llm, seen
+
+    def test_the_candidates_prompt_carries_the_standard(self):
+        standards.save(self.conn, self.MARK)
+        self.conn.commit()
+        llm, _ = self.run_with_spy()
+        self.assertIn("[기준표식]", llm.call_args_list[0].args[1])
+
+    def test_every_judgement_gets_the_same_standard(self):
+        standards.save(self.conn, self.MARK)
+        self.conn.commit()
+        _, seen = self.run_with_spy()
+        self.assertEqual(seen, [self.MARK, self.MARK])
+
+    def test_no_standard_means_nothing_extra_is_sent(self):
+        # 🔴 비어 있으면 프롬프트가 이전과 같아야 한다. 기준 기능을 넣었다고 기존 결과가 흔들리면 안 된다.
+        llm, seen = self.run_with_spy()
+        self.assertNotIn(standards.HEADER.split("—")[0].strip(), llm.call_args_list[0].args[1])
+        self.assertEqual(seen, [None, None])
+
+
 class FailureTest(AnswerTestCase):
     def test_a_failure_returns_the_cluster_to_open(self):
         # 🔴 IN_PROGRESS 로 남으면 크리에이터가 다시 누를 수 없다.
@@ -529,7 +578,7 @@ class BudgetTest(AnswerTestCase):
         # judge 는 실제로 나갈 대사를 봐야 한다. 예산 전 대사를 보면 판정이 거짓이 된다.
         seen: list[list[str]] = []
 
-        def spy(cfg, question, part_texts):
+        def spy(cfg, question, part_texts, standard=None):
             seen.append(part_texts)
             return _judged()
 

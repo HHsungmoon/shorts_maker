@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .. import config
+from .. import config, standards
 from ..adapters import gemini
 
 
@@ -71,14 +71,17 @@ reason 은 왜 그 점수인지 한두 문장.
 규칙:
 - 모든 구간이 excluded 나 ranked 중 정확히 한 곳에 들어가야 한다. 빠뜨리지 마라.
 - idx 는 아래 목록에 있는 번호만 쓴다.
-{criteria_block}
+{standard_block}{criteria_block}
 {context_block}구간 목록:
 {segment_block}"""
 
 CRITERIA_HEADER = "\n무엇을 좋게 볼 것인가:\n"
 
 
-def build_prompt(segments: list[dict], context: str | None, criteria: str | None) -> str:
+def build_prompt(
+    segments: list[dict], context: str | None, criteria: str | None, standard: str | None = None
+) -> str:
+    """`standard` 는 관리자 기준(2층). 비면 그 줄이 빠진다 — standards.py 머리 주석."""
     if not segments:
         raise RankingError("구간이 없다 — 먼저 `sm segment run` 을 돌린다")
     lines = "\n".join(
@@ -88,7 +91,8 @@ def build_prompt(segments: list[dict], context: str | None, criteria: str | None
     criteria_block = f"{CRITERIA_HEADER}{criteria.strip()}\n" if criteria and criteria.strip() else ""
     context_block = f"강연 개요: {context.strip()}\n\n" if context and context.strip() else ""
     return FIXED_PROMPT.format(
-        criteria_block=criteria_block, context_block=context_block, segment_block=lines
+        standard_block=standards.block(standard),
+        criteria_block=criteria_block, context_block=context_block, segment_block=lines,
     )
 
 
@@ -168,7 +172,9 @@ def run_for_source(
         raise RankingError(f"source {source_id} 없음")
 
     segments = load_segments(conn, source_id)
-    prompt = build_prompt(segments, source["context"], criteria)
+    # 🔴 관리자 기준은 run 시작에 한 번 읽는다. 프롬프트 원문이 runs.prompt 에 남으므로
+    # 어떤 기준으로 뽑혔는지가 따로 기록하지 않아도 남는다.
+    prompt = build_prompt(segments, source["context"], criteria, standards.load(conn))
 
     run = conn.execute(
         """insert into runs (source_id, criteria_prompt, prompt, status)
@@ -326,7 +332,7 @@ ANSWER_PROMPT = """아래는 한 영상에서 **이 질문과 관련 있을 만�
 - 조각의 길이 합이 {budget:.0f}초를 넘지 않게 한다.
 - reason 은 왜 이렇게 잘랐는지 한 문장.
 
-{context_block}대사:
+{standard_block}{context_block}대사:
 {body}"""
 
 
@@ -351,7 +357,8 @@ class AnswerPlan:
 
 
 def build_answer_prompt(
-    question: str, lines: list[dict], budget_sec: float, context: str | None, count: int = 3
+    question: str, lines: list[dict], budget_sec: float, context: str | None, count: int = 3,
+    standard: str | None = None,
 ) -> str:
     """`lines` 는 `number_lines()` 가 만든 것 — 구간 머리글과 연속 번호가 붙어 있다.
 
@@ -378,6 +385,7 @@ def build_answer_prompt(
     return ANSWER_PROMPT.format(
         question=question, budget=budget_sec, context_block=context_block,
         body="\n".join(body), count=count, extra=extra,
+        standard_block=standards.block(standard),
     )
 
 
@@ -492,12 +500,14 @@ def parse_answer(raw: str, lines: list[dict]) -> AnswerPlan:
 
 def plan_answer(
     conn, cfg: config.Config, question: str, segments: list[dict], context: str | None,
-    source_id: int | None = None, run_id: int | None = None,
+    source_id: int | None = None, run_id: int | None = None, standard: str | None = None,
 ) -> tuple[AnswerPlan, list[dict]]:
     """질문에 답하는 클립 후보 3개를 받는다. (계획, 번호 매긴 대사)."""
     lines = number_lines(conn, segments)
+    # 🔴 기준은 호출부(answer.py)가 run 시작에 한 번 읽어 넘긴다. 여기서 다시 읽으면 판정과
+    # 몇 분 차이로 다른 기준을 볼 수 있다(standards.py "한 run 에 한 번 읽는다").
     prompt = build_answer_prompt(
-        question, lines, cfg.teaser_max_sec, context, cfg.answer_candidates
+        question, lines, cfg.teaser_max_sec, context, cfg.answer_candidates, standard
     )
     raw, usage, latency_ms = gemini.generate_json(cfg, prompt, ANSWER_SCHEMA)
     conn.execute(
