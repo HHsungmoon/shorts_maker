@@ -61,36 +61,57 @@ export function NewClipTab({ view }: { view: SourceView }) {
 				done={ranked.length > 0}
 				next={nextStep === 5}
 				detail={ranked.length > 0 ? `${ranked.length}개 후보` : "기준에 맞는 구간을 고릅니다"}
-				actions={
-					<>
-						<input
-							className="field__input"
-							style={{ width: "min(340px, 100%)" }}
-							value={criteria}
-							placeholder="비우면 자립성만 봅니다"
-							onChange={(e) => setCriteria(e.target.value)}
-							aria-label="기준 프롬프트"
-						/>
-						<button
-							type="button"
-							className={`button button--small${nextStep === 5 ? " sm-go" : ""}`}
-							disabled={jobBusy || segments.length === 0 || !geminiReady}
-							onClick={() => submit(() => runRank(sourceId, criteria.trim() || null))}
-						>
-							{ranked.length > 0 ? "다시 선정" : "실행"}
-						</button>
-					</>
-				}
-			/>
+			>
+				{/* 🔴 기준은 한 줄로 끝나지 않는다 — 몇 문장짜리 요청이 흔하다. 제목 옆 한 줄 입력칸에
+				    넣었더니 앞부분만 보이고 나머지는 커서를 옮겨 가며 읽어야 했다(2026-09-14). */}
+				<div className="sm-criteria">
+					<textarea
+						className="field__input sm-criteria__input"
+						rows={3}
+						value={criteria}
+						placeholder="클립에 담고 싶은 내용을 작성해 주세요"
+						onChange={(e) => setCriteria(e.target.value)}
+						aria-label="기준 프롬프트"
+					/>
+					<div className="sm-criteria__foot">
+						<span className="sm-meta">
+							비워 두면 기준 없이, 앞뒤 맥락 없이도 이해되는 구간만 고릅니다.
+						</span>
+						{/* 긴 기준을 조금 고쳐 다시 돌리는 일이 잦다. 처음부터 다시 치게 하지 않는다. */}
+						{latestRun?.criteria_prompt && criteria.trim() !== latestRun.criteria_prompt && (
+							<button
+								type="button"
+								className="sm-linkbtn"
+								onClick={() => setCriteria(latestRun.criteria_prompt ?? "")}
+							>
+								지난 기준 불러오기
+							</button>
+						)}
+						<span className="sm-actions sm-actions--end">
+							<button
+								type="button"
+								className={`button button--small${nextStep === 5 ? " sm-go" : ""}`}
+								disabled={jobBusy || segments.length === 0 || !geminiReady}
+								onClick={() => submit(() => runRank(sourceId, criteria.trim() || null))}
+							>
+								{ranked.length > 0 ? "다시 선정" : "실행"}
+							</button>
+						</span>
+					</div>
+				</div>
+			</Step>
 
 			{ranked.length > 0 && (
 				<>
-					<h3 className="section-title">
-						6·7단계 — 구간을 골라 클립을 만들고 렌더합니다
-						{latestRun?.criteria_prompt && (
-							<span className="page-count"> · 기준: {latestRun.criteria_prompt}</span>
-						)}
-					</h3>
+					<h3 className="section-title">6·7단계 — 구간을 골라 클립을 만들고 렌더합니다</h3>
+					{/* 기준이 길면 제목 줄에 붙여 둘 수 없다 — 제목이 서너 줄로 불어난다. 따로 한 줄로 뺀다.
+					    입력칸의 글과 다를 수 있다(고치는 중이면). 아래 후보는 **이 기준**으로 고른 것이다. */}
+					{latestRun && (
+						<p className="sm-criteria__used">
+							<span className="sm-criteria__usedlabel">이 후보들의 기준</span>
+							{latestRun.criteria_prompt ?? "없음 — 앞뒤 맥락 없이도 이해되는지만 봤습니다"}
+						</p>
+					)}
 					{latestRun?.error && <p className="state state--error">{latestRun.error}</p>}
 
 					{ranked.slice(0, showAllRanked ? undefined : RANKED_PREVIEW).map((entry, rank) => {

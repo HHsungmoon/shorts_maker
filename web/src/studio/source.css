@@ -123,6 +123,66 @@
 	color: var(--text-muted);
 }
 
+/* 선정 기준 입력. 몇 문장짜리 요청이 흔해서 처음부터 세 줄을 주고, 쓰는 만큼 늘어난다. */
+.sm-criteria {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sm-criteria__input {
+	width: 100%;
+	font: inherit;
+	font-size: 14px;
+	line-height: 1.6;
+	min-height: calc(1.6em * 3 + 20px);
+	/* 너무 길어지면 아래 후보가 화면 밖으로 밀린다. 거기서부터는 칸 안에서 스크롤한다. */
+	max-height: 50vh;
+	resize: vertical;
+	/* 글 길이만큼 자란다. 지원하지 않는 브라우저는 세 줄 + 손잡이로 늘리는 방식으로 떨어진다. */
+	field-sizing: content;
+}
+
+.sm-criteria__foot {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+/* 버튼 테두리를 두르면 [실행] 과 같은 무게로 읽힌다. 보조 동작이라 글자 링크로 둔다. */
+.sm-linkbtn {
+	padding: 0;
+	border: none;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	color: var(--accent);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+/* 지금 보이는 후보를 고를 때 쓴 기준. 입력칸의 글과 다를 수 있어서 따로 보여준다. */
+.sm-criteria__used {
+	margin: -4px 0 12px;
+	padding: 8px 12px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	font-size: 13px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.sm-criteria__usedlabel {
+	display: block;
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-bottom: 2px;
+}
+
 /* 탭 -------------------------------------------------------------------- */
 
 /* 세로로 쌓여 있던 여섯 덩어리를 넷으로 갈랐다. 쓰는 빈도가 다르기 때문이다 — 질문은 매일,

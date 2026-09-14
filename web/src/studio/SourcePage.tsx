@@ -24,7 +24,9 @@ import type {
 } from "./types";
 import "./source.css";
 
-const DEFAULT_CRITERIA = "한 문장으로 인용할 만한 핵심 논지";
+// 🔴 빈 칸으로 시작한다. 예전엔 "한 문장으로 인용할 만한 핵심 논지" 가 **값**으로 채워져 있어서
+// 입력 안내처럼 보이는데 실제로는 그대로 기준으로 나갔다. 안내 문구는 입력칸의 placeholder 가 맡는다.
+const DEFAULT_CRITERIA = "";
 
 type RankedPayload = NonNullable<ShortsRun["ranked"]>;
 export type RankedEntry = NonNullable<RankedPayload["ranked"]>[number];
