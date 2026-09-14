@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
 	aggregateQuestions,
 	answerCluster,
@@ -28,6 +29,17 @@ const STATUS_LABEL: Record<ShortsCluster["status"], string> = {
 	UNANSWERABLE: "답할 구간 없음",
 };
 
+/**
+ * 목록 위 거르개. 상태 여섯 개를 그대로 칩으로 늘어놓으면 고르는 일 자체가 일이 된다 —
+ * 크리에이터가 실제로 묻는 건 "지금 내가 손댈 게 뭐냐 / 나간 게 뭐냐 / 접어 둔 게 뭐냐" 셋이다.
+ */
+const FILTERS: { key: string; label: string; statuses: ShortsCluster["status"][] | null }[] = [
+	{ key: "all", label: "전체", statuses: null },
+	{ key: "todo", label: "할 일", statuses: ["OPEN", "IN_PROGRESS", "REVIEW"] },
+	{ key: "published", label: "발행됨", statuses: ["PUBLISHED"] },
+	{ key: "closed", label: "보류·답 없음", statuses: ["DECLINED", "UNANSWERABLE"] },
+];
+
 interface ClusterPanelProps {
 	sourceId: number;
 	/** 비공개면 시청자 화면에 안 보이니 질문이 애초에 들어올 수 없다. 빈 화면의 이유를 이걸로 설명한다. */
@@ -45,6 +57,13 @@ interface ClusterPanelProps {
 	onChanged: () => void;
 }
 
+/**
+ * 시청자 질문 — **왼쪽 목록 · 오른쪽 상세.**
+ *
+ * 🔴 예전에는 질문마다 후보 3개와 클립을 통째로 펼쳐 세로로 쌓았다. 질문 하나가 화면 몇 개
+ * 길이가 되어서 "질문이 몇 개고 각각 어디까지 왔나" 를 보려면 끝까지 스크롤해야 했다
+ * (2026-09-14 사용자 피드백). 목록은 **상태를 훑는 자리**, 상세는 **한 질문을 끝내는 자리**로 가른다.
+ */
 export function ClusterPanel({
 	sourceId,
 	published,
@@ -53,17 +72,51 @@ export function ClusterPanel({
 	onJob,
 	onChanged,
 }: ClusterPanelProps) {
-	const [open, setOpen] = useState<number | null>(null);
 	const [editing, setEditing] = useState<number | null>(null);
 	const [draft, setDraft] = useState("");
 	const [saving, setSaving] = useState(false);
 	// 지금 요청이 날아가 있는 클러스터. 발행/보류/다시 열기가 겹쳐 눌리는 걸 막는다.
 	const [pending, setPending] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [filter, setFilter] = useState("all");
+	// 🔴 고른 질문은 URL 에 둔다(`?cluster=12`). 로컬 state 로 두면 새로고침하면 첫 질문으로
+	// 돌아가고, 링크로 "이 질문 좀 봐 줘" 를 건넬 수도 없다. replace 로 바꿔서 목록을 훑는 동안
+	// 뒤로가기 기록이 쌓이지 않게 한다.
+	const [params, setParams] = useSearchParams();
+	const detailRef = useRef<HTMLDivElement>(null);
 
 	const clusters = list.data?.clusters ?? [];
 	const unclustered = list.data?.unclustered ?? [];
 	const total = clusters.reduce((n, c) => n + c.question_count, 0) + unclustered.length;
+
+	const activeFilter = FILTERS.find((f) => f.key === filter) ?? FILTERS[0];
+	const inFilter = (c: ShortsCluster, f = activeFilter) =>
+		f.statuses === null || f.statuses.includes(c.status);
+	const visible = clusters.filter((c) => inFilter(c));
+	const wanted = Number(params.get("cluster"));
+	// 고른 게 거르개에 가려지면 보이는 첫 줄로 넘어간다 — 목록에 표시가 없는 질문을 오른쪽에
+	// 띄워 두면 "지금 뭘 보고 있나" 가 목록과 어긋난다.
+	const current = visible.find((c) => c.id === wanted) ?? visible[0] ?? null;
+
+	function select(clusterId: number) {
+		// 다른 질문으로 옮기면 쓰던 편집과 앞 질문의 오류는 버린다 — 남겨 두면 엉뚱한 질문에 붙어 보인다.
+		setEditing(null);
+		setError(null);
+		setParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				next.set("cluster", String(clusterId));
+				return next;
+			},
+			{ replace: true },
+		);
+		// 좁은 화면에서는 상세가 목록 **아래**로 내려간다. 눌러도 아무 일 없어 보이지 않게 데려간다.
+		if (window.matchMedia("(max-width: 860px)").matches) {
+			requestAnimationFrame(() =>
+				detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+			);
+		}
+	}
 
 	// 🔴 대표 문장은 사람이 고치는 게 유일한 경로다. 재집계는 증분이라 이미 붙은 질문을 건드리지
 	// 않고, 서버도 자동 재작성을 하지 않는다(answers/clusters.rename) — 여기서 안 고치면 처음
@@ -124,163 +177,249 @@ export function ClusterPanel({
 			</div>
 
 			{list.error && <p className="state state--error">{list.error.message}</p>}
-			{error && <p className="state state--error">{error}</p>}
 
 			{list.data && total === 0 && (
-				<p className="sm-meta">
+				<p className="sm-qempty">
 					아직 시청자가 남긴 질문이 없습니다.
 					{!published && " 이 영상을 시청자에게 공개해야 질문을 받을 수 있습니다."}
 				</p>
 			)}
 
-			{clusters.map((cluster) => (
-				<article className="sm-cluster" key={cluster.id}>
-					<div className="sm-cluster__head">
-						{editing === cluster.id ? (
-							<div className="sm-cluster__editor">
-								<textarea
-									className="field__input"
-									value={draft}
-									onChange={(e) => setDraft(e.target.value)}
-									aria-label="대표 문장"
-								/>
-								<span className="sm-actions">
+			{(clusters.length > 0 || unclustered.length > 0) && (
+				<div className="sm-qsplit">
+					{/* 왼쪽 — 질문 목록 ---------------------------------------------------- */}
+					<nav className="sm-qlist" aria-label="질문 목록">
+						<div className="sm-qfilter" role="tablist">
+							{FILTERS.map((f) => {
+								const count = clusters.filter((c) => inFilter(c, f)).length;
+								return (
 									<button
+										key={f.key}
 										type="button"
-										className="button button--small sm-go"
-										disabled={saving || draft.trim() === ""}
-										onClick={() => save(cluster.id)}
+										role="tab"
+										aria-selected={filter === f.key}
+										className={`sm-qfilter__chip${filter === f.key ? " sm-qfilter__chip--on" : ""}`}
+										onClick={() => setFilter(f.key)}
 									>
-										저장
+										{f.label} <span className="sm-qfilter__n">{count}</span>
 									</button>
-									<button
-										type="button"
-										className="button button--small"
-										disabled={saving}
-										onClick={() => setEditing(null)}
-									>
-										취소
-									</button>
-								</span>
-							</div>
+								);
+							})}
+						</div>
+
+						{visible.length === 0 && clusters.length > 0 && (
+							<p className="sm-qlist__empty">여기에 해당하는 질문이 없습니다</p>
+						)}
+
+						<ul className="sm-qlist__items">
+							{visible.map((cluster) => {
+								const on = current?.id === cluster.id;
+								return (
+									<li key={cluster.id}>
+										<button
+											type="button"
+											className={`sm-qitem${on ? " sm-qitem--on" : ""}`}
+											aria-current={on ? "true" : undefined}
+											onClick={() => select(cluster.id)}
+										>
+											<span className="sm-qitem__text">{cluster.canonical_text}</span>
+											<span className="sm-qitem__meta">
+												<span className={`sm-status sm-status--${badge(cluster.status)}`}>
+													{STATUS_LABEL[cluster.status]}
+												</span>
+												<span>
+													질문 {cluster.question_count} · 좋아요 {cluster.like_count}
+												</span>
+											</span>
+										</button>
+									</li>
+								);
+							})}
+						</ul>
+
+						{unclustered.length > 0 && (
+							<details className="sm-qlist__loose">
+								<summary>아직 안 묶인 질문 {unclustered.length}개</summary>
+								<ul className="sm-cluster__questions">
+									{unclustered.map((q) => (
+										<li key={q.id}>
+											{q.text} <span className="sm-meta">· 좋아요 {q.likes}</span>
+										</li>
+									))}
+								</ul>
+								<p className="sm-meta">[집계] 를 누르면 비슷한 질문끼리 묶여 목록에 올라옵니다.</p>
+							</details>
+						)}
+					</nav>
+
+					{/* 오른쪽 — 고른 질문 하나 ------------------------------------------------ */}
+					<div className="sm-qdetail" ref={detailRef}>
+						{error && <p className="sm-qdetail__error">{error}</p>}
+						{current ? (
+							<ClusterDetail
+								key={current.id}
+								cluster={current}
+								sourceId={sourceId}
+								busy={busy}
+								pending={pending === current.id}
+								editing={editing === current.id}
+								draft={draft}
+								saving={saving}
+								onDraft={setDraft}
+								onEdit={() => {
+									setEditing(current.id);
+									setDraft(current.canonical_text);
+									setError(null);
+								}}
+								onCancelEdit={() => setEditing(null)}
+								onSave={() => save(current.id)}
+								onJob={onJob}
+								onAct={(run) => act(current.id, run)}
+							/>
 						) : (
-							<>
-								{/* 질문 문장이 첫 줄을 통째로 쓴다. 배지·버튼과 같은 줄에 두면 오른쪽 끝이
-								    붐벼서 정작 읽어야 할 문장이 뒤로 밀린다. */}
-								<button
-									type="button"
-									className="sm-cluster__toggle"
-									onClick={() => setOpen(open === cluster.id ? null : cluster.id)}
-								>
-									<span className="sm-cluster__mark">{open === cluster.id ? "▾" : "▸"}</span>
-									{cluster.canonical_text}
-								</button>
-								<div className="sm-cluster__row">
-									<span className="sm-meta">
-										질문 {cluster.question_count} · 좋아요 {cluster.like_count}
-									</span>
-									<span className={`sm-status sm-status--${badge(cluster.status)}`}>
-										{STATUS_LABEL[cluster.status]}
-									</span>
-									{/* 상태가 곧 다음 행동이다 — 무엇을 누를 수 있는지 배지 옆에서 바로 끝난다. */}
-									{cluster.status === "OPEN" && (
-										<button
-											type="button"
-											className="button button--small sm-go"
-											disabled={busy}
-											title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : undefined}
-											onClick={() => onJob(() => answerCluster(cluster.id))}
-										>
-											답하기
-										</button>
-									)}
-									{cluster.status === "IN_PROGRESS" && <span className="sm-meta">만드는 중…</span>}
-									{/* 보류(DECLINED)와 답할 구간 없음(UNANSWERABLE)은 둘 다 되돌릴 수 있는 상태다
-									    (answers/clusters.TRANSITIONS). 화면에 길을 두지 않으면 한 번 보류한 질문이
-									    영원히 묻힌다 — 대표 문장을 고치거나 구간을 더 나눈 뒤 다시 시도할 수 있어야 한다. */}
-									{(cluster.status === "UNANSWERABLE" || cluster.status === "DECLINED") && (
-										<button
-											type="button"
-											className="button button--small"
-											disabled={pending === cluster.id}
-											onClick={() =>
-												act(cluster.id, () => patchCluster(cluster.id, { status: "OPEN" }))
-											}
-										>
-											다시 열기
-										</button>
-									)}
-									<button
-										type="button"
-										className="button button--small"
-										onClick={() => {
-											setEditing(cluster.id);
-											setDraft(cluster.canonical_text);
-											setError(null);
-										}}
-									>
-										고치기
-									</button>
-								</div>
-							</>
+							<p className="sm-qdetail__placeholder">
+								{clusters.length === 0
+									? "아직 묶인 질문이 없습니다. [집계] 를 누르면 목록이 생깁니다."
+									: "왼쪽에서 질문을 고르세요."}
+							</p>
 						)}
 					</div>
+				</div>
+			)}
+		</section>
+	);
+}
 
-					{/* 🔴 `답할 구간 없음` 배지만 보면 크리에이터는 아무것도 알 수 없다 — 영상이 정말 그
-					    주제를 안 다룬 건지, 검색이 엉뚱한 구간을 본 건지 구분이 안 된다. 실패가 아니라
-					    정직한 결과이므로 오류 상자가 아니라 옅은 본문으로 둔다. */}
-					{cluster.status === "UNANSWERABLE" && cluster.run_note && (
-						<p className="sm-cluster__why">{cluster.run_note}</p>
-					)}
-					{/* 이쪽은 진짜 실패다. 상태와 무관하게 보여준다 — 실패한 run 은 상태를 못 옮긴다. */}
-					{cluster.run_error && (
-						<p className="sm-cluster__why sm-cluster__why--error">{cluster.run_error}</p>
-					)}
+interface ClusterDetailProps {
+	cluster: ShortsCluster;
+	sourceId: number;
+	busy: boolean;
+	pending: boolean;
+	editing: boolean;
+	draft: string;
+	saving: boolean;
+	onDraft: (text: string) => void;
+	onEdit: () => void;
+	onCancelEdit: () => void;
+	onSave: () => void;
+	onJob: (start: () => Promise<ShortsJob>) => void;
+	onAct: (run: () => Promise<unknown>) => void;
+}
 
-					{/* 🔴 후보가 클립보다 **먼저** 온다. 아직 아무것도 안 만든 상태에서는 이게 유일한
-					    내용이고, 만든 뒤에도 남겨 둔다 — 다른 후보로 바꿔 볼 수 있어야 한다. */}
-					{cluster.status === "REVIEW" && (
-						<CandidatePicker
-							candidates={cluster.candidates}
-							busy={pending === cluster.id}
-							onBuild={(candidateId) =>
-								act(cluster.id, () => buildCandidate(candidateId))
-							}
+/** 질문 하나를 끝내는 자리. 위에서 아래로 "무엇을 묻나 → 지금 어디까지 → 결과 → 다른 선택지" 순이다. */
+function ClusterDetail({
+	cluster,
+	sourceId,
+	busy,
+	pending,
+	editing,
+	draft,
+	saving,
+	onDraft,
+	onEdit,
+	onCancelEdit,
+	onSave,
+	onJob,
+	onAct,
+}: ClusterDetailProps) {
+	const showClip =
+		cluster.clip !== null && (cluster.status === "REVIEW" || cluster.status === "PUBLISHED");
+	return (
+		<article className="sm-qd">
+			<header className="sm-qd__head">
+				<div className="sm-qd__top">
+					<span className={`sm-status sm-status--${badge(cluster.status)}`}>
+						{STATUS_LABEL[cluster.status]}
+					</span>
+					<span className="sm-meta">
+						질문 {cluster.question_count} · 좋아요 {cluster.like_count}
+					</span>
+				</div>
+
+				{editing ? (
+					<div className="sm-cluster__editor">
+						<textarea
+							className="field__input"
+							value={draft}
+							onChange={(e) => onDraft(e.target.value)}
+							aria-label="대표 문장"
 						/>
-					)}
+						<span className="sm-actions">
+							<button
+								type="button"
+								className="button button--small sm-go"
+								disabled={saving || draft.trim() === ""}
+								onClick={onSave}
+							>
+								저장
+							</button>
+							<button
+								type="button"
+								className="button button--small"
+								disabled={saving}
+								onClick={onCancelEdit}
+							>
+								취소
+							</button>
+						</span>
+					</div>
+				) : (
+					<h3 className="sm-qd__title">{cluster.canonical_text}</h3>
+				)}
 
-					{/* 발행 전 검토와 발행 뒤 확인이 같은 자리다. 발행된 클립도 계속 보여준다 —
-					    "지금 시청자에게 나가 있는 게 뭔가"를 여기 말고 볼 데가 없다. */}
-					{cluster.clip && (cluster.status === "REVIEW" || cluster.status === "PUBLISHED") && (
-						<ClusterClip
-							clip={cluster.clip}
-							sourceId={sourceId}
-							status={cluster.status}
-							busy={pending === cluster.id}
-							onPublish={(next, clipId) => act(cluster.id, () => publishClip(clipId, next))}
-							onDecline={() =>
-								act(cluster.id, () => patchCluster(cluster.id, { status: "DECLINED" }))
-							}
-						/>
-					)}
+				{!editing && (
+					<div className="sm-actions">
+						{/* 상태가 곧 다음 행동이다 — 무엇을 누를 수 있는지 제목 바로 아래에서 끝난다. */}
+						{cluster.status === "OPEN" && (
+							<button
+								type="button"
+								className="button button--small sm-go"
+								disabled={busy}
+								title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : undefined}
+								onClick={() => onJob(() => answerCluster(cluster.id))}
+							>
+								답하기
+							</button>
+						)}
+						{cluster.status === "IN_PROGRESS" && <span className="sm-meta">만드는 중…</span>}
+						{/* 보류(DECLINED)와 답할 구간 없음(UNANSWERABLE)은 둘 다 되돌릴 수 있는 상태다
+						    (answers/clusters.TRANSITIONS). 화면에 길을 두지 않으면 한 번 보류한 질문이
+						    영원히 묻힌다 — 대표 문장을 고치거나 구간을 더 나눈 뒤 다시 시도할 수 있어야 한다. */}
+						{(cluster.status === "UNANSWERABLE" || cluster.status === "DECLINED") && (
+							<button
+								type="button"
+								className="button button--small"
+								disabled={pending}
+								onClick={() => onAct(() => patchCluster(cluster.id, { status: "OPEN" }))}
+							>
+								다시 열기
+							</button>
+						)}
+						<button type="button" className="button button--small" onClick={onEdit}>
+							대표 문장 고치기
+						</button>
+					</div>
+				)}
+			</header>
 
-					{open === cluster.id && (
-						<ul className="sm-cluster__questions">
-							{cluster.questions.map((q) => (
-								<li key={q.id}>
-									{q.text} <span className="sm-meta">· 좋아요 {q.likes}</span>
-								</li>
-							))}
-						</ul>
-					)}
-				</article>
-			))}
+			{/* 🔴 `답할 구간 없음` 배지만 보면 크리에이터는 아무것도 알 수 없다 — 영상이 정말 그
+			    주제를 안 다룬 건지, 검색이 엉뚱한 구간을 본 건지 구분이 안 된다. 실패가 아니라
+			    정직한 결과이므로 오류 상자가 아니라 옅은 본문으로 둔다. */}
+			{cluster.status === "UNANSWERABLE" && cluster.run_note && (
+				<p className="sm-qd__why">{cluster.run_note}</p>
+			)}
+			{/* 이쪽은 진짜 실패다. 상태와 무관하게 보여준다 — 실패한 run 은 상태를 못 옮긴다. */}
+			{cluster.run_error && (
+				<p className="sm-qd__why sm-qd__why--error">{cluster.run_error}</p>
+			)}
 
-			{unclustered.length > 0 && (
-				<details className="sm-fold" style={{ marginTop: 12 }}>
-					<summary>아직 안 묶인 질문 {unclustered.length}개</summary>
-					<ul className="sm-cluster__questions" style={{ paddingLeft: 18 }}>
-						{unclustered.map((q) => (
+			{/* 시청자가 실제로 쓴 문장. 대표 문장은 LLM 이 지은 것이라, 고치기 전에 원문을 볼 수 있어야 한다.
+			    묶인 게 하나뿐이면 대표 문장과 거의 같아서 접어 둔다. */}
+			{cluster.questions.length > 0 && (
+				<details className="sm-qd__asked" open={cluster.questions.length > 1}>
+					<summary>시청자가 쓴 질문 {cluster.questions.length}개</summary>
+					<ul className="sm-cluster__questions">
+						{cluster.questions.map((q) => (
 							<li key={q.id}>
 								{q.text} <span className="sm-meta">· 좋아요 {q.likes}</span>
 							</li>
@@ -288,7 +427,43 @@ export function ClusterPanel({
 					</ul>
 				</details>
 			)}
-		</section>
+
+			{/* 발행 전 검토와 발행 뒤 확인이 같은 자리다. 발행된 클립도 계속 보여준다 —
+			    "지금 시청자에게 나가 있는 게 뭔가"를 여기 말고 볼 데가 없다.
+			    🔴 만든 클립이 후보보다 **위**다. 한 질문씩 보는 화면이 되면서 후보 셋(대사 전문)을 다
+			    지나야 [발행] 이 나오던 것을 뒤집었다. 아직 안 만들었으면 후보가 곧 첫 내용이다. */}
+			{showClip && cluster.clip && (
+				<section className="sm-qd__section">
+					<h4 className="sm-qd__label">
+						{cluster.status === "PUBLISHED" ? "시청자에게 나간 숏폼" : "만든 숏폼"}
+					</h4>
+					<ClusterClip
+						clip={cluster.clip}
+						sourceId={sourceId}
+						status={cluster.status}
+						busy={pending}
+						onPublish={(next, clipId) => onAct(() => publishClip(clipId, next))}
+						onDecline={() => onAct(() => patchCluster(cluster.id, { status: "DECLINED" }))}
+					/>
+				</section>
+			)}
+
+			{/* 후보는 만든 뒤에도 남겨 둔다 — 다른 후보로 바꿔 볼 수 있어야 한다. */}
+			{cluster.status === "REVIEW" && (
+				<CandidatePicker
+					candidates={cluster.candidates}
+					hasClip={showClip}
+					busy={pending}
+					onBuild={(candidateId) => onAct(() => buildCandidate(candidateId))}
+				/>
+			)}
+
+			{cluster.status === "OPEN" && cluster.candidates.length === 0 && (
+				<p className="sm-qd__placeholder">
+					아직 답을 만들지 않았습니다. [답하기] 를 누르면 영상에서 답이 될 구간을 찾아 후보를 만듭니다.
+				</p>
+			)}
+		</article>
 	);
 }
 
@@ -309,7 +484,7 @@ function ClusterClip({ clip, sourceId, status, busy, onPublish, onDecline }: Clu
 	return (
 		<div className={`sm-cluster__clip${ng ? " sm-cluster__clip--ng" : ""}`}>
 			{clip.rendered ? (
-				<ClipVideo src={clipUrl(clip.id)} width={180} />
+				<ClipVideo src={clipUrl(clip.id)} width={160} />
 			) : (
 				<p className="sm-meta">아직 렌더되지 않아 재생할 수 없습니다</p>
 			)}
@@ -344,10 +519,9 @@ function ClusterClip({ clip, sourceId, status, busy, onPublish, onDecline }: Clu
 				{clip.llmNote && (
 					<p className={`sm-cluster__note${ng ? " sm-cluster__note--ng" : ""}`}>{clip.llmNote}</p>
 				)}
-				{clip.reason && <p className="sm-meta">{clip.reason}</p>}
+				{clip.reason && <p className="sm-cluster__reason">{clip.reason}</p>}
 
-
-				<div className="sm-actions">
+				<div className="sm-actions sm-cluster__clipactions">
 					{status === "REVIEW" ? (
 						<>
 							{/* NG 에는 강조를 빼서 손이 먼저 가지 않게 한다. 막지는 않는다 — 판정은 LLM 이고
@@ -413,10 +587,13 @@ function badge(status: ShortsCluster["status"]): string {
  */
 function CandidatePicker({
 	candidates,
+	hasClip,
 	busy,
 	onBuild,
 }: {
 	candidates: ShortsCandidate[];
+	/** 이미 하나로 만들었는가. 그러면 이 블록은 "처음 고르기" 가 아니라 "다른 걸로 바꿔 보기" 다. */
+	hasClip: boolean;
 	busy: boolean;
 	onBuild: (candidateId: number) => void;
 }) {
@@ -424,15 +601,18 @@ function CandidatePicker({
 		return null;
 	}
 	return (
-		<div className="sm-cands">
+		<section className="sm-qd__section sm-cands">
+			<h4 className="sm-qd__label">
+				{hasClip ? `다른 후보 ${candidates.length}개` : `후보 ${candidates.length}개 — 하나를 고르세요`}
+			</h4>
 			<p className="sm-cands__lead">
 				답이 될 만한 방식 {candidates.length}가지를 만들고 판정까지 마쳤습니다. 대사를 읽어 보고
-				하나를 고르세요. <span className="sm-meta">고르는 데는 비용이 들지 않습니다.</span>
+				하나를 고르세요. 고르는 데는 비용이 들지 않습니다.
 			</p>
 			{candidates.map((candidate) => (
 				<CandidateCard key={candidate.id} candidate={candidate} busy={busy} onBuild={onBuild} />
 			))}
-		</div>
+		</section>
 	);
 }
 
@@ -457,12 +637,12 @@ function CandidateCard({
 					{Math.round(candidate.totalSec)}초
 					{candidate.parts.length > 1 && ` · ${candidate.parts.length}조각을 이어붙임`}
 				</span>
-				{candidate.recommended && <span className="sm-badge">추천</span>}
-				{candidate.chosen && <span className="sm-badge">선택함</span>}
+				{candidate.recommended && <span className="sm-cand__flag">추천</span>}
+				{candidate.chosen && <span className="sm-cand__flag sm-cand__flag--chosen">선택함</span>}
 				{/* 떨어진 관문만 표시한다. 통과한 것에 O 를 잔뜩 붙이면 실패가 눈에 안 띈다. */}
 				{candidate.standalone === false && <span className="tag tag--rejected">앞뒤 맥락 필요</span>}
 				{candidate.answers === false && <span className="tag tag--rejected">답이 아님</span>}
-				{candidate.score !== null && <span className="sm-meta">{candidate.score}점</span>}
+				{candidate.score !== null && <span className="sm-cand__score">{candidate.score}점</span>}
 			</header>
 
 			{/* 🔴 **대사 전문.** 이게 이 카드의 본체다. 조각이 여럿이면 사이에 표시를 넣는다 —
