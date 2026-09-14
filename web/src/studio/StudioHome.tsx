@@ -112,6 +112,10 @@ export function StudioHome() {
 	return (
 		<div className="page">
 			<StudioHead title={PRODUCT_NAME} count={items.length > 0 ? `영상 ${items.length}개` : undefined}>
+				{/* 관리자 기준은 모든 영상에 걸린다 — 영상 페이지가 아니라 여기서 들어간다. */}
+				<Link to="/prompts" className="button button--small">
+					프롬프트
+				</Link>
 				<button
 					type="button"
 					className="button button--small sm-go"
