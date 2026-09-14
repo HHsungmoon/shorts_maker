@@ -1,0 +1,113 @@
+/* 프롬프트 화면.
+ *
+ * 🔴 칸의 색은 **층**을 뜻한다. 원문 안에서 "여기는 누가 채우나" 가 한눈에 보여야 한다 —
+ * 고칠 수 있는 칸(관리자 기준·영상 개요)만 강조색을 쓰고, 나머지는 옅게 둔다. */
+
+.pr-standard {
+	margin-bottom: 28px;
+}
+
+.pr-standard__input {
+	width: 100%;
+	box-sizing: border-box;
+	margin: 8px 0;
+	padding: 10px 12px;
+	font: inherit;
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	resize: vertical;
+}
+
+.pr-counter--over {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.pr-stage {
+	margin: 14px 0;
+	padding: 12px 14px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.pr-stage__name {
+	font-weight: 600;
+	font-size: 14px;
+}
+
+/* 관리자 기준이 들어가는지. 들어가는 곳만 색을 준다 — 안 들어가는 곳이 더 많아 보이면 안 된다. */
+.pr-badge {
+	font-size: 12px;
+	padding: 1px 8px;
+	border-radius: 999px;
+	color: var(--text-muted);
+	border: 1px solid var(--border);
+}
+
+.pr-badge--on {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+/* 칸 — 층마다 다르게. */
+.pr-slot {
+	border-radius: 4px;
+	padding: 0 3px;
+	font-weight: 600;
+	white-space: pre-wrap;
+}
+
+.pr-slot--rule {
+	color: var(--text);
+	font-weight: 400;
+}
+
+/* 2층 — 이 화면에서 고친다. 가장 눈에 띈다. */
+.pr-slot--standard {
+	color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* 3층 — 영상 준비 탭에서 고친다. */
+.pr-slot--context {
+	color: var(--accent);
+	border-bottom: 1px dashed var(--accent);
+}
+
+/* 4층 — 매번 들어오는 요청. */
+.pr-slot--request {
+	color: var(--text);
+	border: 1px solid var(--border);
+}
+
+/* 자동 — 사람이 채우지 않는다. 옅게. */
+.pr-slot--auto {
+	color: var(--text-muted);
+	font-weight: 400;
+	font-style: italic;
+}
+
+/* 영상 준비 탭의 개요 칸. */
+.sm-context {
+	margin: 8px 0 14px 34px;
+}
+
+.sm-context textarea {
+	width: 100%;
+	box-sizing: border-box;
+	margin: 6px 0;
+	padding: 8px 10px;
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	resize: vertical;
+}

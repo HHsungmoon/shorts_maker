@@ -1,4 +1,5 @@
-import { createChunk, publishSource, runSegment, runStt } from "../api";
+import { useState } from "react";
+import { createChunk, publishSource, runSegment, runStt, saveSourceContext } from "../api";
 import { Step } from "./Step";
 import { time } from "../../shared/format";
 import type { SourceView } from "../SourcePage";
@@ -89,6 +90,17 @@ export function PrepareTab({ view }: { view: SourceView }) {
 					)
 				}
 			/>
+
+			{/* 영상 개요(프롬프트 3층). 단계가 아니라서 번호를 주지 않는다 — 비어 있어도 다음으로 갈 수 있다. */}
+			{data && (
+				<ContextEditor
+					key={data.source.id}
+					sourceId={data.source.id}
+					saved={data.source.context}
+					disabled={jobBusy}
+					onSaved={reload}
+				/>
+			)}
 
 			<Step
 				no={2}
@@ -307,5 +319,78 @@ function TimeField({
 			/>
 			<span className="sm-meta">초</span>
 		</span>
+	);
+}
+
+
+/**
+ * 영상 개요 — 이 영상이 무엇인지 한두 문장(프롬프트 3층).
+ *
+ * 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 그래서 짧아야 하고(500자) 사실만 적는다 —
+ * "무엇을 좋게 볼지" 는 여기가 아니라 프롬프트 화면의 관리자 기준에 적는다.
+ *
+ * 🔴 **이미 나눈 구간에는 반영되지 않는다.** 구간은 캐시된 자산이라 다시 나누기 전까지 그대로다.
+ */
+function ContextEditor({
+	sourceId,
+	saved,
+	disabled,
+	onSaved,
+}: {
+	sourceId: number;
+	saved: string | null;
+	disabled: boolean;
+	onSaved: () => void;
+}) {
+	const [draft, setDraft] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const text = draft ?? saved ?? "";
+	const dirty = text.trim() !== (saved ?? "").trim();
+	const over = text.trim().length > 500;
+
+	const save = async () => {
+		setBusy(true);
+		setError(null);
+		try {
+			await saveSourceContext(sourceId, text);
+			setDraft(null);
+			onSaved();
+		} catch (e: unknown) {
+			setError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<section className="sm-context">
+			<span className="sm-step__title">영상 개요</span>{" "}
+			<span className="sm-meta">
+				이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 반영되고, 이미 나눈 구간에는 반영되지
+				않습니다.
+			</span>
+			<textarea
+				rows={2}
+				value={text}
+				maxLength={600}
+				placeholder="예) 쏘카 개발·프로덕트·데이터 직군 채용설명회. CTO 발표와 본부장 패널 토크."
+				onChange={(event) => setDraft(event.target.value)}
+			/>
+			<div className="sm-actions">
+				<span className={`sm-meta${over ? " pr-counter--over" : ""}`}>{text.trim().length} / 500자</span>
+				<span className="sm-actions sm-actions--end">
+					<button
+						type="button"
+						className="button button--small"
+						onClick={save}
+						disabled={disabled || busy || over || !dirty}
+					>
+						{busy ? "저장 중…" : "개요 저장"}
+					</button>
+				</span>
+			</div>
+			{error && <p className="state state--error">{error}</p>}
+		</section>
 	);
 }

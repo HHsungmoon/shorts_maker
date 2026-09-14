@@ -1,5 +1,7 @@
 import { request } from "../shared/client";
 import type {
+	PromptCatalog,
+	PromptStandard,
 	ShortsClip,
 	ShortsCluster,
 	ShortsClusterList,
@@ -246,4 +248,29 @@ export function buildCandidate(candidateId: number): Promise<ShortsJob> {
 /** 회차 리포트 — 이 설명회가 답한 것과 답하지 않은 것. */
 export function fetchReport(sourceId: number): Promise<ShortsReport> {
 	return request<ShortsReport>(`/api/sources/${sourceId}/report`);
+}
+
+
+/** 프롬프트 목록 — 무엇이 고정(1층)이고 무엇을 누가 채우는가. */
+export function fetchPrompts(): Promise<PromptCatalog> {
+	return request<PromptCatalog>("/api/prompts");
+}
+
+/**
+ * 관리자 기준 저장. 🔴 서버는 **덧붙인다** — 고친 이력이 남는다. 빈 글은 기준을 지운다.
+ * 다음 답하기·클립 만들기부터 반영되고 이미 만든 것은 그대로다.
+ */
+export function saveStandard(body: string): Promise<PromptStandard> {
+	return request<PromptStandard>("/api/prompts/standard", { method: "PUT", body: { body } });
+}
+
+/** 영상 개요. 🔴 이미 나눈 구간에는 반영되지 않는다. */
+export function saveSourceContext(
+	sourceId: number,
+	context: string,
+): Promise<{ id: number; context: string | null }> {
+	return request<{ id: number; context: string | null }>(`/api/sources/${sourceId}`, {
+		method: "PATCH",
+		body: { context },
+	});
 }

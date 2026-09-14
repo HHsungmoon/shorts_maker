@@ -38,6 +38,11 @@ export interface ShortsSource {
 	/** 유튜브에서 받았으면 영상 id. 없으면 시청자 화면이 임베드 플레이어를 못 띄운다. */
 	youtube_id: string | null;
 	channel: string | null;
+	/**
+	 * 영상 개요(프롬프트 3층). 구간 분할·순위·자르기·후보 생성에 붙는다.
+	 * 🔴 이미 나눈 구간에는 반영되지 않는다 — 구간은 캐시된 자산이다.
+	 */
+	context: string | null;
 }
 
 /**
@@ -425,4 +430,47 @@ export interface ShortsReportCost {
 	attempted: number;
 	perQuestionKrw: number | null;
 	note: string;
+}
+
+
+// ---------------------------------------------------------------- 프롬프트 (GET /api/prompts)
+
+/** 프롬프트 층. 1층 규칙은 코드라 고칠 수 없고 보기만 한다. */
+export type PromptLayerKey = "rule" | "standard" | "context" | "request" | "auto";
+
+export interface PromptLayer {
+	key: PromptLayerKey;
+	label: string;
+	who: string;
+	editable: boolean;
+	note: string;
+}
+
+/** 템플릿 원문 조각. 글이거나 칸이다. 서버가 `string.Formatter` 로 쪼갠 것이라 원문과 정확히 같다. */
+export type PromptPart =
+	| { kind: "text"; text: string }
+	| { kind: "slot"; name: string; spec: string; conversion: string; layer: PromptLayerKey };
+
+export interface PromptStage {
+	key: string;
+	name: string;
+	/** 영상 준비 · 기준 경로 · 질문 경로 */
+	path: string;
+	module: string;
+	why: string;
+	/** 🔴 원문에 관리자 기준 칸이 있는가. 따로 적은 표시가 아니라 원문에서 판단한 값이다. */
+	usesStandard: boolean;
+	parts: PromptPart[];
+}
+
+export interface PromptStandard {
+	body: string;
+	updatedAt: string | null;
+	maxChars: number;
+}
+
+export interface PromptCatalog {
+	layers: PromptLayer[];
+	stages: PromptStage[];
+	standard: PromptStandard;
 }
