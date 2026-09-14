@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .. import config
+from .. import config, standards
 from ..pipeline import cutting, ranking, render
 from . import clusters, judge, retrieval, routing
 
@@ -136,6 +136,10 @@ def _run_inside(
     conn: psycopg.Connection, cfg: config.Config, cluster: dict, source, run_id: int, question: str
 ) -> dict:
     source_id = cluster["source_id"]
+    # 🔴 관리자 기준을 **run 시작에 한 번** 읽어 후보 생성과 판정에 같은 것을 넘긴다. 둘은 몇 분
+    # 떨어져 돌아서, 그 사이 기준이 바뀌면 후보와 점수가 서로 다른 기준을 본다(standards.py).
+    # 🔴 구간 선택(routing)에는 넘기지 않는다 — "어디에 답이 있나" 는 선호가 아니라 사실이다.
+    standard = standards.load(conn)
     everything = retrieval.load_segments(conn, source_id)
     if not everything:
         return _unanswerable(conn, cluster["id"], run_id, "구간이 없습니다", None)
@@ -179,7 +183,8 @@ def _run_inside(
 
     # ③ 후보 3개 제안 (LLM 1회)
     plan, lines = ranking.plan_answer(
-        conn, cfg, question, segments, source["context"], source_id=source_id, run_id=run_id
+        conn, cfg, question, segments, source["context"], source_id=source_id, run_id=run_id,
+        standard=standard,
     )
     if not plan.answerable:
         return _unanswerable(
@@ -212,7 +217,8 @@ def _run_inside(
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=JUDGE_WORKERS, thread_name_prefix="judge") as pool:
         results = list(pool.map(
-            lambda item: judge.judge(cfg, question, [p.text for p in item[1]]), prepared
+            lambda item: judge.judge(cfg, question, [p.text for p in item[1]], standard=standard),
+            prepared
         ))
     total_ms = int((time.monotonic() - started) * 1000)
     for (candidate, parts), judged in zip(prepared, results):

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 import psycopg
 
-from .. import config
+from .. import config, standards
 from ..adapters import gemini
 
 TARGET_MIN_SEC = 30.0
@@ -45,7 +45,7 @@ PROMPT_TEMPLATE = """다음은 한 강연 구간의 발화 목록이다. 각 줄
 - 앞을 듣지 않아도 이해되는 지점에서 시작한다.
 - reason 은 왜 이 구간인지 한두 문장.
 
-{context_block}구간 요약: {description}
+{standard_block}{context_block}구간 요약: {description}
 
 발화 목록:
 {utterance_block}"""
@@ -58,7 +58,9 @@ class Cut:
     reason: str
 
 
-def build_prompt(utterances: list[dict], description: str, context: str | None) -> str:
+def build_prompt(
+    utterances: list[dict], description: str, context: str | None, standard: str | None = None
+) -> str:
     if not utterances:
         raise CuttingError("발화가 없다")
     lines = "\n".join(
@@ -69,6 +71,7 @@ def build_prompt(utterances: list[dict], description: str, context: str | None) 
         min_sec=TARGET_MIN_SEC,
         max_sec=TARGET_MAX_SEC,
         context_block=context_block,
+        standard_block=standards.block(standard),
         description=description,
         utterance_block=lines,
     )
@@ -171,7 +174,8 @@ def run_for_segment(
     ).fetchone()["source_id"]
     context = conn.execute("select context from sources where id = %s", (source_id,)).fetchone()["context"]
 
-    prompt = build_prompt(utterances, segment["description"] or "", context)
+    # 관리자 기준(2층). 구간 안에서 어디를 자를지는 선호의 문제라 여기에 넣는다.
+    prompt = build_prompt(utterances, segment["description"] or "", context, standards.load(conn))
     try:
         raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
     except Exception as exc:
