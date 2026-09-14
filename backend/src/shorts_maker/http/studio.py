@@ -21,10 +21,10 @@ from fastapi.responses import FileResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
-from .. import pricing
+from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, report
-from . import deps
+from . import deps, prompt_catalog
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
 from .deps import connect, require_auth, rows, submit
@@ -205,6 +205,23 @@ class ClipPatchIn(BaseModel):
     """숏폼 제목. 시청자 목록에서 보이는 문장이라 크리에이터가 고칠 수 있어야 한다."""
 
     title: str = Field(min_length=1, max_length=200)
+
+
+class StandardIn(BaseModel):
+    """관리자 기준. 🔴 정확한 상한(1000자)은 앞뒤 공백을 걷어낸 뒤 `standards.save` 가 본다 — 여기서
+    잘라 버리면 붙여 넣으며 딸려 온 공백 때문에 멀쩡한 글이 거절된다. 이 상한은 터무니없는 입력만 막는다."""
+
+    body: str = Field(default="", max_length=standards.MAX_CHARS * 2)
+
+
+class SourcePatchIn(BaseModel):
+    """영상 개요(프롬프트 3층).
+
+    🔴 500자 상한. 이 글은 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 영상이 무엇인지
+    한두 문장이면 되고, 길게 쓰면 대사보다 개요가 프롬프트를 더 차지한다.
+    """
+
+    context: str | None = Field(default=None, max_length=500)
 
 
 class ClusterPatchIn(BaseModel):
@@ -668,6 +685,52 @@ def unpublish_clip(clip_id: int) -> dict:
                 pass  # 이미 REVIEW 이하면 그대로 둔다
         conn.commit()
     return {"published": False}
+
+
+@router.get("/prompts")
+def list_prompts() -> dict:
+    """프롬프트 목록 — 무엇이 고정(1층)이고 무엇을 누가 채우는가.
+
+    🔴 1층 규칙은 **보여주기만** 한다. 출력 형식이 한 글자만 어긋나도 파싱이 실패하고, 자립성 관문이
+    흔들리면 앞뒤를 모르면 이해 못 하는 클립이 조용히 발행된다. 원문은 코드에서 그대로 읽는다
+    (`http/prompt_catalog.py`).
+    """
+    with connect() as conn:
+        return prompt_catalog.build(conn)
+
+
+@router.put("/prompts/standard")
+def put_standard(body: StandardIn) -> dict:
+    """관리자 기준을 저장한다. **덧붙인다** — 고친 이력이 남는다(마이그레이션 007).
+
+    빈 글을 보내면 기준이 지워진다. 다음 답하기·클립 만들기부터 반영되고 이미 만든 것은 그대로다.
+    """
+    with connect() as conn:
+        try:
+            row = standards.save(conn, body.body)
+        except standards.StandardError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        conn.commit()
+    return {"body": row["body"], "updatedAt": row["created_at"], "maxChars": standards.MAX_CHARS}
+
+
+@router.patch("/sources/{source_id}")
+def patch_source(source_id: int, body: SourcePatchIn) -> dict:
+    """영상 개요를 고친다.
+
+    🔴 **이미 나눈 구간에는 반영되지 않는다.** 구간 분할도 개요를 쓰지만 구간은 캐시된 자산이라
+    다시 나누기 전까지 그대로다. 이후 순위·자르기·후보 생성에는 바로 반영된다.
+    """
+    context = (body.context or "").strip() or None
+    with connect() as conn:
+        row = conn.execute(
+            "update sources set context = %s where id = %s returning id, context",
+            (context, source_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "source not found")
+        conn.commit()
+    return dict(row)
 
 
 @router.get("/cost")
