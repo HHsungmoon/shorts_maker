@@ -38,6 +38,19 @@ DEFAULTS = {
     "SHORTS_STORE_PROMPTS": "1",
     "SHORTS_RETRIEVAL_TOP_K": "5",
     "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
+    # 질문을 남기는 순간 **발행된 숏폼을 추천**한다(answers/suggest.py, update_plan D13).
+    # 🔴 공개 경로에서 외부 API 를 부르는 유일한 자리라 네 값이 전부 울타리다.
+    # MIN_SIM: 질문(RETRIEVAL_QUERY) ↔ 클립 실제 대사(RETRIEVAL_DOCUMENT) 코사인. 실측(2026-09-15,
+    #   질문 8 · 발행 숏폼 2): 맞는 연결 최저 0.735 · 붙으면 안 되는 것 최고 0.720 → 가운데 0.73.
+    #   🔴 표본이 작다. 평가 세트로 다시 정한다. 제목이나 구간 설명과 비교하면 틈이 음수였다.
+    # MAX: 한 번에 보여줄 숏폼 수.
+    # PER_MIN: 공개 경로 전체의 분당 임베딩 상한. 크리에이터 작업과 분당 한도(100)를 나눠 쓰므로
+    #   넘으면 추천만 건너뛴다. **0 이면 기능이 꺼지고 공개 경로 외부 호출은 다시 0회가 된다.**
+    # TIMEOUT_SEC: 재시도 없이 이만큼만 기다린다. 시청자의 질문 등록이 이 이상 멈추지 않는다.
+    "SHORTS_SUGGEST_MIN_SIM": "0.73",
+    "SHORTS_SUGGEST_MAX": "2",
+    "SHORTS_SUGGEST_PER_MIN": "30",
+    "SHORTS_SUGGEST_TIMEOUT_SEC": "3",
     "SHORTS_API_HOST": "127.0.0.1",
     "SHORTS_API_PORT": "8100",
     "SHORTS_FFMPEG": "ffmpeg",
@@ -103,6 +116,10 @@ class Config:
     store_prompts: bool
     retrieval_top_k: int
     retrieval_min_sim: float
+    suggest_min_sim: float
+    suggest_max: int
+    suggest_per_min: int
+    suggest_timeout_sec: float
     api_host: str
     api_port: int
     api_token: str
@@ -186,6 +203,10 @@ def load() -> Config:
         store_prompts=get("SHORTS_STORE_PROMPTS") not in ("0", "false", "False", ""),
         retrieval_top_k=int(get("SHORTS_RETRIEVAL_TOP_K")),
         retrieval_min_sim=float(get("SHORTS_RETRIEVAL_MIN_SIM")),
+        suggest_min_sim=float(get("SHORTS_SUGGEST_MIN_SIM")),
+        suggest_max=max(0, int(get("SHORTS_SUGGEST_MAX"))),
+        suggest_per_min=max(0, int(get("SHORTS_SUGGEST_PER_MIN"))),
+        suggest_timeout_sec=max(0.5, float(get("SHORTS_SUGGEST_TIMEOUT_SEC"))),
         api_host=api_host,
         api_port=int(get("SHORTS_API_PORT")),
         api_token=os.environ.get("SHORTS_API_TOKEN", ""),

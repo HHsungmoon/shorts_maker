@@ -429,10 +429,17 @@ class EmbeddingTest(SchemaTestCase):
         )
 
     def test_rejects_unknown_kind(self):
+        # 🔴 예전엔 이 자리에 'clip' 을 썼는데 마이그레이션 008 에서 정식 종류가 됐다(발행 숏폼 추천).
+        # 없는 종류는 앞으로도 생기지 않을 이름으로 둔다.
         self.expect_integrity_error(
-            "insert into embeddings (kind, ref_id, model, dim, vector) values ('clip', 1, 'm', 4, %s)",
+            "insert into embeddings (kind, ref_id, model, dim, vector) values ('podcast', 1, 'm', 4, %s)",
             (self.VECTOR,),
         )
+
+    def test_accepts_clip_kind_for_suggestions(self):
+        # 발행 숏폼의 대사 벡터(update_plan D13). 008 이 CHECK 를 갈아 끼웠는지 여기서 본다.
+        self._insert("clip", 1, "m")
+        self.conn.commit()
 
     def test_vector_bytes_round_trip(self):
         # bytea 는 bytes 그대로 넣고 그대로 나온다 — numpy.frombuffer 가 이걸 전제한다.
