@@ -4,8 +4,11 @@
 반복하며 돈만 쓰고, 5xx 를 재시도하지 않으면 구글의 몇 초짜리 과부하에 잡 전체가 죽는다.
 """
 
+import dataclasses
 import unittest
+from unittest import mock
 
+from shorts_maker import config
 from shorts_maker.adapters import gemini
 
 
@@ -136,6 +139,56 @@ class RetryDelayTest(unittest.TestCase):
         # 잡 하나가 무한히 붙어 있으면 워커가 하나뿐인 큐가 막힌다(jobs.py).
         exc = self.Failure("retryDelay: 3600s")
         self.assertEqual(gemini.retry_after_sec(exc), gemini.MAX_SERVER_WAIT_SEC)
+
+
+class EmbedOnceTest(unittest.TestCase):
+    """🔴 공개 경로 전용 임베딩은 **한 번만, 짧게** 부른다(update_plan D13).
+
+    `embed_texts` 는 분당 한도에 걸리면 최대 65초씩 6번까지 기다린다. 그걸 시청자의 질문 등록에 쓰면
+    요청이 1분 멈춘다. 여기서 지키는 것은 그 반대다 — 실패하면 바로 올리고, 제한 시간이 SDK 까지 간다.
+    """
+
+    def cfg(self, key: str = "test-key"):
+        return dataclasses.replace(config.load(), gemini_api_key=key, embed_dim=2)
+
+    def fake(self, embed_content):
+        return mock.Mock(models=mock.Mock(embed_content=embed_content))
+
+    def test_a_server_error_is_not_retried(self):
+        call = mock.Mock(side_effect=Boom("503 UNAVAILABLE", code=503))
+        with mock.patch.object(gemini, "client", return_value=self.fake(call)):
+            with self.assertRaises(gemini.GeminiError):
+                gemini.embed_once(self.cfg(), "질문", "RETRIEVAL_QUERY", 3.0)
+        self.assertEqual(call.call_count, 1)
+
+    def test_a_per_minute_limit_is_not_waited_out(self):
+        # 서버가 36초 기다리라고 해도 기다리지 않는다 — 추천만 빠지면 된다.
+        call = mock.Mock(side_effect=Boom("429 RESOURCE_EXHAUSTED retryDelay: 36s PerMinute", code=429))
+        with mock.patch.object(gemini, "client", return_value=self.fake(call)), mock.patch("time.sleep") as sleep:
+            with self.assertRaises(gemini.GeminiError):
+                gemini.embed_once(self.cfg(), "질문", "RETRIEVAL_QUERY", 3.0)
+        sleep.assert_not_called()
+        self.assertEqual(call.call_count, 1)
+
+    def test_the_timeout_and_task_type_reach_the_sdk(self):
+        call = mock.Mock(return_value=mock.Mock(embeddings=[mock.Mock(values=[0.6, 0.8])]))
+        with mock.patch.object(gemini, "client", return_value=self.fake(call)):
+            vector, _ = gemini.embed_once(self.cfg(), "질문", "RETRIEVAL_QUERY", 2.5)
+        self.assertEqual(vector, [0.6, 0.8])
+        settings = call.call_args.kwargs["config"]
+        self.assertEqual(settings.task_type, "RETRIEVAL_QUERY")
+        self.assertEqual(settings.http_options.timeout, 2500)
+        self.assertEqual(call.call_args.kwargs["contents"], ["질문"])
+
+    def test_an_empty_response_is_an_error(self):
+        call = mock.Mock(return_value=mock.Mock(embeddings=[]))
+        with mock.patch.object(gemini, "client", return_value=self.fake(call)):
+            with self.assertRaises(gemini.GeminiError):
+                gemini.embed_once(self.cfg(), "질문", "RETRIEVAL_QUERY", 1.0)
+
+    def test_a_missing_key_is_a_gemini_error_not_a_crash(self):
+        with self.assertRaises(gemini.GeminiError):
+            gemini.embed_once(self.cfg(key=""), "질문", "RETRIEVAL_QUERY", 1.0)
 
 
 if __name__ == "__main__":
