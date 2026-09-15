@@ -17,7 +17,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 from shorts_maker.adapters import gemini
-from shorts_maker.answers import viewers
+from shorts_maker.answers import embeddings, suggest, viewers
 from shorts_maker.db import store
 from shorts_maker.http import deps, server
 
@@ -34,6 +34,9 @@ class WatchTestCase(unittest.TestCase):
     def setUp(self):
         self.url = reset_db()
         viewers.reset_limits()
+        # 추천의 분당 상한도 프로세스 메모리다. 테스트끼리 새지 않게 비운다.
+        suggest.reset_budget()
+        self.addCleanup(suggest.reset_budget)
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
         self._saved = deps.cfg
@@ -109,6 +112,14 @@ class WatchTestCase(unittest.TestCase):
             conn.commit()
         return clip_id
 
+    def index_clip_vector(self, clip_id: int) -> None:
+        """추천 비교 대상으로 만든다 — 발행할 때 생기는 대사 벡터를 직접 깐다(첫 축 방향 단위 벡터)."""
+        cfg = deps.cfg
+        vector = [1.0] + [0.0] * (cfg.embed_dim - 1)
+        with store.connect(self.url) as conn:
+            embeddings.store(conn, cfg, suggest.KIND, [clip_id], [vector], embeddings.DOCUMENT)
+            conn.commit()
+
     def rows(self, sql, params=()):
         with store.connect(self.url) as conn:
             return [dict(r) for r in conn.execute(sql, params)]
@@ -161,19 +172,33 @@ class PublishedOnlyTest(WatchTestCase):
 
 
 class NoExternalCallsTest(WatchTestCase):
-    """🔴 공개 경로에서 유료 API 를 부르면 그게 공격면이다. 질문은 insert 만 한다(D11)."""
+    """🔴 공개 경로에서 유료 API 를 부르면 그게 공격면이다.
 
-    def test_posting_a_question_never_calls_gemini(self):
+    원래는 질문 등록이 insert 만이었다(D11). 2026-09-15 부터 **발행 숏폼 추천 한 곳에서만** 임베딩 1회를
+    조건부로 허용한다(D13). 여기서 지키는 것은 그 조건의 바닥이다 — LLM 은 여전히 0회, 비교할 발행 숏폼이
+    없으면 임베딩도 0회, 키가 없어도 공개 면은 전부 동작한다.
+    """
+
+    def test_posting_with_no_published_short_makes_no_external_call(self):
         source_id = self.source()
-        with mock.patch.object(gemini, "generate_json", autospec=True) as llm:
+        with (
+            mock.patch.object(gemini, "generate_json", autospec=True) as llm,
+            mock.patch.object(gemini, "embed_texts", autospec=True) as batch,
+            mock.patch.object(gemini, "embed_once", autospec=True) as once,
+        ):
             response = self.client.post(f"/api/watch/sources/{source_id}/questions", json={"text": "연봉이 궁금해요"})
         self.assertEqual(response.status_code, 200, response.text)
         llm.assert_not_called()
+        batch.assert_not_called()
+        once.assert_not_called()
 
     def test_the_whole_public_surface_works_without_an_api_key(self):
-        # GEMINI_API_KEY 가 비어도 공개 면은 전부 동작해야 한다 — 외부 호출이 0회라는 증명이다.
+        # GEMINI_API_KEY 가 비어도 공개 면은 전부 동작해야 한다.
+        # 🔴 발행 숏폼과 벡터를 깔아 **추천 호출이 실제로 시도되고 실패하는** 상태로 만든다 — 그래도
+        # 질문 등록은 200 이어야 한다(D13: 질문을 먼저 커밋하고 추천 실패는 조용히 뺀다).
         deps.cfg = dataclasses.replace(deps.cfg, gemini_api_key="")
         source_id = self.source()
+        self.index_clip_vector(self.make_clip(source_id, question=None))
         self.assertEqual(self.client.get("/api/watch/sources").status_code, 200)
         posted = self.client.post(f"/api/watch/sources/{source_id}/questions", json={"text": "질문"})
         self.assertEqual(posted.status_code, 200, posted.text)
@@ -186,6 +211,84 @@ class NoExternalCallsTest(WatchTestCase):
         source_id = self.source()
         self.client.post(f"/api/watch/sources/{source_id}/questions", json={"text": "질문"})
         self.assertIsNone(self.rows("select cluster_id from questions")[0]["cluster_id"])
+
+
+class SuggestOnAskTest(WatchTestCase):
+    """질문을 남기는 순간 발행 숏폼 추천(update_plan D13) — 공개 면에서 보이는 모양.
+
+    추천 규칙 자체(상한·유사도·발행 필터)는 `tests/answers/test_suggest.py` 가 본다. 여기는 질문 등록
+    응답과 그 순서를 본다.
+    """
+
+    def post(self, source_id: int, text: str = "쏘카는 어떤 제품을 만드나요?"):
+        return self.client.post(f"/api/watch/sources/{source_id}/questions", json={"text": text})
+
+    def unit(self) -> list[float]:
+        return [1.0] + [0.0] * (deps.cfg.embed_dim - 1)
+
+    def test_a_matching_published_short_comes_back_with_the_question_saved(self):
+        source_id = self.source()
+        clip_id = self.make_clip(source_id, question=None)
+        self.index_clip_vector(clip_id)
+        with mock.patch.object(gemini, "embed_once", return_value=(self.unit(), 5)) as once:
+            response = self.post(source_id)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([c["id"] for c in response.json()["suggestions"]], [clip_id])
+        self.assertEqual(once.call_count, 1)
+        self.assertEqual(len(self.rows("select id from questions")), 1)
+
+    def test_a_suggestion_looks_exactly_like_the_shorts_list_and_carries_no_score(self):
+        # 같은 숏폼이 두 모양이면 화면이 다른 것으로 그린다. 점수는 "몇 점이면 뜨나" 를 맞춰 볼 입력이 된다.
+        source_id = self.source()
+        clip_id = self.make_clip(source_id, question=None)
+        self.index_clip_vector(clip_id)
+        with mock.patch.object(gemini, "embed_once", return_value=(self.unit(), 5)):
+            suggested = self.post(source_id).json()["suggestions"][0]
+        listed = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertEqual(set(suggested), set(listed))
+        self.assertNotIn("score", suggested)
+
+    def test_the_question_is_saved_even_if_suggesting_crashes(self):
+        """🔴 질문을 먼저 커밋한다. 추천이 어떻게 죽어도 등록은 성공이다."""
+        source_id = self.source()
+        # 삼키되 **기록은 남긴다** — 조용히 사라지면 "왜 추천이 안 뜨나" 를 추적할 길이 없다.
+        with (
+            mock.patch.object(suggest, "match", side_effect=RuntimeError("터짐")),
+            self.assertLogs(level="ERROR") as logged,
+        ):
+            response = self.post(source_id)
+        self.assertTrue(any("suggest failed" in line for line in logged.output))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["suggestions"], [])
+        self.assertEqual(len(self.rows("select id from questions")), 1)
+
+    def test_an_unpublished_short_is_never_suggested_nor_worth_a_call(self):
+        source_id = self.source()
+        clip_id = self.make_clip(source_id, question=None, published=False)
+        self.index_clip_vector(clip_id)
+        with mock.patch.object(gemini, "embed_once", return_value=(self.unit(), 5)) as once:
+            body = self.post(source_id).json()
+        self.assertEqual(body["suggestions"], [])
+        once.assert_not_called()
+
+    def test_suggesting_never_calls_the_llm(self):
+        source_id = self.source()
+        self.index_clip_vector(self.make_clip(source_id, question=None))
+        with (
+            mock.patch.object(gemini, "embed_once", return_value=(self.unit(), 5)),
+            mock.patch.object(gemini, "generate_json", autospec=True) as llm,
+        ):
+            self.post(source_id)
+        llm.assert_not_called()
+
+    def test_a_suggested_question_does_not_join_a_cluster(self):
+        # 추천이 맞아 보여도 묶음에 붙이지 않는다 — 추천은 틀릴 수 있고 수요 집계는 [집계] 의 몫이다.
+        source_id = self.source()
+        self.index_clip_vector(self.make_clip(source_id, question="쏘카 제품은?"))
+        with mock.patch.object(gemini, "embed_once", return_value=(self.unit(), 5)):
+            self.post(source_id)
+        newest = self.rows("select cluster_id from questions order by id desc limit 1")[0]
+        self.assertIsNone(newest["cluster_id"])
 
 
 class ViewerCookieTest(WatchTestCase):

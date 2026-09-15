@@ -8,21 +8,24 @@
 
 1. 🔴 **읽기는 발행된 것만.** 영상은 `sources.published`, 클립은 `clips.published_at is not null`.
    미발행은 403 이 아니라 **404** 다 — 존재 자체를 알리지 않는다.
-2. 🔴 **외부 API 를 부르지 않는다.** 질문 등록은 insert 만이고 임베딩도 LLM 도 없다
-   (update_plan D11). 공개 경로에서 요청마다 유료 API 를 부르면 그게 공격면이다.
-   묶기는 크리에이터가 스튜디오에서 [집계]를 눌러야 돈다.
+2. 🔴 **외부 호출은 질문 등록의 숏폼 추천 한 곳, 임베딩 1회뿐이다**(update_plan D13). LLM 은 0회.
+   원래 insert 만이었고(D11) 이 한 곳에서만 풀었다. 울타리 여섯은 `answers/suggest.py` 머리 주석에
+   있다 — 질문 먼저 커밋 · 비교할 게 없으면 호출 0회 · 재시도 없음 · 제한 시간 · 분당 상한 ·
+   실패하면 추천만 뺀다. 새 라우트에서 외부 API 를 부르면 틀린 것이다.
+   묶기는 여전히 크리에이터가 스튜디오에서 [집계]를 눌러야 돈다.
 3. 🔴 **쓰기는 레이트리밋.** `viewers.check_rate`.
 
 `tests/http/test_watch.py` 가 셋 다 지킨다.
 """
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ..answers import events, viewers
+from ..answers import events, suggest, viewers
 from . import deps
 from .deps import connect, rows
 
@@ -57,6 +60,35 @@ def _published_source(conn, source_id: int) -> dict:
         # 🔴 미발행도 404. 403 이면 "그 id 는 있다"를 알려주는 셈이다.
         raise HTTPException(404, "영상을 찾을 수 없습니다")
     return dict(found)
+
+
+def _published_clips(conn, source_id: int, ids: list[int] | None = None) -> list[dict]:
+    """발행된 클립 — 시청자에게 보이는 모양 그대로. 목록과 추천이 **같은 모양**을 쓴다.
+
+    🔴 추천도 이 함수를 거친다. `suggest.match` 가 발행 여부를 이미 걸렀지만, 공개 응답을 만드는
+    마지막 자리에서 한 번 더 거른다 — 규칙 ①(발행된 것만)을 두 겹으로 둔다.
+    """
+    return rows(
+        conn,
+        """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
+                      -- 🔴 원본 유입의 목적지다. 조합 클립에서 이 값은 봉투의 시작(첫 조각
+                      -- 시작)이고, 그게 정확히 "이 이야기가 시작되는 곳" 이다.
+                      -- 소스 **절대 초**라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다
+                      -- (청크 오프셋은 stt.to_utterance_rows 에서 이미 더해졌다).
+                      c.start_sec,
+                      -- 🔴 제목은 컬럼이다. 질문에서 나온 클립이든 크리에이터가 직접 뽑은 것이든
+                      -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
+                      coalesce(c.title, qc.canonical_text) as title,
+                      qc.canonical_text as question,
+                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
+               from clips c
+               join runs r on r.id = c.run_id
+               left join question_clusters qc on qc.id = c.question_cluster_id
+               where r.source_id = %s and c.published_at is not null
+                 and (%s::int[] is null or c.id = any(%s))
+               order by c.published_at desc""",
+        (source_id, ids, ids),
+    )
 
 
 @router.get("/sources")
@@ -104,26 +136,7 @@ def get_source(source_id: int, viewer: str = Depends(viewers.viewer_id)) -> dict
             question["liked_by_me"] = bool(question["liked_by_me"])
         # 🔴 클립에 **그 질문**을 붙여 준다. 시청자에게 클립만 보여주면 "이게 왜 여기 있지" 가 된다 —
         # 이 제품의 요지는 "당신이 물어본 것에 대한 답" 이고, 그 연결이 화면에 보여야 한다.
-        clips = rows(
-            conn,
-            """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
-                      -- 🔴 원본 유입의 목적지다. 조합 클립에서 이 값은 봉투의 시작(첫 조각
-                      -- 시작)이고, 그게 정확히 "이 이야기가 시작되는 곳" 이다.
-                      -- 소스 **절대 초**라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다
-                      -- (청크 오프셋은 stt.to_utterance_rows 에서 이미 더해졌다).
-                      c.start_sec,
-                      -- 🔴 제목은 컬럼이다. 질문에서 나온 클립이든 크리에이터가 직접 뽑은 것이든
-                      -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
-                      coalesce(c.title, qc.canonical_text) as title,
-                      qc.canonical_text as question,
-                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
-               from clips c
-               join runs r on r.id = c.run_id
-               left join question_clusters qc on qc.id = c.question_cluster_id
-               where r.source_id = %s and c.published_at is not null
-               order by c.published_at desc""",
-            (source_id,),
-        )
+        clips = _published_clips(conn, source_id)
         # 답할 구간이 없다고 판정된 질문. 다른 편을 가리킬 수 있으면 그 영상도 함께(발행된 것만).
         unanswerable = rows(
             conn,
@@ -145,10 +158,13 @@ def get_source(source_id: int, viewer: str = Depends(viewers.viewer_id)) -> dict
 def add_question(
     source_id: int, body: QuestionIn, request: Request, viewer: str = Depends(viewers.viewer_id)
 ) -> dict:
-    """질문 등록. 🔴 **insert 만 한다** — 임베딩도 LLM 도 부르지 않는다(update_plan D11).
+    """질문 등록 → 이 영상의 **발행 숏폼 추천**(update_plan D13).
 
-    묶기는 크리에이터가 스튜디오에서 [집계]를 누를 때 일어난다. 그래서 `cluster_id` 는
-    null 로 시작하고, 이 경로에는 외부 호출이 0회다.
+    🔴 순서가 계약이다. 질문을 **먼저 커밋**하고 그다음 추천한다. 추천이 어떻게 실패하든 질문은 이미
+    남았다. 추천의 외부 호출 울타리는 `answers/suggest.py` 머리 주석에 있다. LLM 은 0회다.
+
+    묶기는 여전히 크리에이터가 [집계]를 누를 때 일어난다 — `cluster_id` 는 null 로 시작하고, 추천이
+    맞아 보여도 질문을 묶음에 붙이지 않는다. 추천은 틀릴 수 있고 수요 집계는 크리에이터의 몫이다.
     """
     text = body.text.strip()
     if not text:
@@ -162,7 +178,31 @@ def add_question(
         ).fetchone()["id"]
         events.record(conn, viewer, "question_post", source_id=source_id)
         conn.commit()
-    return {"questionId": question_id}
+        # 🔴 여기서부터는 질문이 이미 남은 뒤다.
+        suggestions = _suggest(conn, source_id, text, question_id)
+    return {"questionId": question_id, "suggestions": suggestions}
+
+
+def _suggest(conn, source_id: int, text: str, question_id: int) -> list[dict]:
+    """추천할 발행 숏폼. 🔴 **어떤 경우에도 예외를 올리지 않는다** — 질문 등록 응답을 깨뜨리면 안 된다.
+
+    점수는 내보내지 않는다. 시청자에게 필요한 건 순서뿐이고, 숫자를 주면 "몇 점이면 뜨나" 를
+    맞춰 보는 입력이 생긴다.
+    """
+    try:
+        picked = suggest.match(conn, deps.cfg, source_id, text, question_id)
+        if not picked:
+            return []
+        ids = [clip_id for clip_id, _ in picked]
+        found = {clip["id"]: clip for clip in _published_clips(conn, source_id, ids)}
+        return [found[clip_id] for clip_id in ids if clip_id in found]
+    except Exception:
+        logging.exception("suggest failed for question %s", question_id)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return []
 
 
 @router.post("/questions/{question_id}/like")
