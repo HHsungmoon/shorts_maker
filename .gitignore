@@ -23,3 +23,6 @@ web/dist/
 .DS_Store
 
 .claude
+
+# 🔴 서버 구축 기록 — 공인 IP·도메인·계정 구성 등 운영 정보가 들어간다. 로컬 전용.
+docs/11-NCloud-setting.md
