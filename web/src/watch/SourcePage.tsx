@@ -132,6 +132,9 @@ function SourceView({ sourceId }: { sourceId: number }) {
 	const [text, setText] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// 방금 남긴 질문과 비슷한 궁금증에 답한 발행 숏폼. 다음 질문을 보내면 비운다 — 옛 질문의 추천이
+	// 새 질문 밑에 남으면 엉뚱한 답을 권하는 것이 된다.
+	const [suggested, setSuggested] = useState<WatchClip[]>([]);
 
 	const submit = useCallback(
 		async (event: React.FormEvent) => {
@@ -142,8 +145,9 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			}
 			setBusy(true);
 			setError(null);
+			setSuggested([]);
 			try {
-				const { questionId } = await postQuestion(sourceId, trimmed);
+				const { questionId, suggestions } = await postQuestion(sourceId, trimmed);
 				// 서버 응답에는 id 만 있다. 나머지는 아는 값으로 채운다 — 좋아요가 0이라 정렬상
 				// 맨 뒤지만, 방금 쓴 글은 눈에 보여야 한다.
 				setAdded((current) => [
@@ -158,6 +162,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 					...current,
 				]);
 				setText("");
+				setSuggested(suggestions ?? []);
 			} catch (e: unknown) {
 				// 레이트리밋(429)과 길이 초과(422)는 서버가 이유를 문장으로 준다.
 				setError(e instanceof Error ? e.message : String(e));
@@ -342,6 +347,32 @@ function SourceView({ sourceId }: { sourceId: number }) {
 					</div>
 				</form>
 				{error && <p className="state state--error">{error}</p>}
+				{/* 🔴 "답입니다" 가 아니라 "비슷한 궁금증에 답한 숏폼" 이다. 유사도로 고른 것이라 틀릴 수 있고,
+				    단정했다가 틀리면 시청자는 속았다고 느낀다. 질문이 이미 남았다는 것도 같이 말한다 —
+				    추천을 보고 "내 질문은 버려졌나" 로 읽히면 질문을 남기는 이유가 사라진다. */}
+				{suggested.length > 0 && (
+					<div className="watch-suggest" role="status">
+						<div className="watch-suggest__head">
+							<p className="watch-suggest__title">비슷한 궁금증에 답한 숏폼이 있어요</p>
+							<button
+								type="button"
+								className="watch-suggest__close"
+								onClick={() => setSuggested([])}
+								aria-label="추천 닫기"
+							>
+								닫기
+							</button>
+						</div>
+						<p className="watch-hint">
+							질문은 그대로 남았어요. 찾던 답이 아니면 크리에이터가 비슷한 질문을 모아 따로 답합니다.
+						</p>
+						<ul className="watch-clips">
+							{suggested.map((clip) => (
+								<ClipCard key={clip.id} clip={clip} sourceId={sourceId} onJump={jump} />
+							))}
+						</ul>
+					</div>
+				)}
 			</section>
 
 			<section>
