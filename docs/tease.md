@@ -260,8 +260,8 @@ ep.45 에 **한국어 자동자막**이 있다. whisper `small` 로 21분을 돌
 
 **하나의 임베딩 시스템이 두 문제를 푼다.** 이게 덧붙인 게 아니라 설계인 이유다.
 
-**(a) 질문 묶기 — 크리에이터가 트리거하는 [집계].** 질문이 들어올 때는 아무것도 돌지 않는다
-(2026-09-05 결정). 공개 경로가 요청마다 외부 API 를 부르면 레이트리밋이 있어도 공격면이고,
+**(a) 질문 묶기 — 크리에이터가 트리거하는 [집계].** 질문이 들어올 때 묶기는 돌지 않는다
+(2026-09-05 결정. 2026-09-15 부터 발행 숏폼 **추천**용 임베딩 1회만 조건부 예외 — §7-1, update_plan D13). 공개 경로가 요청마다 외부 API 를 부르면 레이트리밋이 있어도 공격면이고,
 "수요를 취합해서 고른다"는 제품 정의상 묶기는 크리에이터의 행동이다. [집계]는 스튜디오에서
 영상을 열 때 자동으로 한 번, 또는 버튼으로 돈다. 역할을 셋으로 가른다:
 
@@ -631,7 +631,7 @@ alter table clip_reviews add column reviewer text;    -- 'human' | 'llm' (§5-7)
 |---|---|
 | `GET  /api/watch/sources` | `published=1` 인 영상 목록 (제목·youtube_id·길이·클러스터 수·발행 숏폼 수) |
 | `GET  /api/watch/sources/{id}` | 영상 + 클러스터(좋아요 순, 상태 포함) + **발행된** 클립만 |
-| `POST /api/watch/sources/{id}/questions` | 질문 원문 insert 만. **외부 호출 0회.** → `{questionId}` (cluster_id 는 집계 후 채워진다) |
+| `POST /api/watch/sources/{id}/questions` | 질문 원문 insert(먼저 커밋) → 이 영상의 **발행 숏폼 추천**. LLM 0회, 임베딩 최대 1회(재시도 없음·제한 시간·분당 상한, 실패하면 추천만 뺀다). → `{questionId, suggestions}` (cluster_id 는 집계 후 채워진다) |
 | `POST /api/watch/questions/{id}/like` | 토글. `unique(question_id, viewer_id)` 가 중복을 막는다 |
 | `POST /api/watch/events` | `viewer_events` 적재 (§9) |
 | `GET  /api/watch/clips/{id}/file` | 🔴 **`published_at is not null` 인 클립만.** 아니면 404 (403 아님 — 존재를 알리지 않는다) |
