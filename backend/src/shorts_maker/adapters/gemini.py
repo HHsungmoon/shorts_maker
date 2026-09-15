@@ -299,3 +299,39 @@ def embed_texts(
                 raise GeminiError("임베딩 응답에 값이 없다")
             vectors.append(list(values))
     return vectors, int((time.monotonic() - started) * 1000), calls
+
+
+def embed_once(
+    cfg: config.Config, text: str, task_type: str, timeout_sec: float
+) -> tuple[list[float], int]:
+    """**한 번만, 짧게** 임베딩한다. (벡터, 소요 ms). 🔴 공개 경로 전용이다(answers/suggest.py).
+
+    `embed_texts` 와 다른 점 둘:
+      - **재시도하지 않는다.** 그쪽은 분당 한도에 걸리면 서버가 말한 만큼(최대 65초) 기다리며 6번까지
+        다시 부른다. 크리에이터 작업엔 맞지만 시청자가 질문을 남기는 요청이 1분 멈추면 안 된다.
+      - **제한 시간을 건다**(`HttpOptions.timeout`, 밀리초). SDK 자체의 기본 재시도는 1회라
+        (google-genai 2.20.0 `_api_client.retry_args`, 옵션이 없으면 `stop_after_attempt(1)`)
+        이 값이 곧 상한이다.
+
+    실패는 전부 `GeminiError` 로 올린다 — 호출부는 추천을 조용히 빼기만 하면 된다.
+    """
+    import time
+
+    from google.genai import types
+
+    active = client(cfg)
+    settings = types.EmbedContentConfig(
+        task_type=task_type,
+        output_dimensionality=cfg.embed_dim,
+        http_options=types.HttpOptions(timeout=max(1, int(timeout_sec * 1000))),
+    )
+    started = time.monotonic()
+    try:
+        response = active.models.embed_content(model=cfg.embed_model, contents=[text], config=settings)
+    except Exception as exc:
+        raise GeminiError(f"임베딩 실패(재시도 안 함): {exc}") from exc
+    got = list(getattr(response, "embeddings", None) or [])
+    values = getattr(got[0], "values", None) if got else None
+    if not values:
+        raise GeminiError("임베딩 응답에 값이 없다")
+    return list(values), int((time.monotonic() - started) * 1000)
