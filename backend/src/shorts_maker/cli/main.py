@@ -8,7 +8,7 @@ import psycopg
 
 from .. import config, doctor
 from ..adapters import ffmpeg, gemini
-from ..answers import clusters, demo, embeddings
+from ..answers import clusters, demo, embeddings, suggest
 from ..pipeline import cutting, ingest, ranking, render, segmentation, stt
 from ..db import store
 
@@ -451,6 +451,11 @@ def main(argv: list[str] | None = None) -> int:
     agg_list.add_argument("source_id", type=int)
     index_p = answers_sub.add_parser("index", help="구간 설명을 검색용으로 임베딩한다 (답하기가 자동으로도 한다 — 미리 채워둘 때 쓴다)")
     index_p.add_argument("source_id", type=int)
+    index_clips_p = answers_sub.add_parser(
+        "index-clips",
+        help="발행된 숏폼의 대사를 추천용으로 임베딩한다 (발행할 때 자동으로도 한다 — 빠진 것을 채울 때 쓴다)",
+    )
+    index_clips_p.add_argument("source_id", type=int, nargs="?", help="비우면 모든 영상")
     ev = answers_sub.add_parser(
         "eval-cluster",
         help="eval/questions.json 을 넣고 집계를 돌려 θ 를 튜닝한다 (🔴 실제 API 호출이 나간다)",
@@ -549,6 +554,18 @@ def _cmd_answers_index(cfg: config.Config, args) -> int:
         added = embeddings.index_segments(conn, cfg, args.source_id)
     print(f"구간 임베딩 {added}개 새로 만듦 (이미 있던 것은 건너뜀)")
     return 0
+
+
+def _cmd_answers_index_clips(cfg: config.Config, args) -> int:
+    """발행 숏폼 추천의 색인을 채운다(update_plan D13). 발행할 때 실패했거나 기능 전에 발행된 것."""
+    with store.connect(cfg.database_url) as conn:
+        counted = suggest.index_published(conn, cfg, args.source_id)
+    print(
+        f"새로 색인 {counted['indexed']} · 대사 없음 {counted['empty']} · "
+        f"실패 {counted['failed']} (이미 있던 것은 건너뜀)"
+    )
+    # 실패가 있으면 1 — 스크립트에서 "다 채워졌나" 를 종료 코드로 알 수 있게.
+    return 1 if counted["failed"] else 0
 
 
 def _cmd_answers_eval(cfg: config.Config, args) -> int:
@@ -701,6 +718,8 @@ def _dispatch(parser: argparse.ArgumentParser, cfg: config.Config, args) -> int:
             return _cmd_answers_list(cfg, args)
         if args.answers_command == "index":
             return _cmd_answers_index(cfg, args)
+        if args.answers_command == "index-clips":
+            return _cmd_answers_index_clips(cfg, args)
         if args.answers_command == "eval-cluster":
             return _cmd_answers_eval(cfg, args)
     if args.command == "tease":

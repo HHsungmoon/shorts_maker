@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
-from ..answers import answer, clusters, events, report
+from ..answers import answer, clusters, events, report, suggest
 from . import deps, prompt_catalog
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
@@ -665,7 +665,15 @@ def publish_clip(clip_id: int) -> dict:
                 if "REVIEW" not in str(exc):
                     raise HTTPException(400, str(exc)) from exc
         conn.commit()
-    return {"published": True}
+        # 🔴 발행이 **먼저** 커밋됐다. 추천용 색인(update_plan D13)이 실패해도 발행은 되돌리지 않는다 —
+        # 크리에이터의 행동을 임베딩 할당량에 묶지 않는다. 빠진 것은 `sm answers index-clips` 로 채운다.
+        try:
+            indexed = suggest.index_clip(conn, deps.cfg, clip_id) == "indexed"
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            indexed = False
+    return {"published": True, "indexed": indexed}
 
 
 @router.post("/clips/{clip_id}/unpublish")
