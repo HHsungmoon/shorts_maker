@@ -90,8 +90,20 @@ export function fetchWatchSource(sourceId: number): Promise<WatchDetail> {
 	return request<WatchDetail>(`/api/watch/sources/${sourceId}`);
 }
 
-export function postQuestion(sourceId: number, text: string): Promise<{ questionId: number }> {
-	return request<{ questionId: number }>(`/api/watch/sources/${sourceId}/questions`, {
+/**
+ * 질문 등록 결과.
+ *
+ * `suggestions` 는 이 영상의 **발행 숏폼** 중 비슷한 궁금증에 답한 것이다(서버 update_plan D13).
+ * 🔴 유사도로 고른 것이라 틀릴 수 있다 — 화면은 "답입니다" 라고 단정하지 않는다. 점수는 오지 않는다.
+ * 비었으면 추천이 없다는 뜻이고, 질문은 그와 무관하게 이미 저장됐다.
+ */
+export interface WatchPostResult {
+	questionId: number;
+	suggestions: WatchClip[];
+}
+
+export function postQuestion(sourceId: number, text: string): Promise<WatchPostResult> {
+	return request<WatchPostResult>(`/api/watch/sources/${sourceId}/questions`, {
 		method: "POST",
 		body: { text },
 	});
