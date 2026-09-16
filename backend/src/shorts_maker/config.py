@@ -10,6 +10,10 @@ from urllib.parse import quote
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULTS = {
+    # DB 커넥션 풀의 최대 연결 수. 🔴 올리는 게 공짜가 아니다 — Postgres 는 연결마다 백엔드
+    # 프로세스를 띄우고(수 MB), 운영 db 컨테이너는 mem_limit 400m 다(compose.yaml). 20 으로
+    # 쓰려면 그 상한도 같이 올려야 한다. 로컬·테스트는 기본값으로 충분하다(db/store.py 주석).
+    "SHORTS_DB_POOL_MAX": "8",
     "SHORTS_GEMINI_MODEL": "gemini-3.6-flash",
     "SHORTS_WHISPER_MODEL": "small",
     # 임베딩. 🔴 dim 을 바꾸면 저장된 벡터와 섞이면 안 된다 — embeddings 테이블이 (model, dim, task_type)
@@ -137,6 +141,8 @@ class Config:
     database_url: str
     work_dir: Path
     source_dir: Path
+    # 🔴 기본값이 있는 필드라 맨 뒤다(dataclass 규칙). 서버만 이 값을 쓴다 — CLI·테스트는 기본 8.
+    db_pool_max: int = 8
 
     # ---- DB 에 저장되는 파일 경로 ------------------------------------------------
     # 🔴 DB 에는 **상대경로**를 넣는다. 원본은 source_dir 기준, 파생물(청크·클립)은 work_dir 기준.
@@ -226,6 +232,7 @@ def load() -> Config:
         price_output_usd_per_1m=float(get("SHORTS_PRICE_OUTPUT_USD_PER_1M")),
         usd_krw=float(get("SHORTS_USD_KRW")),
         database_url=database_url_from_env(get),
+        db_pool_max=max(1, int(get("SHORTS_DB_POOL_MAX"))),
         work_dir=_resolve(get("SHORTS_WORK_DIR")),
         source_dir=_resolve(get("SHORTS_SOURCE_DIR")),
     )

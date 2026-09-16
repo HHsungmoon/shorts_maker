@@ -64,6 +64,30 @@
 	color: var(--text-muted);
 }
 
+/* 보기 전용 비밀번호 안내. 🔴 문(링크) **밖에** 둔다 — 안에 두면 값을 드래그해 복사하려는
+ * 순간 링크가 눌려 페이지가 넘어간다. */
+.landing__key {
+	margin: 18px 0 0;
+	padding: 12px 14px;
+	font-size: 13px;
+	line-height: 1.7;
+	text-align: left;
+	color: var(--text-muted);
+	background: var(--surface);
+	border: 1px dashed var(--border);
+	border-radius: var(--radius);
+}
+
+.landing__key code {
+	padding: 2px 6px;
+	font-size: 13px;
+	color: var(--text);
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	user-select: all;
+}
+
 /* 관리자 쪽은 테두리만 옅게 달리 둔다 — 크기는 같게 두되 "내 자리가 아니다" 는 신호는 준다. */
 .landing__door--studio {
 	background: var(--bg);

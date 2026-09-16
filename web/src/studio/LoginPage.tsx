@@ -3,7 +3,7 @@ import { useAuth } from "./AuthContext";
 import { PRODUCT_NAME } from "../shared/brand";
 
 export function LoginPage() {
-	const { signIn } = useAuth();
+	const { signIn, readonlyHint } = useAuth();
 	const [password, setPassword] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -35,6 +35,15 @@ export function LoginPage() {
 				<p className="sm-meta" style={{ textAlign: "center" }}>
 					보기 전용 비밀번호로 들어오면 화면은 전부 볼 수 있고 실행만 막힙니다.
 				</p>
+				{/* 🔴 비밀번호를 화면에 대놓고 적는다. 구경하러 온 사람에게 나눠 주려고 만든 값이라
+				    숨기면 쓸모가 없다 — 대신 그 역할로는 GET 말고 아무것도 되지 않는다(서버가 403).
+				    값은 서버가 준다(AuthContext) — 여기 상수로 박으면 `.env` 를 바꾼 뒤 화면이
+				    옛 값을 보여주고, 그걸 믿은 사람이 못 들어온다. */}
+				{readonlyHint && (
+					<p className="sm-meta" style={{ textAlign: "center" }}>
+						구경만 하실 분: <code>{readonlyHint}</code>
+					</p>
+				)}
 
 				<div className="field">
 					<label className="field__label" htmlFor="password">

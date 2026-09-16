@@ -34,7 +34,7 @@ WINDOW_SEC = 60
 _hits: dict[tuple[str, str], list[float]] = {}
 
 
-def _client_ip(request: Request) -> str:
+def client_ip(request: Request) -> str:
     """🔴 `X-Real-IP` 만 믿는다. nginx 가 이 헤더를 **덮어쓰기** 때문이다
     (`proxy_set_header X-Real-IP $remote_addr`).
 
@@ -98,7 +98,7 @@ def check_rate(request: Request, viewer: str, kind: str) -> None:
     """
     limit = LIMITS[kind]
     now = time.monotonic()
-    ip = _client_ip(request)
+    ip = client_ip(request)
     if _count(kind, f"v:{viewer}", now) >= limit or _count(kind, f"i:{ip}", now) >= limit * IP_MULTIPLIER:
         raise HTTPException(429, "너무 잦습니다. 잠시 뒤에 다시 시도하세요.")
     _hits[(kind, f"v:{viewer}")].append(now)

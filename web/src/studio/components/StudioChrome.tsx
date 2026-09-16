@@ -49,7 +49,7 @@ export function StudioBanners({
 	status: { data: ShortsStatus | null; error: Error | null };
 	studio: StudioJob;
 }) {
-	const { job, jobBusy, error, notice } = studio;
+	const { job, jobBusy, foreignJob, error, notice } = studio;
 	const { canAct, denied, clearDenied } = useAuth();
 	return (
 		<>
@@ -79,6 +79,16 @@ export function StudioBanners({
 				<div className="notice">
 					{STAGE_LABEL[job.kind] ?? job.kind} 진행 중… ({elapsed(job.createdAt)} 경과) · 끝날 때까지
 					다른 실행은 대기합니다
+				</div>
+			)}
+			{/* 🔴 남이 돌리는 중. 이 배너가 없으면 "왜 내 것만 거절되지" 의 답이 화면 어디에도 없다 —
+			    서버는 한 번에 하나만 받는다(409). 누가 눌렀는지는 알 수 없다: 관리자 비밀번호가
+			    하나라 사람을 구분하지 않는다. 그래서 **무엇이 언제부터**만 말한다. */}
+			{foreignJob && (
+				<div className="notice">
+					다른 창에서 {STAGE_LABEL[foreignJob.kind] ?? foreignJob.kind} 실행 중…
+					({elapsed(foreignJob.createdAt)} 경과) · 한 번에 하나만 돌기 때문에 지금 실행을 누르면
+					거절됩니다
 				</div>
 			)}
 		</>

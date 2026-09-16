@@ -40,18 +40,36 @@ class SchemaError(RuntimeError):
 _pools: dict[str, ConnectionPool] = {}
 _pools_lock = threading.Lock()
 
+DEFAULT_POOL_MAX = 8
+_pool_max = DEFAULT_POOL_MAX
+
+
+def set_pool_max(n: int) -> None:
+    """풀 크기를 정한다(`SHORTS_DB_POOL_MAX`).
+
+    🔴 **풀이 만들어지기 전에** 불러야 한다 — 풀은 URL 당 한 번 만들어져 프로세스가 죽을 때까지
+    그대로다. 서버는 기동 때 부른다(http/server.py::serve). CLI·테스트는 기본값으로 돈다.
+    """
+    global _pool_max
+    _pool_max = max(1, n)
+
 
 def pool(url: str) -> ConnectionPool:
     """URL 당 풀 하나. 프로세스 안에서 공유한다 — API 스레드와 잡 워커가 같은 풀을 쓴다.
 
-    max_size 8: uvicorn 의 동기 엔드포인트는 스레드풀에서 돌고 잡 워커는 1개다. 동시에 연결을 쥐는
-    수가 그보다 훨씬 적다. Postgres 기본 max_connections(100) 안에서 넉넉하다.
+    기본 8: uvicorn 의 동기 엔드포인트는 스레드풀에서 돌고 잡 워커는 1개다. 조회가 인덱스 조회와
+    수백 행 스캔뿐이라 한 요청이 연결을 쥐는 시간이 ms 단위고, 8개면 그 수십 배의 동시 요청을
+    받아넘긴다.
+
+    🔴 크게 잡는 것은 공짜가 아니다. Postgres 는 **연결마다 백엔드 프로세스**를 띄우고(수 MB),
+    운영 db 컨테이너에는 `mem_limit: 400m` 이 걸려 있다(compose.yaml) — shared_buffers 128MB 에
+    20 연결을 더하면 그 상한에 닿는다. 20 으로 올리려면 db 메모리 상한도 함께 올린다.
     """
     with _pools_lock:
         found = _pools.get(url)
         if found is None:
             found = ConnectionPool(
-                url, min_size=1, max_size=8, open=True,
+                url, min_size=1, max_size=_pool_max, open=True,
                 # 행을 dict 로 받는다. `row["col"]` 이 코드 전체의 관례다.
                 kwargs={"row_factory": dict_row},
             )
