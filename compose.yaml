@@ -38,6 +38,10 @@ services:
 
   shorts:
     build: .
+    # 🔴 태그를 고정한다. 안 쓰면 compose 가 디렉터리 이름으로 `shorts_maker-shorts` 를 만드는데,
+    # 그러면 레포를 다른 이름의 폴더에 두는 순간 이미지 이름이 달라져 롤백 태그(`shorts-maker:prev`,
+    # scripts/deploy.sh)가 어긋난다. 롤백은 `docker tag shorts-maker:prev shorts-maker:latest` 한 줄이다.
+    image: shorts-maker:latest
     restart: unless-stopped
     depends_on:
       db:
