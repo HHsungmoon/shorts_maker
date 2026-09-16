@@ -298,13 +298,33 @@ class LoginTest(ApiAuthTestCase):
     def test_me_reports_the_state_without_erroring(self):
         self.assertEqual(
             self.client.get("/auth/me").json(),
-            {"authenticated": False, "authRequired": True, "role": None},
+            {
+                "authenticated": False,
+                "authRequired": True,
+                "role": None,
+                "readonlyHint": READONLY,
+            },
         )
         self.login()
         self.assertEqual(
             self.client.get("/auth/me").json(),
-            {"authenticated": True, "authRequired": True, "role": "admin"},
+            {
+                "authenticated": True,
+                "authRequired": True,
+                "role": "admin",
+                "readonlyHint": READONLY,
+            },
         )
+
+    def test_the_readonly_password_is_handed_out_but_the_admin_one_never_is(self):
+        """🔴 보기 전용 비밀번호는 **무인증으로** 나간다 — 나눠 주려고 만든 값이라 그게 용도다.
+
+        위험한 실수는 하나뿐이다: 같은 자리에 관리자 비밀번호가 실리는 것. 응답 전체를 문자열로
+        훑어 그 값이 어디에도 없음을 본다(키 이름을 바꿔도 이 검사는 계속 유효하다).
+        """
+        body = self.client.get("/auth/me")
+        self.assertEqual(body.json()["readonlyHint"], READONLY)
+        self.assertNotIn(PASSWORD, body.text)
 
     def test_the_cookie_is_not_readable_by_scripts(self):
         self.login()
@@ -341,7 +361,8 @@ class LocalDevModeTest(ApiAuthTestCase):
     def test_the_frontend_is_told_no_login_is_needed(self):
         self.assertEqual(
             self.client.get("/auth/me").json(),
-            {"authenticated": True, "authRequired": False, "role": "admin"},
+            # 로그인 자체가 없으니 안내할 비밀번호도 없다 — 화면이 빈 안내를 그리지 않게 null 이다.
+            {"authenticated": True, "authRequired": False, "role": "admin", "readonlyHint": None},
         )
 
     def test_binding_beyond_loopback_is_refused_in_this_state(self):

@@ -11,6 +11,8 @@ from unittest import mock
 from shorts_maker.http import auth
 
 PASSWORD = "correct-horse-battery-staple"
+# 잠금이 IP 별이라 테스트도 주소를 준다(2026-09-16). 서버는 nginx 가 덮어쓰는 X-Real-IP 를 쓴다.
+IP = "203.0.113.7"
 
 
 class SessionTokenTest(unittest.TestCase):
@@ -94,19 +96,27 @@ class AuthenticateTest(unittest.TestCase):
         self.addCleanup(auth.reset_throttle)
 
     def test_each_password_maps_to_its_role(self):
-        self.assertEqual(auth.authenticate("admin-pw", "ro-pw", "admin-pw"), auth.ADMIN)
-        self.assertEqual(auth.authenticate("admin-pw", "ro-pw", "ro-pw"), auth.READONLY)
+        self.assertEqual(auth.authenticate("admin-pw", "ro-pw", "admin-pw", IP), auth.ADMIN)
+        self.assertEqual(auth.authenticate("admin-pw", "ro-pw", "ro-pw", IP), auth.READONLY)
 
     def test_a_wrong_password_is_no_role(self):
-        self.assertIsNone(auth.authenticate("admin-pw", "ro-pw", "nope"))
+        self.assertIsNone(auth.authenticate("admin-pw", "ro-pw", "nope", IP))
 
     def test_one_wrong_attempt_counts_once_not_twice(self):
         """🔴 두 번 세면 보기 전용 비밀번호가 있다는 이유만으로 잠금이 절반 속도로 찬다."""
         for _ in range(auth.MAX_FAILURES - 1):
-            auth.authenticate("admin-pw", "ro-pw", "nope")
-        self.assertEqual(auth.locked_for(), 0)
-        auth.authenticate("admin-pw", "ro-pw", "nope")
-        self.assertGreater(auth.locked_for(), 0)
+            auth.authenticate("admin-pw", "ro-pw", "nope", IP)
+        self.assertEqual(auth.locked_for(IP), 0)
+        auth.authenticate("admin-pw", "ro-pw", "nope", IP)
+        self.assertGreater(auth.locked_for(IP), 0)
+
+    def test_a_password_pasted_with_spaces_still_works(self):
+        """🔴 비밀번호를 화면에 공개하니 복사해 붙이는 게 기본 사용이 됐다.
+
+        끝에 딸려 온 공백 하나가 실패로 세면 보안에는 아무 도움이 안 되고 잠금만 찬다.
+        """
+        self.assertEqual(auth.authenticate("admin-pw", "ro-pw", " ro-pw\n", IP), auth.READONLY)
+        self.assertEqual(auth.locked_for(IP), 0)
 
 
 class ThrottleTest(unittest.TestCase):
@@ -116,28 +126,71 @@ class ThrottleTest(unittest.TestCase):
     tearDown = setUp
 
     def test_a_correct_password_passes(self):
-        self.assertTrue(auth.check(PASSWORD, PASSWORD))
-        self.assertEqual(auth.locked_for(), 0)
+        self.assertTrue(auth.check(PASSWORD, PASSWORD, IP))
+        self.assertEqual(auth.locked_for(IP), 0)
 
     def test_locks_out_after_repeated_failures(self):
         for _ in range(auth.MAX_FAILURES):
-            self.assertFalse(auth.check(PASSWORD, "wrong"))
-        self.assertGreater(auth.locked_for(), 0)
+            self.assertFalse(auth.check(PASSWORD, "wrong", IP))
+        self.assertGreater(auth.locked_for(IP), 0)
 
     def test_a_success_clears_the_failure_count(self):
         # 하루 종일 오타를 냈다고 해서 그 뒤의 정상 사용이 잠기면 안 된다.
         for _ in range(auth.MAX_FAILURES - 1):
-            auth.check(PASSWORD, "wrong")
-        self.assertTrue(auth.check(PASSWORD, PASSWORD))
+            auth.check(PASSWORD, "wrong", IP)
+        self.assertTrue(auth.check(PASSWORD, PASSWORD, IP))
         for _ in range(auth.MAX_FAILURES - 1):
-            auth.check(PASSWORD, "wrong")
-        self.assertEqual(auth.locked_for(), 0)
+            auth.check(PASSWORD, "wrong", IP)
+        self.assertEqual(auth.locked_for(IP), 0)
 
     def test_the_lockout_expires(self):
         for _ in range(auth.MAX_FAILURES):
-            auth.check(PASSWORD, "wrong")
+            auth.check(PASSWORD, "wrong", IP)
         with mock.patch.object(auth.time, "time", return_value=time.time() + auth.LOCKOUT_SEC + 1):
-            self.assertEqual(auth.locked_for(), 0)
+            self.assertEqual(auth.locked_for(IP), 0)
+
+
+class PerAddressThrottleTest(unittest.TestCase):
+    """🔴 잠금은 **IP 별**이다 (2026-09-16).
+
+    보기 전용 비밀번호를 화면에 공개하면서 서로 모르는 여럿이 같은 문으로 들어온다. 카운터가
+    전역이면 남의 오타 다섯 번이 나를 잠그고, 그 순간 관리자 본인도 못 들어온다 — 심사 도중
+    가장 먼저 터질 자리였다. IP 를 돌려가며 두드리는 쪽은 전역 백스톱이 받는다.
+    """
+
+    def setUp(self):
+        auth.reset_throttle()
+
+    tearDown = setUp
+
+    def test_one_address_locking_does_not_lock_another(self):
+        for _ in range(auth.MAX_FAILURES):
+            auth.check(PASSWORD, "wrong", "10.0.0.1")
+        self.assertGreater(auth.locked_for("10.0.0.1"), 0)
+        self.assertEqual(auth.locked_for("10.0.0.2"), 0)
+        # 잠기지 않은 쪽은 정상적으로 들어간다.
+        self.assertTrue(auth.check(PASSWORD, PASSWORD, "10.0.0.2"))
+
+    def test_failures_outside_the_window_are_forgotten(self):
+        """창을 벗어난 실패는 잊는다 — 드문드문 틀린 게 쌓여 잠기면 안 된다."""
+        for _ in range(auth.MAX_FAILURES - 1):
+            auth.check(PASSWORD, "wrong", IP)
+        later = time.time() + auth.WINDOW_SEC + 1
+        with mock.patch.object(auth.time, "time", return_value=later):
+            self.assertFalse(auth.check(PASSWORD, "wrong", IP))
+            # 옛 실패가 살아 있었다면 이 한 번으로 잠겼을 것이다.
+            self.assertEqual(auth.locked_for(IP), 0)
+
+    def test_many_addresses_together_still_trip_the_global_backstop(self):
+        """IP 를 바꿔 가며 두드리는 경우. 한 IP 당 한도 밑이라도 전체가 넘으면 잠근다."""
+        for n in range(auth.GLOBAL_MAX_FAILURES):
+            auth.check(PASSWORD, "wrong", f"10.1.{n // 256}.{n % 256}")
+        # 아직 한 번도 틀리지 않은 주소까지 잠긴다 — 그게 백스톱의 뜻이다.
+        self.assertGreater(auth.locked_for("192.168.0.9"), 0)
+
+    def test_the_backstop_is_far_above_ordinary_typos(self):
+        # 사람이 오타로 닿는 값이면 백스톱이 곧 전역 잠금이 된다. 한 IP 한도의 몇 배여야 한다.
+        self.assertGreaterEqual(auth.GLOBAL_MAX_FAILURES, auth.MAX_FAILURES * 5)
 
 
 if __name__ == "__main__":

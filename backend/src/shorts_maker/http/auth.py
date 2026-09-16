@@ -22,23 +22,41 @@ Spring 프록시 뒤에 있을 때는 이 파일이 필요 없었다 — backend
 
 import base64
 import hmac
+import threading
 import time
 from hashlib import sha256
 
 COOKIE_NAME = "sm_session"
 
-# 🔴 비밀번호가 하나뿐이라 무차별 대입이 실제 위협이다. 창을 두지 않으면 초당 수천 번
-# 시도로 짧은 비밀번호는 며칠이면 뚫린다.
+# 🔴 무차별 대입은 실제 위협이다. 창이 없으면 초당 수천 번 시도로 짧은 비밀번호는 며칠이면 뚫린다.
 #
-# 실패 카운터는 IP 별이 아니라 **전역**이다. IP 를 돌려가며 우회하는 걸 막는 대신,
-# 공격자가 운영자를 잠글 수 있다(DoS). 1인용 도구에서는 뚫리는 쪽이 더 나쁘고 창이
-# 60초라 실사용에 걸리지 않아 이 절충을 택했다. 프로세스 메모리에만 있어서 재기동하면
-# 풀린다 — 재기동을 유발할 수 있는 공격자라면 이미 더 큰 문제가 있다.
-MAX_FAILURES = 5
+# **실패는 IP 별로 센다**(2026-09-16). 예전에는 프로세스 전역 카운터 하나였고, 1인용 도구라는
+# 전제에서는 그 절충이 맞았다. 보기 전용 비밀번호를 **화면에 공개**하면서 전제가 바뀌었다 —
+# 서로 모르는 여러 명이 동시에 로그인한다. 전역 카운터면 **남 다섯 명의 오타가 나를 잠근다**:
+# 복사하다 끝에 붙은 공백 하나면 실패 한 번이고, 다섯 번이면 60초 동안 아무도(관리자 포함)
+# 못 들어온다. 심사 도중 가장 먼저 터질 자리였다.
+#
+# IP 를 돌려가며 두드리는 공격은 **전역 백스톱**이 받는다 — 창 안 전체 실패가 GLOBAL_MAX_FAILURES
+# 를 넘으면 그때는 다 같이 잠근다. 평범한 오타로는 닿지 않는 값이라 사람을 막지 않는다.
+#
+# 세는 방식도 바꿨다: 성공할 때까지 누적하는 대신 **창 안의 실패**만 본다. 하루 종일 드문드문
+# 틀린 것이 쌓여 잠기는 일이 없다.
+#
+# 상태는 프로세스 메모리에만 있다 — 재기동하면 풀린다. 재기동을 일으킬 수 있는 공격자라면
+# 이미 더 큰 문제가 있다.
+MAX_FAILURES = 5          # 한 IP 가 창 안에 낼 수 있는 실패
+WINDOW_SEC = 60           # 실패를 세는 창. 지나간 실패는 잊는다
 LOCKOUT_SEC = 60
+GLOBAL_MAX_FAILURES = 50  # 창 안 전체 실패. IP 를 바꿔 가며 두드리는 경우의 백스톱
+MAX_TRACKED_IPS = 4096    # 메모리 상한
 
-_failures = 0
-_locked_until = 0.0
+# 🔴 uvicorn 의 동기 엔드포인트는 스레드풀에서 병렬로 돈다 — 카운터를 락 없이 건드리면
+# 동시에 들어온 시도가 서로의 증가를 덮어써 잠금이 늦게 걸린다.
+_lock = threading.Lock()
+_failures: dict[str, list[float]] = {}  # ip → 최근 실패 시각
+_locked_until: dict[str, float] = {}  # ip → 잠금이 풀리는 시각
+_global_failures: list[float] = []
+_global_locked_until = 0.0
 
 
 def _key(password: str) -> bytes:
@@ -104,48 +122,99 @@ def role_of(admin_password: str, readonly_password: str, token: str | None) -> s
     return None
 
 
-def locked_for() -> int:
-    """지금 잠겨 있으면 남은 초, 아니면 0."""
-    remaining = _locked_until - time.time()
+def _prune(now: float) -> None:
+    """창을 벗어난 기록을 버린다. 부르는 쪽이 `_lock` 을 쥐고 있어야 한다."""
+    global _global_locked_until
+    for ip in list(_failures):
+        fresh = [t for t in _failures[ip] if now - t < WINDOW_SEC]
+        if fresh:
+            _failures[ip] = fresh
+        else:
+            del _failures[ip]
+    for ip in list(_locked_until):
+        if _locked_until[ip] <= now:
+            del _locked_until[ip]
+    _global_failures[:] = [t for t in _global_failures if now - t < WINDOW_SEC]
+    if _global_locked_until <= now:
+        _global_locked_until = 0.0
+    # 🔴 무한히 자라는 dict 를 프로세스에 두지 않는다. X-Real-IP 는 nginx 가 덮어써서 위조할 수
+    # 없으니 실제로는 방문자 수만큼만 자라지만, 상한 없는 메모리는 그 자체로 버그다.
+    if len(_failures) > MAX_TRACKED_IPS:
+        _failures.clear()
+
+
+def locked_for(ip: str) -> int:
+    """이 IP 가 지금 잠겨 있으면 남은 초, 아니면 0. 전역 백스톱이 걸렸으면 모두가 잠긴다."""
+    now = time.time()
+    with _lock:
+        _prune(now)
+        until = max(_locked_until.get(ip, 0.0), _global_locked_until)
+    remaining = until - now
     return max(0, int(remaining)) if remaining > 0 else 0
 
 
-def check(password: str, attempt: str) -> bool:
-    """비밀번호를 확인하고 실패 카운터를 갱신한다. 잠긴 동안에는 호출하지 않는다."""
-    global _failures, _locked_until
-    # 🔴 == 로 비교하면 일치하는 접두사 길이만큼 시간이 달라져 한 글자씩 복원된다.
-    if hmac.compare_digest(attempt, password):
-        _failures = 0
-        return True
-    _failures += 1
-    if _failures >= MAX_FAILURES:
-        _locked_until = time.time() + LOCKOUT_SEC
-        _failures = 0
-    return False
+def _record_failure(ip: str) -> None:
+    """부르는 쪽이 `_lock` 을 쥔다."""
+    global _global_locked_until
+    now = time.time()
+    _prune(now)
+    _failures.setdefault(ip, []).append(now)
+    _global_failures.append(now)
+    if len(_failures[ip]) >= MAX_FAILURES:
+        _locked_until[ip] = now + LOCKOUT_SEC
+        _failures.pop(ip, None)
+    if len(_global_failures) >= GLOBAL_MAX_FAILURES:
+        _global_locked_until = now + LOCKOUT_SEC
+        _global_failures.clear()
 
 
-def authenticate(admin_password: str, readonly_password: str, attempt: str) -> str | None:
+def _forget(ip: str) -> None:
+    """성공한 IP 의 실패 기록을 지운다. 부르는 쪽이 `_lock` 을 쥔다."""
+    _failures.pop(ip, None)
+    _locked_until.pop(ip, None)
+
+
+def _matches(secret: str, attempt: str) -> bool:
+    """🔴 `==` 로 비교하면 일치하는 접두사 길이만큼 시간이 달라져 한 글자씩 복원된다.
+
+    앞뒤 공백을 뗀 값도 받아 준다. 비밀번호를 **화면에서 복사해 붙이는** 사용이 기본이 되면서
+    끝에 붙은 공백 하나가 실패로 세는 일이 실제로 생긴다 — 그 실패는 보안이 아니라 잠금만 채운다.
+    """
+    return hmac.compare_digest(attempt, secret) or hmac.compare_digest(attempt.strip(), secret)
+
+
+def check(password: str, attempt: str, ip: str) -> bool:
+    """비밀번호를 확인하고 그 IP 의 실패 기록을 갱신한다. 잠긴 동안에는 호출하지 않는다."""
+    with _lock:
+        if _matches(password, attempt):
+            _forget(ip)
+            return True
+        _record_failure(ip)
+        return False
+
+
+def authenticate(admin_password: str, readonly_password: str, attempt: str, ip: str) -> str | None:
     """비밀번호로 역할을 정한다. 맞으면 역할, 아니면 None.
 
-    🔴 실패 카운터는 **한 번만** 올린다. 두 비밀번호를 각각 `check` 로 확인하면 틀린 입력 하나가
+    🔴 실패는 **한 번만** 센다. 두 비밀번호를 각각 `check` 로 확인하면 틀린 입력 하나가
     카운터를 둘 올려 잠금이 절반 속도로 찬다.
     """
-    global _failures, _locked_until
-    if admin_password and hmac.compare_digest(attempt, admin_password):
-        _failures = 0
-        return ADMIN
-    if readonly_password and hmac.compare_digest(attempt, readonly_password):
-        _failures = 0
-        return READONLY
-    _failures += 1
-    if _failures >= MAX_FAILURES:
-        _locked_until = time.time() + LOCKOUT_SEC
-        _failures = 0
-    return None
+    with _lock:
+        if admin_password and _matches(admin_password, attempt):
+            _forget(ip)
+            return ADMIN
+        if readonly_password and _matches(readonly_password, attempt):
+            _forget(ip)
+            return READONLY
+        _record_failure(ip)
+        return None
 
 
 def reset_throttle() -> None:
     """테스트 전용 — 모듈 전역 상태가 테스트 간에 새지 않게 한다."""
-    global _failures, _locked_until
-    _failures = 0
-    _locked_until = 0.0
+    global _global_locked_until
+    with _lock:
+        _failures.clear()
+        _locked_until.clear()
+        _global_failures.clear()
+        _global_locked_until = 0.0

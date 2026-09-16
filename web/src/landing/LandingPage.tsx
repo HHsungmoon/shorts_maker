@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { PRODUCT_NAME } from "../shared/brand";
+import { request } from "../shared/client";
 import "./landing.css";
 
 /**
@@ -14,6 +16,28 @@ import "./landing.css";
  * 🔴 lazy 로 나누지 않는다. 가장 먼저 열리는 화면이라 코드 조각을 한 번 더 기다리게 할 이유가 없다.
  */
 export function LandingPage() {
+	// 보기 전용 비밀번호를 여기 적어 준다(2026-09-16). 해커톤 방문자가 관리자 면을 구경하러 오는데
+	// 비밀번호를 물어볼 사람이 옆에 없기 때문이다. 그 역할은 GET 말고 아무것도 못 한다(서버가 403).
+	//
+	// 🔴 값을 상수로 박지 않고 서버에서 받는다. 박아 두면 `.env` 를 바꾼 순간 이 화면이 옛 값을
+	// 보여주고, 그걸 그대로 친 방문자는 다섯 번 만에 잠긴다(로그인 실패 잠금).
+	const [readonlyHint, setReadonlyHint] = useState<string | null>(null);
+
+	useEffect(() => {
+		let active = true;
+		request<{ readonlyHint: string | null }>("/auth/me")
+			.then((state) => {
+				if (active) {
+					setReadonlyHint(state.readonlyHint);
+				}
+			})
+			// 🔴 첫 화면이 이 호출에 걸리면 안 된다. 실패하면 안내 한 줄이 빠질 뿐, 두 문은 그대로다.
+			.catch(() => undefined);
+		return () => {
+			active = false;
+		};
+	}, []);
+
 	return (
 		<main className="landing">
 			<h1 className="landing__title">{PRODUCT_NAME}</h1>
@@ -39,6 +63,14 @@ export function LandingPage() {
 					</span>
 				</Link>
 			</div>
+
+			{readonlyHint && (
+				<p className="landing__key">
+					<strong>구경하러 오셨나요?</strong> 관리자 페이지 비밀번호에 <code>{readonlyHint}</code> 를
+					넣으면 화면을 전부 둘러볼 수 있습니다. 이 비밀번호로는 영상 추가·클립 생성·발행 같은
+					<strong> 실행만 막힙니다</strong> — 남의 데이터가 바뀌지 않으니 마음껏 눌러 보셔도 됩니다.
+				</p>
+			)}
 		</main>
 	);
 }

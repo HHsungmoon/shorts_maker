@@ -23,6 +23,8 @@ interface AuthValue {
 	 * 거절). 화면이 잠그는 이유는 누를 수 없는 버튼을 누르게 두면 403 만 쌓이기 때문이다.
 	 */
 	canAct: boolean;
+	/** 로그인 화면에 적어 주는 보기 전용 비밀번호. 서버가 준다(authApi.AuthState). */
+	readonlyHint: string | null;
 	/** 403 이 왔을 때의 안내 문구. 한 곳에서 받아 배너로 보여준다. */
 	denied: string | null;
 	clearDenied: () => void;
@@ -36,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 	const [status, setStatus] = useState<Status>("checking");
 	const [authRequired, setAuthRequired] = useState(true);
 	const [role, setRole] = useState<StudioRole | null>(null);
+	const [readonlyHint, setReadonlyHint] = useState<string | null>(null);
 	const [denied, setDenied] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -47,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 				}
 				setAuthRequired(state.authRequired);
 				setRole(state.role);
+				setReadonlyHint(state.readonlyHint);
 				setStatus(state.authenticated ? "in" : "out");
 			})
 			// 서버가 죽어 있어도 화면은 떠야 한다. 로그인 화면에서 실패 이유를 보여준다.
@@ -96,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 				role,
 				// 비밀번호를 안 쓰는 로컬 개발(authRequired=false)에서는 전권이다.
 				canAct: role !== "readonly",
+				readonlyHint,
 				denied,
 				clearDenied: () => setDenied(null),
 				signIn,

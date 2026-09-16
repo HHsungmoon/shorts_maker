@@ -11,6 +11,7 @@
 
 import hmac
 from contextlib import AbstractContextManager
+from datetime import datetime, timezone
 
 import psycopg
 from fastapi import Header, HTTPException, Request
@@ -91,4 +92,24 @@ def rows(conn: psycopg.Connection, sql: str, params: tuple = ()) -> list[dict]:
 
 
 def submit(kind: str, target: str, fn) -> dict:
-    return queue.submit(kind, target, fn).as_dict()
+    """잡을 띄운다. 이미 도는 게 있으면 **409** 다.
+
+    🔴 거절을 엔드포인트마다 적지 않고 여기 한 곳에 둔다 — 실행 엔드포인트가 열두 개이고,
+    적는 방식은 새로 생긴 것을 반드시 빠뜨린다(라우터 레벨 인증과 같은 이유).
+
+    409 를 고른 이유: 요청 자체는 옳고 **지금 상태와 충돌**할 뿐이다. 400 이면 사용자가 잘못
+    보낸 것처럼 읽히고, 503 이면 서버가 고장난 것처럼 읽힌다.
+    """
+    try:
+        return queue.submit(kind, target, fn).as_dict()
+    except jobs.Busy as busy:
+        running = busy.running
+        started = datetime.fromisoformat(running.created_at)
+        seconds = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"다른 작업이 실행 중입니다 — {running.kind}({running.target}), {seconds}초 경과. "
+                "한 번에 하나만 돌릴 수 있습니다. 끝난 뒤에 다시 눌러 주세요."
+            ),
+        ) from busy

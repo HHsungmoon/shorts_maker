@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 # 🔴 모듈을 별칭으로 들여온다. 아래 `/debug` 라우트 함수 이름이 `debug_page` 라서 그대로 import 하면
 # 함수 정의가 모듈 전역 이름을 덮어써 `debug_page.INDEX_HTML` 이 AttributeError 가 된다.
-from ..answers import clusters
+from ..answers import clusters, viewers
 from . import auth, deps, studio, watch
 from . import debug_page as debug_html
 from ..config import LOOPBACK
@@ -40,16 +40,20 @@ class LoginIn(BaseModel):
 
 
 @app.post("/auth/login")
-def login(body: LoginIn, response: Response) -> dict:
+def login(body: LoginIn, request: Request, response: Response) -> dict:
     cfg = deps.cfg
     if not cfg.admin_password:
         # 로컬 개발 모드. 로그인 화면을 띄울 이유가 없으므로 프론트가 이 응답을 보고 건너뛴다.
-        return {"ok": True, "authRequired": False, "role": auth.ADMIN}
-    locked = auth.locked_for()
+        return {"ok": True, "authRequired": False, "role": auth.ADMIN, "readonlyHint": None}
+    # 🔴 잠금은 **IP 별**이다(2026-09-16). 보기 전용 비밀번호를 화면에 공개하면서 서로 모르는
+    # 여러 명이 같은 문으로 들어오게 됐고, 전역 카운터면 남의 오타가 나를 잠근다(auth.py).
+    # IP 는 nginx 가 덮어쓰는 X-Real-IP 에서 온다 — 클라이언트가 위조할 수 없는 값이다.
+    ip = viewers.client_ip(request)
+    locked = auth.locked_for(ip)
     if locked:
         raise HTTPException(429, f"시도가 너무 많습니다. {locked}초 뒤에 다시 시도하세요.")
     # 🔴 비밀번호 하나로 역할이 갈린다. 같은 화면에 들어오지만 할 수 있는 일이 다르다.
-    role = auth.authenticate(cfg.admin_password, cfg.readonly_password, body.password)
+    role = auth.authenticate(cfg.admin_password, cfg.readonly_password, body.password, ip)
     if role is None:
         raise HTTPException(401, "비밀번호가 맞지 않습니다")
     response.set_cookie(
@@ -83,13 +87,27 @@ def me(request: Request) -> dict:
     "로그인 안 됨"은 정상 상태이고, 에러로 만들면 콘솔이 매번 빨개진다."""
     cfg = deps.cfg
     if not cfg.admin_password:
-        return {"authenticated": True, "authRequired": False, "role": auth.ADMIN}
+        # 로컬 개발 모드. 로그인이 없으니 안내할 비밀번호도 없다.
+        return {"authenticated": True, "authRequired": False, "role": auth.ADMIN, "readonlyHint": None}
     role = auth.role_of(
         cfg.admin_password, cfg.readonly_password, request.cookies.get(auth.COOKIE_NAME)
     )
     # 🔴 역할을 화면에 준다. 화면은 이걸로 행동 버튼을 잠그지만 그건 **안내**일 뿐이고,
     # 진짜 울타리는 서버의 메서드 검사다(http/deps.py) — 버튼을 우회해도 403 이다.
-    return {"authenticated": role is not None, "authRequired": True, "role": role}
+    return {
+        "authenticated": role is not None,
+        "authRequired": True,
+        "role": role,
+        # 🔴 보기 전용 비밀번호를 **무인증 응답에 그대로 싣는다.** 실수가 아니라 용도다 —
+        # 해커톤 방문자에게 나눠 주려고 만든 값이고, 첫 화면과 로그인 화면이 이걸 읽어 사람에게
+        # 보여준다. 그래서 규칙이 둘이다:
+        #   ① 여기에 실리는 건 **보기 전용뿐이다.** 관리자 비밀번호는 어떤 응답에도 넣지 않는다
+        #   ② `SHORTS_READONLY_PASSWORD` 에 넣는 값은 **공개된다고 전제한다** — 다른 곳에서
+        #      쓰는 비밀번호를 재활용하지 않는다(그래서 관리자 것과 같으면 기동을 거부한다)
+        # 화면에 박아두지 않고 서버가 주는 이유는 값을 바꿨을 때 화면이 옛 값을 보여주면
+        # 그걸 믿은 사람이 못 들어오기 때문이다.
+        "readonlyHint": cfg.readonly_password or None,
+    }
 
 
 @app.get("/health")
@@ -176,6 +194,8 @@ def serve() -> None:
     import uvicorn
 
     check_binding()
+    # 🔴 풀이 만들어지기 **전에** 크기를 정한다 — 풀은 URL 당 한 번 만들어지고 그대로 산다.
+    store.set_pool_max(deps.cfg.db_pool_max)
     with connect() as conn:
         store.apply_schema(conn)
         # 재기동 시 매달린 잡 정리 — 워커는 메모리에만 있으므로 RUNNING 은 이미 죽은 것이다.
