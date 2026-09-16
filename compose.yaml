@@ -21,6 +21,10 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - shorts-pg:/var/lib/postgresql/data
+    # 🔴 상한이 없으면 db 가 새는 순간 커널 OOM Killer 가 **관계없는** shorts 를 골라 죽인다.
+    # Postgres 는 shared_buffers 기본 128MB + 커넥션당 수 MB 라 400m 면 이 워크로드에 넉넉하다 —
+    # 풀이 작고 큰 정렬이 없다(SQL 은 인덱스 조회와 수백 행 스캔뿐이다).
+    mem_limit: 400m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shorts -d shorts"]
       interval: 5s
@@ -66,9 +70,16 @@ services:
       # DB 에는 이 디렉터리 기준 상대경로만 들어간다(config.Config.store_source).
       - ./backend/sources:/sources
     # 🔴 4GB VM 에서 이 서비스가 **유일한 워크로드**라는 전제다(backend 와 같은 VM 을 쓰던
-    # 시절의 1400m 에서 올렸다). OS·nginx·빌드 순간에 ~1GB 를 남긴다.
-    # 다른 것을 같은 VM 에 얹으면 여기부터 다시 계산해야 한다.
-    mem_limit: 3000m
+    # 시절의 1400m 에서 올렸다). 다른 것을 같은 VM 에 얹으면 여기부터 다시 계산해야 한다.
+    #
+    # 배분(2026-09-15, 운영 VM 을 NCP c2-g3a = vCPU 2 / 4GB 로 확정하며 다시 잡았다):
+    #   물리 3.8Gi(3891MB) = shorts 2600m + db 400m + 나머지 ~890MB(OS·sshd·docker 데몬·nginx)
+    # 3000m 이던 값을 내린 이유는 여유가 남아서가 아니라 **db 에 상한이 없었기 때문**이다 —
+    # 둘을 합치면 물리보다 커서, 한쪽이 새면 커널이 아무 컨테이너나 골라 죽이는 배분이었다.
+    # whisper `small` 추론이 실측 1.1GB(make_shorts §7)라 2600m 는 ffmpeg 와 겹쳐도 여유가 있고,
+    # 애초에 잡 워커가 1개라 STT 와 렌더는 겹치지 않는다.
+    # swap 2GB 는 서버 위 `npm ci`·vite 빌드가 튀는 **그 순간**의 안전망이지 상시 여유가 아니다.
+    mem_limit: 2600m
     logging:
       driver: json-file
       options:

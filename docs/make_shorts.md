@@ -680,13 +680,22 @@ Naver Cloud 단일 VM(4GB / 2vCPU). `docker compose` 한 스택이고 nginx 가 
 컨테이너는 없고 Postgres 는 여전히 C5 다. DB 안의 파일 경로는 `source_dir`/`work_dir` 기준 상대경로라
 볼륨을 서버로 옮겨도 그대로 읽힌다.
 
+운영 VM 은 **NCP `c2-g3a`(vCPU 2 / 4GB / 50GB, Ubuntu 24.04)** 로 확정했다(2026-09-15).
+물리 메모리는 실측 3.8Gi(3891MB)이고 swap 2GB 를 붙인다.
+
 | | 상한 | 비고 |
 |---|---|---|
-| shorts | 3000m | whisper `small` 추론이 실측 1.1GB + ffmpeg |
-| 나머지 | ~1000m | OS · nginx · 빌드 순간 |
+| shorts | 2600m | whisper `small` 추론이 실측 1.1GB + ffmpeg |
+| db (Postgres) | 400m | shared_buffers 기본 128MB + 커넥션당 수 MB |
+| 나머지 | ~890m | OS · sshd · docker 데몬 · nginx |
 
 🔴 이 배분은 **이 VM 에 다른 워크로드가 없다는 전제**다. backend 와 같은 VM 을 쓰던
 시절에는 1400m 였다 — 뭔가를 같이 얹으면 여기부터 다시 계산한다.
+
+🔴 **shorts 를 3000m 에서 내린 이유는 여유가 남아서가 아니라 `db` 에 상한이 없었기 때문이다.**
+둘을 합치면 물리보다 커지는 배분이었고, 그러면 한쪽이 새는 순간 커널 OOM Killer 가
+**관계없는 컨테이너**를 골라 죽인다. swap 2GB 는 서버 위에서 `npm ci`·vite 빌드가 튀는
+**그 순간**을 받아내는 안전망이지 상시 여유가 아니다.
 
 🔴 **2vCPU 라 잡 워커 1개가 특히 중요하다.** STT 와 ffmpeg 가 겹치면 API 응답까지 같이
 느려진다. 동시 실행은 정책이 아니라 구조로 막혀 있다(§4).
