@@ -177,6 +177,56 @@ img {
 	color: #6b5518;
 }
 
+/* 거절 토스트 — 화면 맨 위에 띠로 뜬다(2026-09-17, components/DeniedToast).
+   🔴 fixed 다. 흐름에 끼워 넣으면 띠가 뜨는 순간 본문이 내려가 방금 누른 버튼이 움직인다.
+   색은 .notice 와 같은 계열을 쓴다 — 오류가 아니라 안내이고, 빨간 띠는 화면이 고장난 것처럼 읽힌다. */
+.toast {
+	position: fixed;
+	inset: 0 0 auto;
+	z-index: 60;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 14px;
+	padding: 11px 16px;
+	background: #fff8e6;
+	border-bottom: 1px solid #f0dca8;
+	box-shadow: 0 2px 10px rgb(20 24 28 / 10%);
+	color: #6b5518;
+	font-size: 13px;
+	line-height: 1.6;
+	animation: toast-in 160ms ease-out;
+}
+
+.toast__close {
+	border: none;
+	background: none;
+	font-size: 18px;
+	line-height: 1;
+	color: #6b5518;
+	opacity: 0.7;
+	cursor: pointer;
+	padding: 0 2px;
+}
+
+.toast__close:hover {
+	opacity: 1;
+}
+
+@keyframes toast-in {
+	from {
+		transform: translateY(-100%);
+		opacity: 0;
+	}
+}
+
+/* 움직임을 줄여 달라고 설정한 사람에게는 미끄러뜨리지 않는다. */
+@media (prefers-reduced-motion: reduce) {
+	.toast {
+		animation: none;
+	}
+}
+
 /* 테이블 */
 .table-wrap {
 	overflow-x: auto;
