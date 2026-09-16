@@ -14,7 +14,7 @@ backend/   FastAPI + CLI. 파이프라인 본체
     pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate)
                  🔴 긴 영상은 **청크 여러 개**로 나뉜다 — 메모리 상한 때문이다(아래 Stack). 화면·CLI 는
                  소스 단위로만 말한다(`add_chunks` · `stt.run_for_source` · `segmentation.run_for_source`)
-    answers/     시청자 질문 → 답 클립. 제품명 TEASE 는 코드에 안 쓴다 — 여기가 그 기능이다
+    answers/     시청자 질문 → 답 클립. 제품명 CLIPQ 는 코드에 안 쓴다 — 여기가 그 기능이다
                  viewers(익명 쿠키·레이트리밋) · events(퍼널). M3 부터 embeddings · clusters · judge
     adapters/    프로세스 밖과 말하는 것만: ffmpeg · gemini · ytdlp
     db/          store(풀·마이그레이션 적용) · migrations/NNN_*.sql
@@ -27,7 +27,7 @@ backend/   FastAPI + CLI. 파이프라인 본체
 **세션을 시작하면 `docs/handoff.md` 부터 읽는다** — 지금 상태 · 다음 할 일 · 함정.
 
 설계 문서는 둘이다:
-- `docs/tease.md` — **제품(TEASE)·아키텍처·스키마 v9.** 시청자 질문 → 숏폼 → 원본 유입.
+- `docs/tease.md` — **제품(CLIPQ)·아키텍처·스키마 v9.** (파일 이름은 옛 제품명 TEASE 의 흔적이다) 시청자 질문 → 숏폼 → 원본 유입.
   기획과 기술을 한 문서에 담았고, 미결 사항은 §13. **새 기능은 여기서 시작한다.**
 - `docs/make_shorts.md` — 파이프라인 내부(STT·분할·rank·cut·render), 비용 기준선, 코딩 규약.
 - `docs/update_plan.md` — **지나온 기록.** 마일스톤 M0~M9, 완료 조건, 실측, 결정 로그, 불변식.
@@ -54,9 +54,10 @@ backend/   FastAPI + CLI. 파이프라인 본체
   호스트 `uv run sm …`·테스트는 그 `db` 컨테이너에 붙는다(`SHORTS_DB_HOST=127.0.0.1`)
 - 웹: **FastAPI** (`sm serve`). 빌드된 프론트(`web/dist`)를 같은 오리진에서 서빙한다 —
   그래서 CORS 설정이 없고 세션 쿠키가 그냥 실린다
-- 프론트: **React + Vite + TypeScript**, 라우터 없음. 화면이 로그인과 파이프라인 둘뿐이고
-  전환은 URL 이 아니라 인증 상태가 결정한다
-- 인증: **비밀번호 1개 + 서명된 httpOnly 세션 쿠키**(`http/auth.py`, stdlib hmac). 회원가입은 없다 —
+- 프론트: **React + Vite + TypeScript + react-router**. 트리가 셋이다 — 첫 화면(`/`) ·
+  시청자(`/watch/**`) · 스튜디오(`/studio/**`). 🔴 뒤 둘은 lazy 로 가른다: 한 트리면 시청자도
+  `/auth/me` 를 부르고 로그인 화면이 번쩍인다. 로그인 화면만은 라우트가 아니다(인증 상태가 정한다)
+- 인증: **비밀번호 둘(관리자·보기 전용) + 역할이 담긴 서명 httpOnly 세션 쿠키**(`http/auth.py`, stdlib hmac). 회원가입은 없다 —
   운영자 1명이 쓰는 도구다. 사용자 개념을 넣으면 전 테이블에 소유자 스코프와 잡 큐 분리가
   따라온다. 🔴 루프백이 아닌 주소에 바인딩하려면 `SHORTS_ADMIN_PASSWORD` 가 있어야 기동된다
 - CLI 는 **argparse**(stdlib). typer/click 은 쓰지 않는다 — 런타임 동작이 같다
@@ -128,6 +129,12 @@ backend/   FastAPI + CLI. 파이프라인 본체
   뒤** 선택적으로 받는다
 - `cfg`·`queue` 는 `http/deps.py` 에 있다. **`deps.cfg` 로 속성 접근** — `from .deps import cfg` 로 값을
   복사하면 테스트의 교체가 반영되지 않는다
+- **역할이 둘이다**(2026-09-16). `SHORTS_ADMIN_PASSWORD` 는 전부, `SHORTS_READONLY_PASSWORD` 는 **읽기만**.
+  🔴 무엇이 행동인지를 엔드포인트마다 적지 않고 **HTTP 메서드**로 가른다(`deps.SAFE_METHODS`) —
+  적는 방식은 새로 생긴 엔드포인트를 반드시 빠뜨린다. 보기 전용이 행동을 부르면 401 이 아니라 **403** 이다.
+  GET 인데 실제로는 행동인 구간 미리보기만 그 자리에서 따로 막는다(ffmpeg 를 돌린다).
+  화면의 버튼 잠금은 **안내**일 뿐이고 울타리는 서버다. 🔴 보기 전용 비밀번호만 넣으면 인증이 켜지지
+  않는다 — 두 비밀번호가 같아도 기동을 거부한다(`server.check_binding`)
 - 비밀번호 비교는 `hmac.compare_digest`. `==` 는 일치 접두사 길이만큼 시간이 달라진다
 - 프론트 catch-all 라우트는 **반드시 API 라우트 뒤에** 등록한다. 앞에 두면 `/api/**` 를 전부 삼킨다
 

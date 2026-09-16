@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "./AuthContext";
 import { fetchJob } from "./api";
 import type { ShortsJob } from "./types";
 
@@ -24,6 +25,9 @@ export const STAGE_LABEL: Record<string, string> = {
 	answer: "질문에 답하기",
 };
 
+// 보기 전용이 실행을 눌렀을 때. 오류가 아니라 안내라서 notice 로 띄운다.
+export const READ_ONLY_NOTICE = "보기 전용으로 로그인했습니다. 실행은 관리자만 할 수 있습니다.";
+
 export interface StudioJob {
 	job: ShortsJob | null;
 	/** 이 탭이 띄운 잡이 아직 도는 중. 버튼을 잠그는 근거다. */
@@ -44,6 +48,9 @@ export interface StudioJob {
 }
 
 export function useStudioJob(): StudioJob {
+	// 🔴 실행을 **여기서** 막는다. 버튼마다 막으면 새로 생긴 버튼을 반드시 빠뜨린다 —
+	// 스튜디오의 실행은 거의 전부 이 훅의 submit·act 를 지난다(서버에도 같은 경계가 있다).
+	const { canAct } = useAuth();
 	const [job, setJob] = useState<ShortsJob | null>(null);
 	const [reloadToken, setReloadToken] = useState(0);
 	const [error, setError] = useState<string | null>(null);
@@ -78,6 +85,10 @@ export function useStudioJob(): StudioJob {
 	const reload = useCallback(() => setReloadToken((n) => n + 1), []);
 
 	const submit = useCallback(async (start: () => Promise<ShortsJob>) => {
+		if (!canAct) {
+			setNotice(READ_ONLY_NOTICE);
+			return;
+		}
 		setError(null);
 		setNotice(null);
 		try {
@@ -85,7 +96,7 @@ export function useStudioJob(): StudioJob {
 		} catch (e: unknown) {
 			setError(e instanceof Error ? e.message : String(e));
 		}
-	}, []);
+	}, [canAct]);
 
 	const adopt = useCallback((started: ShortsJob) => {
 		setError(null);
@@ -94,6 +105,10 @@ export function useStudioJob(): StudioJob {
 	}, []);
 
 	const act = useCallback(async (run: () => Promise<unknown>) => {
+		if (!canAct) {
+			setNotice(READ_ONLY_NOTICE);
+			return;
+		}
 		setError(null);
 		try {
 			await run();
@@ -101,7 +116,7 @@ export function useStudioJob(): StudioJob {
 		} catch (e: unknown) {
 			setError(e instanceof Error ? e.message : String(e));
 		}
-	}, []);
+	}, [canAct]);
 
 	return {
 		job,

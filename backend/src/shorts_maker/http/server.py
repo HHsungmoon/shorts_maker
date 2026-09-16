@@ -44,15 +44,21 @@ def login(body: LoginIn, response: Response) -> dict:
     cfg = deps.cfg
     if not cfg.admin_password:
         # 로컬 개발 모드. 로그인 화면을 띄울 이유가 없으므로 프론트가 이 응답을 보고 건너뛴다.
-        return {"ok": True, "authRequired": False}
+        return {"ok": True, "authRequired": False, "role": auth.ADMIN}
     locked = auth.locked_for()
     if locked:
         raise HTTPException(429, f"시도가 너무 많습니다. {locked}초 뒤에 다시 시도하세요.")
-    if not auth.check(cfg.admin_password, body.password):
+    # 🔴 비밀번호 하나로 역할이 갈린다. 같은 화면에 들어오지만 할 수 있는 일이 다르다.
+    role = auth.authenticate(cfg.admin_password, cfg.readonly_password, body.password)
+    if role is None:
         raise HTTPException(401, "비밀번호가 맞지 않습니다")
     response.set_cookie(
         auth.COOKIE_NAME,
-        auth.issue(cfg.admin_password, cfg.session_ttl_hours),
+        auth.issue(
+            cfg.admin_password if role == auth.ADMIN else cfg.readonly_password,
+            cfg.session_ttl_hours,
+            role,
+        ),
         max_age=cfg.session_ttl_hours * 3600,
         # 🔴 httponly: 쿠키를 JS 에서 못 읽게 한다. XSS 가 나도 세션이 바로 새지는 않는다
         # (admin-web 은 localStorage 였고, 그건 스크립트가 그대로 읽어간다).
@@ -62,7 +68,7 @@ def login(body: LoginIn, response: Response) -> dict:
         secure=cfg.cookie_secure,
         path="/",
     )
-    return {"ok": True, "authRequired": True}
+    return {"ok": True, "authRequired": True, "role": role}
 
 
 @app.post("/auth/logout")
@@ -77,12 +83,13 @@ def me(request: Request) -> dict:
     "로그인 안 됨"은 정상 상태이고, 에러로 만들면 콘솔이 매번 빨개진다."""
     cfg = deps.cfg
     if not cfg.admin_password:
-        return {"authenticated": True, "authRequired": False}
-    token = request.cookies.get(auth.COOKIE_NAME)
-    return {
-        "authenticated": bool(token and auth.verify(cfg.admin_password, token)),
-        "authRequired": True,
-    }
+        return {"authenticated": True, "authRequired": False, "role": auth.ADMIN}
+    role = auth.role_of(
+        cfg.admin_password, cfg.readonly_password, request.cookies.get(auth.COOKIE_NAME)
+    )
+    # 🔴 역할을 화면에 준다. 화면은 이걸로 행동 버튼을 잠그지만 그건 **안내**일 뿐이고,
+    # 진짜 울타리는 서버의 메서드 검사다(http/deps.py) — 버튼을 우회해도 403 이다.
+    return {"authenticated": role is not None, "authRequired": True, "role": role}
 
 
 @app.get("/health")
@@ -150,6 +157,13 @@ def spa(full_path: str) -> Any:
 
 def check_binding() -> None:
     cfg = deps.cfg
+    # 🔴 두 비밀번호가 같으면 보기 전용이 조용히 무력해진다 — `role_of` 가 관리자를 먼저 보므로
+    # 보기 전용으로 들어온 사람이 전권을 갖는다. 기동을 막아 그 실수를 배포 전에 드러낸다.
+    if cfg.readonly_password and cfg.readonly_password == cfg.admin_password:
+        raise SystemExit(
+            "거부: SHORTS_READONLY_PASSWORD 가 SHORTS_ADMIN_PASSWORD 와 같다.\n"
+            "같으면 보기 전용으로 로그인한 사람이 관리자 권한을 갖는다. 다른 값을 쓴다."
+        )
     if cfg.api_host not in LOOPBACK and not cfg.admin_password:
         raise SystemExit(
             f"거부: {cfg.api_host} 에 바인딩하려면 SHORTS_ADMIN_PASSWORD 가 필요하다.\n"

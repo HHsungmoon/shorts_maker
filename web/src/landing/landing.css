@@ -1,0 +1,80 @@
+/* 첫 화면. 고르는 것 말고 할 일이 없으므로 요소를 최소로 둔다.
+ *
+ * 🔴 두 문의 크기를 같게 둔다. 관리자 쪽을 크게 하면 시청자가 남의 도구로 끌려가고, 시청자 쪽만
+ * 크게 하면 심사위원이 스튜디오를 못 찾는다 — 둘 다 첫 화면에서 잃으면 안 되는 사람들이다. */
+
+.landing {
+	max-width: 760px;
+	margin: 0 auto;
+	padding: 72px 20px 64px;
+	text-align: center;
+}
+
+.landing__title {
+	margin: 0;
+	font-size: 34px;
+	letter-spacing: -0.02em;
+}
+
+.landing__lead {
+	margin: 10px 0 36px;
+	font-size: 15px;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
+.landing__doors {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.landing__door {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 22px 20px;
+	text-align: left;
+	text-decoration: none;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.landing__door:hover {
+	border-color: var(--accent);
+}
+
+.landing__door-kind {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.landing__door-title {
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1.4;
+}
+
+.landing__door-note {
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
+/* 관리자 쪽은 테두리만 옅게 달리 둔다 — 크기는 같게 두되 "내 자리가 아니다" 는 신호는 준다. */
+.landing__door--studio {
+	background: var(--bg);
+}
+
+@media (max-width: 600px) {
+	.landing {
+		padding: 44px 16px 48px;
+	}
+
+	.landing__doors {
+		grid-template-columns: 1fr;
+	}
+}

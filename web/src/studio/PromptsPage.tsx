@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "./AuthContext";
 import { fetchPrompts, saveStandard } from "./api";
 import { StudioHead } from "./components/StudioChrome";
 import { useAsync } from "../shared/useAsync";
@@ -31,7 +32,7 @@ export function PromptsPage() {
 	return (
 		<div className="page">
 			<StudioHead title="프롬프트">
-				<Link to="/" className="button button--small">
+				<Link to="/studio" className="button button--small">
 					영상 목록으로
 				</Link>
 			</StudioHead>
@@ -80,6 +81,7 @@ function StandardEditor({ catalog, onSaved }: { catalog: PromptCatalog; onSaved:
 	const saved = catalog.standard.body;
 	const max = catalog.standard.maxChars;
 	// 🔴 편집 중인 글은 따로 들고 있는다. 서버 값으로 매번 덮으면 저장 전에 고친 것이 사라진다.
+	const { canAct } = useAuth();
 	const [draft, setDraft] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -142,7 +144,7 @@ function StandardEditor({ catalog, onSaved }: { catalog: PromptCatalog; onSaved:
 						type="button"
 						className="button button--small sm-go"
 						onClick={save}
-						disabled={busy || over || !dirty}
+						disabled={busy || over || !dirty || !canAct}
 					>
 						{busy ? "저장 중…" : length === 0 && saved ? "기준 지우기" : "저장"}
 					</button>

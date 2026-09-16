@@ -64,8 +64,8 @@ export function PublishTab({ view }: { view: SourceView }) {
 			{clips.length === 0 && (
 				<p className="sm-shelf__empty">
 					아직 만든 클립이 없습니다.{" "}
-					<Link to={`/sources/${data.source.id}/questions`}>질문</Link> 탭에서 시청자 질문에
-					답하거나, <Link to={`/sources/${data.source.id}/make`}>새 클립</Link> 탭에서 기준을 적어
+					<Link to={`/studio/sources/${data.source.id}/questions`}>질문</Link> 탭에서 시청자 질문에
+					답하거나, <Link to={`/studio/sources/${data.source.id}/make`}>새 클립</Link> 탭에서 기준을 적어
 					직접 만드세요.
 				</p>
 			)}

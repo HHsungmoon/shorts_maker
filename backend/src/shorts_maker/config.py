@@ -124,6 +124,7 @@ class Config:
     api_port: int
     api_token: str
     admin_password: str
+    readonly_password: str
     session_ttl_hours: int
     cookie_secure: bool
     web_dir: Path
@@ -211,6 +212,7 @@ def load() -> Config:
         api_port=int(get("SHORTS_API_PORT")),
         api_token=os.environ.get("SHORTS_API_TOKEN", ""),
         admin_password=os.environ.get("SHORTS_ADMIN_PASSWORD", ""),
+        readonly_password=os.environ.get("SHORTS_READONLY_PASSWORD", ""),
         session_ttl_hours=int(get("SHORTS_SESSION_TTL_HOURS")),
         cookie_secure=(
             cookie_secure.strip().lower() in ("1", "true", "yes")
