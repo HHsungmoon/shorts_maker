@@ -197,7 +197,7 @@ class StageCallTest(SchemaTestCase):
         )
 
     def test_accepts_every_known_stage(self):
-        # TEASE 로 늘어난 단계(caption·embed·retrieve·cluster·judge·classify·download·preview)까지
+        # CLIPQ 로 늘어난 단계(caption·embed·retrieve·cluster·judge·classify·download·preview)까지
         # 전부 CHECK 에 있어야 한다. 하나라도 빠지면 그 단계의 기록이 통째로 실패한다.
         source_id = self.insert_source()
         for stage in self.STAGES:

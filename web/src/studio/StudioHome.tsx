@@ -2,10 +2,11 @@ import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import { deleteMedia, fetchMedia, fetchShortsSources, fetchStatus, thumbnailUrl } from "./api";
 import { PRODUCT_NAME } from "../shared/brand";
+import { useAuth } from "./AuthContext";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { NewSourceModal } from "./components/NewSourceModal";
 import { StudioBanners, StudioHead } from "./components/StudioChrome";
-import { useStudioJob } from "./useStudioJob";
+import { READ_ONLY_NOTICE, useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type { ShortsMediaList, ShortsSourceListItem, ShortsStatus } from "./types";
 import "./home.css";
@@ -39,7 +40,7 @@ function stage(source: ShortsSourceListItem): { text: string; modifier: string }
 function Card({ source }: { source: ShortsSourceListItem }) {
 	const { text, modifier } = stage(source);
 	return (
-		<Link to={`/sources/${source.id}`} className="sm-home-card">
+		<Link to={`/studio/sources/${source.id}`} className="sm-home-card">
 			<div className="sm-home-card__thumb">
 				{source.youtube_id ? (
 					// 로딩에 실패해도 레이아웃이 무너지지 않게 배경색을 깔아 둔다.
@@ -74,6 +75,7 @@ function Card({ source }: { source: ShortsSourceListItem }) {
 }
 
 export function StudioHome() {
+	const { canAct } = useAuth();
 	const studio = useStudioJob();
 	const [modalOpen, setModalOpen] = useState(false);
 
@@ -89,6 +91,11 @@ export function StudioHome() {
 	// 🔴 서버에서 파일과 파생물을 실제로 지운다. 되돌릴 수 없어 무엇이 사라지는지 먼저 말한다.
 	const remove = useCallback(
 		async (name: string) => {
+			// 🔴 삭제는 되돌릴 수 없다. useStudioJob 의 act 를 안 거치는 자리라 여기서 따로 막는다.
+			if (!canAct) {
+				setNotice(READ_ONLY_NOTICE);
+				return;
+			}
 			const item = media.data?.items.find((i) => i.name === name);
 			const extra = item?.sourceId ? "\n전사·구간·클립도 함께 지워집니다." : "";
 			if (!window.confirm(`${name} 을(를) 서버에서 삭제합니다.${extra}\n되돌릴 수 없습니다.`)) {
@@ -104,7 +111,7 @@ export function StudioHome() {
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[media.data, setError, setNotice, reload],
+		[canAct, media.data, setError, setNotice, reload],
 	);
 
 	const items = sources.data ?? [];
@@ -113,12 +120,13 @@ export function StudioHome() {
 		<div className="page">
 			<StudioHead title={PRODUCT_NAME} count={items.length > 0 ? `영상 ${items.length}개` : undefined}>
 				{/* 관리자 기준은 모든 영상에 걸린다 — 영상 페이지가 아니라 여기서 들어간다. */}
-				<Link to="/prompts" className="button button--small">
+				<Link to="/studio/prompts" className="button button--small">
 					프롬프트
 				</Link>
 				<button
 					type="button"
 					className="button button--small sm-go"
+					disabled={!canAct}
 					onClick={() => setModalOpen(true)}
 				>
 					+ 새로 만들기

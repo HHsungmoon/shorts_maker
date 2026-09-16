@@ -21,8 +21,8 @@ function Gate() {
 	if (status !== "in") {
 		return <LoginPage />;
 	}
-	// 🔴 App.tsx 가 이 트리를 `/*` 에 걸어 두므로 여기 경로는 상대경로다 — 앞에 `/` 를 붙이면
-	// 어느 것도 매치되지 않는다. <Link to> 는 반대로 절대경로를 쓴다(`/sources/3`).
+	// 🔴 App.tsx 가 이 트리를 `/studio/*` 에 걸어 두므로 여기 경로는 상대경로다 — 앞에 `/` 를 붙이면
+	// 어느 것도 매치되지 않는다. <Link to> 는 반대로 절대경로를 쓴다(`/studio/sources/3`).
 	return (
 		<Routes>
 			<Route index element={<StudioHome />} />

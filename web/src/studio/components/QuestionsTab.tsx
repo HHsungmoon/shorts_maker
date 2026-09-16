@@ -16,7 +16,7 @@ export function QuestionsTab({ view }: { view: SourceView }) {
 			{data && !prepDone && (
 				<p className="sm-meta sm-hint">
 					영상 준비가 끝나야 질문에 답할 수 있습니다 —{" "}
-					<Link to={`/sources/${data.source.id}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
+					<Link to={`/studio/sources/${data.source.id}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
 				</p>
 			)}
 

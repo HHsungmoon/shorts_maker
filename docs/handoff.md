@@ -6,7 +6,7 @@
 | 알고 싶은 것 | 문서 |
 |---|---|
 | 지금 상태 · 다음 할 일 · 함정 | **이 문서** |
-| 제품(TEASE) · 아키텍처 · 스키마 v9 · 미결 사항 | [`tease.md`](tease.md) |
+| 제품(CLIPQ) · 아키텍처 · 스키마 v9 · 미결 사항 | [`tease.md`](tease.md) |
 | **지나온 기록 · 마일스톤 · 실측 · 결정 로그** | [`update_plan.md`](update_plan.md) |
 | **앞으로 할 일 · 우선순위 · 제출 전/후 구분** | [`upgrade_plan.md`](upgrade_plan.md) |
 | PM 기획서와 구현의 차이 | [`기획서_리뷰.md`](기획서_리뷰.md) |
@@ -20,7 +20,7 @@
 
 **SWYP 조직의 3개 레포(backend · admin-web · shorts_maker)에서 shorts_maker 를 완전히 떼어내
 독립 서비스로 만들었다.** 자체 프론트(`web/`)와 로그인이 붙었고, 테스트 128개 · 프론트 빌드 ·
-실제 DB 마이그레이션(v7→v8)까지 통과했다. **다음 단계는 제품 피벗(TEASE)** — 시청자 질문 기반
+실제 DB 마이그레이션(v7→v8)까지 통과했다. **다음 단계는 제품 피벗(CLIPQ)** — 시청자 질문 기반
 숏폼. 설계는 끝났고(`tease.md`) 구현은 시작 전이다.
 
 **2026-09-04 (2차):** 로컬 실행을 **docker compose 로 통일**했다. DB 의 파일 경로가 절대경로여서
@@ -30,7 +30,7 @@ v8 잔재로 죽던 `sm rank run` 도 고쳤다. §4-7.
 **2026-09-06 (3차): M0 완료.** `update_plan.md` 의 첫 마일스톤. tease §13 의 미결 9개를 권고대로 확정했고,
 `/api/**` 를 `studio_api.py` 라우터로 빼 **라우터 레벨 인증**으로 바꿨다(라우트 테이블 순회 테스트가 지킨다).
 "다시 추출" 은 청크 **교체**가 됐고, rank 가 `segments.excluded_by` 에 쓰던 것을 없앴으며, 다운로드·등록 잡이
-`sources.status` 를 RUNNING→DONE/FAILED 로 남긴다. 화면 제목은 TEASE(`web/src/shared/brand.ts`). numpy 추가.
+`sources.status` 를 RUNNING→DONE/FAILED 로 남긴다. 화면 제목은 CLIPQ(`web/src/shared/brand.ts`). numpy 추가.
 테스트 151개 · 컨테이너에서 등록→청크(409·교체)→STT→분할→rank→cut→render 전부 확인. §4-8.
 
 **2026-09-06 (4차): 구조 재편 + Postgres 전환.** 평평하던 20개 모듈을 `http/ pipeline/ answers/ adapters/ db/ cli/`
@@ -148,7 +148,7 @@ Gemini 할당량이 풀린 뒤 확인해야 한다.
 ├── docs/
 │   ├── handoff.md             이 문서
 │   ├── tease.md               🆕 제품·아키텍처·스키마 v9 (823줄)
-│   ├── update_plan.md         🆕 (9/5) TEASE 실행 계획 — M0~M9, 상태 전이표, 불변식, 결정 D1~D10
+│   ├── update_plan.md         🆕 (9/5) CLIPQ 실행 계획 — M0~M9, 상태 전이표, 불변식, 결정 D1~D10
 │   └── make_shorts.md         backend 레포에서 가져옴. §0·§10·§13 갱신
 ├── Dockerfile                 🆕 루트로 이동. node 빌드 → python → runtime, 한 이미지
 ├── compose.yaml               **로컬·운영 공용.** db(postgres:17, 127.0.0.1:5432, shorts-pg 볼륨) + shorts(127.0.0.1:8100)
@@ -271,7 +271,7 @@ range 요청으로 스트리밍한다). react-router 도 뺐다(당시엔 화면
   **커서의 메서드**다. sqlite3 에는 연결에도 있어서 그대로 옮겼다가 STT 저장이 통째로 실패했는데, 테스트는
   순수 함수(`to_utterance_rows`)만 봐서 전부 통과했다. 저장 경로를 도는 테스트 3개를 추가했다
   (`tests/pipeline/test_stt.py::RunForChunkTest`).
-- **구조.** `tease/` 를 옆에 붙이는 대신 역할별로 갈랐다(§3, update_plan §3). TEASE 는 서비스 이름이라 코드에
+- **구조.** `tease/` 를 옆에 붙이는 대신 역할별로 갈랐다(§3, update_plan §3). CLIPQ 는 서비스 이름이라 코드에
   안 쓰고, 그 기능은 `answers/` 다. 이동은 `git mv` 만 하고 로직은 안 건드렸다(별도 커밋). 인증인가 대비로 넣은 건
   없다 — `require_auth` 가 Principal 을 돌려주게 바꾸는 것은 사용자 개념이 생길 때 한다.
 
@@ -386,7 +386,7 @@ rank 3위/제외 2 · cut · render · 미리보기 6.2MB · 클립 7.8MB · 비
 | 2 | M9 리허설 도구 일체 | `sm tease seed` 없음, `demo.sql` 없음, 리허설 0회. M9 는 "🔴 반드시" 인데 전 항목 미체크다 |
 | 3 | `useAsync` 깜빡임 | `shared/useAsync.ts` 가 의존성이 바뀔 때마다 `data: null` 로 되돌린다. 스튜디오가 잡을 폴링하는 동안 패널이 매 주기 빈 화면이 된다. **자기 주석이 "폴링 주기를 줄이기 전에 여기부터 고쳐야 한다"고 적어 놨다.** 새로 붙인 퍼널 표도 같은 훅을 쓴다 |
 | 4 | `PATCH /api/clips/{id}/parts` (in/out 미세 조정) · 큐 위치 표시 | 둘 다 명세에 있고 없다. 데모는 없이도 돈다 |
-| 5 | 라우트 배치(D12) | `/` 가 스튜디오 로그인이라 데모 첫 화면이 어긋난다. 시청자 면이 `/watch` 에 있다 |
+| 5 | ~~라우트 배치(D12)~~ | 2026-09-16 결정 — `/` 첫 화면 · `/watch` 시청자 · `/studio` 스튜디오 |
 
 **만든 것(2026-09-09)**: 유튜브 IFrame Player API 로 원본 플레이어를 제어한다 — 숏폼 CTA 가 `seekTo` 로
 그 초로 옮기고, 페이지를 떠나지 않는다. 클립 payload 에 `start_sec`(소스 절대 초)을 실었다.
@@ -421,7 +421,7 @@ rank 3위/제외 2 · cut · render · 미리보기 6.2MB · 클립 7.8MB · 비
 
 ### 7-3. 문서가 코드와 어긋난 곳
 
-- `tease.md` §8-2 의 라우트 배치와 코드가 **반대**다 → D12 로 미결 등록했다
+- ~~`tease.md` §8-2 라우트 배치가 코드와 반대~~ — 2026-09-16 에 `/` 를 첫 화면으로 두며 해소(D12)
 - `tease.md` §8-3 은 `youtube-nocookie.com`, 코드는 `www.youtube.com/embed`
 - `tease.md` §5-8 은 아직 단어 타임스탬프를 "켜기만 하면 되는 것"이라 한다 — `update_plan.md` §1 이 이미
   틀렸다고 적었는데 §5-8 본문은 안 고쳤다

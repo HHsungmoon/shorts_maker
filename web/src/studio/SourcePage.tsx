@@ -254,7 +254,7 @@ export function SourcePage() {
 	return (
 		<div className="page">
 			{/* 브라우저 뒤로가기로도 돌아가지만, 링크로 열린 화면에는 그 길이 없다. */}
-			<Link to="/" className="sm-back">
+			<Link to="/studio" className="sm-back">
 				← 영상 목록
 			</Link>
 
@@ -277,7 +277,7 @@ export function SourcePage() {
 						이 영상을 찾을 수 없습니다. ({detail.error.message})
 					</p>
 					<p className="sm-meta" style={{ textAlign: "center" }}>
-						<Link to="/">영상 목록으로 돌아가기</Link>
+						<Link to="/studio">영상 목록으로 돌아가기</Link>
 					</p>
 				</>
 			)}
@@ -320,26 +320,26 @@ export function SourcePage() {
 			    공개 탭의 주소는 예전 클립 탭의 `clips` 를 그대로 쓴다 — 완성 클립이 있던 자리라
 			    옛 링크가 같은 내용을 연다. */}
 			<nav className="sm-tabs">
-				<NavLink to={`/sources/${sourceId}/questions`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/questions`} className={tabClass}>
 					질문
 					{openCount > 0 && <span className="sm-tab__badge">{openCount}</span>}
 				</NavLink>
-				<NavLink to={`/sources/${sourceId}/prepare`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/prepare`} className={tabClass}>
 					영상 준비
 					{!prepDone && <span className="sm-tab__need">준비 필요</span>}
 				</NavLink>
-				<NavLink to={`/sources/${sourceId}/make`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/make`} className={tabClass}>
 					새 클립
 				</NavLink>
-				<NavLink to={`/sources/${sourceId}/clips`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/clips`} className={tabClass}>
 					공개
 				</NavLink>
 				{/* 🔴 리포트는 **가져가는 것**이고 기록은 내부용이다. 앞에 둔다. */}
-				<NavLink to={`/sources/${sourceId}/report`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/report`} className={tabClass}>
 					리포트
 					{missingCount > 0 && <span className="sm-tab__badge">{missingCount}</span>}
 				</NavLink>
-				<NavLink to={`/sources/${sourceId}/log`} className={tabClass}>
+				<NavLink to={`/studio/sources/${sourceId}/log`} className={tabClass}>
 					기록
 				</NavLink>
 			</nav>
@@ -356,7 +356,7 @@ export function SourcePage() {
 				{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.
 				    🔴 여기서 상대경로를 쓰면 /sources/3/bogus/questions 로 가고 그 주소가 다시
 				    이 라우트에 걸려 무한 리다이렉트가 된다. */}
-				<Route path="*" element={<Navigate to={`/sources/${sourceId}/questions`} replace />} />
+				<Route path="*" element={<Navigate to={`/studio/sources/${sourceId}/questions`} replace />} />
 			</Routes>
 		</div>
 	);
@@ -368,7 +368,7 @@ function NotFound() {
 		<div className="page">
 			<p className="state">찾을 수 없습니다.</p>
 			<p className="sm-meta" style={{ textAlign: "center" }}>
-				<Link to="/">영상 목록으로 돌아가기</Link>
+				<Link to="/studio">영상 목록으로 돌아가기</Link>
 			</p>
 		</div>
 	);

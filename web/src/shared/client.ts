@@ -19,10 +19,22 @@ export class ApiError extends Error {
 }
 
 let unauthorizedHandler: (() => void) | null = null;
+let forbiddenHandler: ((message: string) => void) | null = null;
 
 /** 세션이 끊겼을 때 부를 곳을 등록한다. AuthProvider 가 마운트되면서 채운다. */
 export function onUnauthorized(handler: (() => void) | null): void {
 	unauthorizedHandler = handler;
+}
+
+/**
+ * 권한이 없어 거절당했을 때(403) 부를 곳.
+ *
+ * 🔴 401 과 뜻이 다르다. 401 은 "로그인하라" 고 403 은 "로그인은 됐는데 권한이 없다" 다.
+ * 보기 전용으로 들어온 사람이 실행 버튼을 눌렀을 때 여기로 온다 — 화면마다 따로 처리하면
+ * 반드시 빠뜨리는 곳이 생기므로 한 곳에서 알린다.
+ */
+export function onForbidden(handler: ((message: string) => void) | null): void {
+	forbiddenHandler = handler;
 }
 
 // FastAPI 의 에러 본문은 {"detail": ...} 인데, 422(검증 실패)에서는 detail 이 객체 배열이다.
@@ -71,6 +83,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
 	// 204 와 빈 본문에 대비한다 — .json() 이 던지면 에러 메시지가 엉뚱해진다.
 	const payload: unknown = await response.json().catch(() => null);
+
+	if (response.status === 403) {
+		const denied = messageFrom(payload, "이 동작은 관리자만 할 수 있습니다");
+		forbiddenHandler?.(denied);
+		throw new ApiError(403, denied);
+	}
 
 	if (!response.ok) {
 		throw new ApiError(response.status, messageFrom(payload, response.statusText));

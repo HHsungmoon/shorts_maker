@@ -30,6 +30,11 @@ export function LoginPage() {
 				<p className="sm-meta" style={{ textAlign: "center", marginTop: -8 }}>
 					긴 영상에서 숏폼 클립을 뽑아냅니다
 				</p>
+				{/* 문이 둘이라는 걸 로그인 화면에서 말해 준다 — 보기 전용 비밀번호를 받은 사람이
+				    "내 비밀번호가 틀렸나" 로 헤매지 않게. */}
+				<p className="sm-meta" style={{ textAlign: "center" }}>
+					보기 전용 비밀번호로 들어오면 화면은 전부 볼 수 있고 실행만 막힙니다.
+				</p>
 
 				<div className="field">
 					<label className="field__label" htmlFor="password">

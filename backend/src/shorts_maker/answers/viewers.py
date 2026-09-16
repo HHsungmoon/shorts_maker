@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import HTTPException, Request, Response
 
-# 세션 쿠키가 `sm_session` 이라 접두사를 맞췄다. 🔴 제품명(TEASE)을 쿠키에 넣지 않는다 —
+# 세션 쿠키가 `sm_session` 이라 접두사를 맞췄다. 🔴 제품명(CLIPQ)을 쿠키에 넣지 않는다 —
 # 이름은 바뀔 수 있고 쿠키 이름이 바뀌면 그날 이후 방문자가 전부 새 사람이 된다.
 COOKIE_NAME = "sm_viewer"
 

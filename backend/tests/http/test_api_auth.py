@@ -12,6 +12,7 @@
 
 import dataclasses
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from shorts_maker.http import server, auth, deps, studio, watch
 from ..support import make_config, reset_db
 
 PASSWORD = "test-admin-password"
+READONLY = "test-readonly-password"
 TOKEN = "test-machine-token"
 
 
@@ -37,6 +39,7 @@ class ApiAuthTestCase(unittest.TestCase):
     """
 
     admin_password = PASSWORD
+    readonly_password = READONLY
     api_token = ""
 
     def setUp(self):
@@ -48,6 +51,7 @@ class ApiAuthTestCase(unittest.TestCase):
             root,
             web_dir=root / "nonexistent-dist",
             admin_password=self.admin_password,
+            readonly_password=self.readonly_password,
             api_token=self.api_token,
             cookie_secure=False,
         )
@@ -60,8 +64,8 @@ class ApiAuthTestCase(unittest.TestCase):
         self._tmp.cleanup()
         auth.reset_throttle()
 
-    def login(self) -> None:
-        response = self.client.post("/auth/login", json={"password": PASSWORD})
+    def login(self, password: str = PASSWORD) -> None:
+        response = self.client.post("/auth/login", json={"password": password})
         self.assertEqual(response.status_code, 200, response.text)
 
 
@@ -176,6 +180,108 @@ class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
         )
 
 
+class ReadOnlyRoleTest(ApiAuthTestCase):
+    """🔴 보기 전용은 **읽기만** 한다 (2026-09-16).
+
+    해커톤 심사처럼 여럿이 스튜디오를 들여다보는 동안 누군가 [답하기]를 누르면 Gemini 하루
+    할당량이 타고 실데이터가 바뀐다. 경계는 엔드포인트마다 적지 않고 **HTTP 메서드**로 가른다 —
+    여기서도 라우트 테이블을 순회해서, 새 엔드포인트가 생기면 자동으로 이 검사에 들어온다.
+    """
+
+    def test_every_action_is_refused_with_403_not_401(self):
+        # 🔴 401 이면 화면이 "다시 로그인하라" 로 읽는다. 로그인은 돼 있으니 403 이어야 한다.
+        self.login(READONLY)
+        checked = 0
+        for route in studio.router.routes:
+            assert isinstance(route, APIRoute)
+            for method in route.methods:
+                if method in deps.SAFE_METHODS:
+                    continue
+                checked += 1
+                with self.subTest(method=method, path=route.path):
+                    response = self.client.request(method, _fill(route.path), json={})
+                    self.assertEqual(response.status_code, 403, response.text)
+        self.assertGreater(checked, 10, "행동 라우트를 하나도 못 찾았다 — 순회가 헛돌았다")
+
+    def test_reading_still_works(self):
+        self.login(READONLY)
+        for route in studio.router.routes:
+            assert isinstance(route, APIRoute)
+            if "GET" not in route.methods:
+                continue
+            with self.subTest(path=route.path):
+                response = self.client.get(_fill(route.path))
+                # 404·422 는 정상이다(없는 id·빈 본문). 401·403 이면 구경조차 막힌 것이다.
+                self.assertNotIn(response.status_code, (401, 403), response.text)
+
+    def test_the_admin_password_still_acts(self):
+        self.login()
+        # 없는 클립이라 404 지만, 중요한 건 403 이 아니라는 것이다.
+        self.assertNotEqual(self.client.post("/api/clips/1/publish").status_code, 403)
+
+    def test_a_readonly_cookie_cannot_be_promoted_by_editing_it(self):
+        """🔴 역할이 서명 안에 있다. 쿠키의 readonly 를 admin 으로 바꿔도 서명이 깨진다."""
+        self.login(READONLY)
+        cookie = self.client.cookies.get(auth.COOKIE_NAME)
+        self.assertTrue(cookie.startswith("readonly."))
+        self.client.cookies.set(auth.COOKIE_NAME, cookie.replace("readonly.", "admin.", 1))
+        self.assertEqual(self.client.get("/api/sources").status_code, 401)
+
+    def test_a_token_signed_with_the_readonly_password_is_not_an_admin_token(self):
+        # 보기 전용 비밀번호를 아는 사람이 admin 역할 토큰을 직접 만들어도 키가 다르다.
+        forged = auth.issue(READONLY, 1, auth.ADMIN)
+        self.client.cookies.set(auth.COOKIE_NAME, forged)
+        self.assertEqual(self.client.get("/api/sources").status_code, 401)
+
+    def test_an_old_format_cookie_is_rejected(self):
+        # 2026-09-16 이전 형식(<만료>.<서명>). 역할이 없는 토큰을 관리자로 읽으면 안 된다.
+        expires = int(time.time()) + 3600
+        legacy = f"{expires}.{auth._sign(auth._key(PASSWORD), str(expires))}"
+        self.client.cookies.set(auth.COOKIE_NAME, legacy)
+        self.assertEqual(self.client.get("/api/sources").status_code, 401)
+
+    def test_the_login_response_says_which_role_you_got(self):
+        body = self.client.post("/auth/login", json={"password": READONLY}).json()
+        self.assertEqual(body["role"], "readonly")
+        self.assertEqual(self.client.get("/auth/me").json()["role"], "readonly")
+
+    def test_making_a_preview_is_an_action_even_though_it_is_a_get(self):
+        """🔴 GET 인데 ffmpeg 를 돌린다. 메서드 규칙만으로는 안 걸려서 그 자리에서 따로 막는다."""
+        with store.connect(deps.cfg.database_url) as conn:
+            source = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status)"
+                " values ('강연', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE') returning id"
+            ).fetchone()["id"]
+            chunk = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 600, 'c.wav') returning id", (source,)
+            ).fetchone()["id"]
+            segment = conn.execute(
+                "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
+                " end_utterance_idx) values (%s, 0, 0, 30, 0, 3) returning id", (chunk,)
+            ).fetchone()["id"]
+            conn.commit()
+        self.login(READONLY)
+        self.assertEqual(self.client.get(f"/api/segments/{segment}/preview").status_code, 403)
+
+
+class ReadOnlyWithoutAdminPasswordTest(ApiAuthTestCase):
+    """🔴 보기 전용 비밀번호만 넣는 것으로는 인증이 켜지지 않는다.
+
+    켜진다고 착각하면 "관리자 비밀번호 없이 외부 공개" 가 열린다. 그 조합은 check_binding 이
+    기동 단계에서 막지만, 런타임 규칙도 같은 방향이어야 한다 — 로컬 개발 모드 그대로다.
+    """
+
+    admin_password = ""
+    readonly_password = READONLY
+
+    def test_the_api_is_open_as_in_local_development(self):
+        self.assertEqual(self.client.get("/api/sources").status_code, 200)
+
+    def test_actions_are_not_blocked_either(self):
+        self.assertNotEqual(self.client.post("/api/clips/1/publish").status_code, 403)
+
+
 class LoginTest(ApiAuthTestCase):
     def test_a_wrong_password_is_refused(self):
         self.assertEqual(
@@ -191,11 +297,13 @@ class LoginTest(ApiAuthTestCase):
 
     def test_me_reports_the_state_without_erroring(self):
         self.assertEqual(
-            self.client.get("/auth/me").json(), {"authenticated": False, "authRequired": True}
+            self.client.get("/auth/me").json(),
+            {"authenticated": False, "authRequired": True, "role": None},
         )
         self.login()
         self.assertEqual(
-            self.client.get("/auth/me").json(), {"authenticated": True, "authRequired": True}
+            self.client.get("/auth/me").json(),
+            {"authenticated": True, "authRequired": True, "role": "admin"},
         )
 
     def test_the_cookie_is_not_readable_by_scripts(self):
@@ -232,7 +340,8 @@ class LocalDevModeTest(ApiAuthTestCase):
 
     def test_the_frontend_is_told_no_login_is_needed(self):
         self.assertEqual(
-            self.client.get("/auth/me").json(), {"authenticated": True, "authRequired": False}
+            self.client.get("/auth/me").json(),
+            {"authenticated": True, "authRequired": False, "role": "admin"},
         )
 
     def test_binding_beyond_loopback_is_refused_in_this_state(self):

@@ -16,7 +16,7 @@
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, report, suggest
-from . import deps, prompt_catalog
+from . import auth, deps, prompt_catalog
 from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
 from ..db import store
 from .deps import connect, require_auth, rows, submit
@@ -801,7 +801,7 @@ def get_clip_file(clip_id: int) -> Any:
 
 
 @router.get("/segments/{segment_id}/preview")
-def get_segment_preview(segment_id: int) -> Any:
+def get_segment_preview(segment_id: int, request: Request) -> Any:
     """구간을 원본 화면비 그대로 잘라 보여준다.
 
     클립을 만들기 전에 "이 구간이 볼 만한가"를 눈으로 확인하는 용도다. 재인코딩 없이
@@ -823,6 +823,11 @@ def get_segment_preview(segment_id: int) -> Any:
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"segment{segment_id:04d}.mp4"
     if not out.is_file():
+        # 🔴 **미리보기를 만드는 건 행동이다.** ffmpeg 가 2vCPU 를 쓴다. 메서드가 GET 이라
+        # 역할 검사(deps.SAFE_METHODS)를 그냥 통과하므로 여기서 한 번 더 막는다.
+        # 이미 만들어 둔 것은 보기 전용도 본다 — 구경을 막으려는 게 아니라 부하를 막는 것이다.
+        if deps.current_role(request) != auth.ADMIN:
+            raise HTTPException(403, "보기 전용에서는 미리보기를 새로 만들 수 없습니다")
         started = time.monotonic()
         error: str | None = None
         try:

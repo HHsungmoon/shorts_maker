@@ -25,25 +25,55 @@ cfg = config.load()
 queue = jobs.JobQueue()
 
 
+# 🔴 **읽기로 치는 메서드.** 나머지는 전부 행동이다.
+#
+# 역할을 엔드포인트마다 적지 않는 이유는 라우터 레벨 인증과 같다 — 적는 방식은 새로 생긴 것을
+# 반드시 빠뜨린다. 메서드로 가르면 새 엔드포인트가 자동으로 옳은 쪽에 들어가고, 라우트 테이블을
+# 순회하는 테스트가 그걸 증명한다(tests/http/test_api_auth.py).
+#
+# GET 인데 실제로는 행동인 것이 하나 있다: 구간 미리보기는 없으면 ffmpeg 로 만든다. 그건 그
+# 자리에서 따로 막는다(http/studio.py).
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
 def require_auth(request: Request, x_shorts_token: str | None = Header(default=None)) -> None:
-    """세션 쿠키 **또는** X-Shorts-Token 중 하나면 통과한다.
+    """세션 쿠키 **또는** X-Shorts-Token 중 하나면 통과한다. 역할에 따라 행동을 막는다.
 
     쿠키는 브라우저용, 토큰은 CLI·스크립트 같은 기계 클라이언트용이다. 둘 다 설정돼
     있지 않으면 인증하지 않는다 — 루프백 전용 로컬 개발 모드이고, 그 상태로 외부에
     열리는 것은 server.check_binding 이 막는다.
 
+    🔴 역할이 둘이다(2026-09-16). `admin` 은 전부, `readonly` 는 **읽기만** 한다. 읽기와 행동은
+    `SAFE_METHODS` 로 가른다. 보기 전용이 행동을 부르면 401 이 아니라 **403** 이다 — 로그인은
+    돼 있으니 다시 로그인하라고 하면 안 된다.
+
     엔드포인트마다 `Depends` 를 붙이지 않는다. `studio.router` 가 **라우터 레벨**로
     걸어서, 거기 등록되는 모든 라우트가 자동으로 이 검사를 거친다(update_plan D6).
     """
     if not cfg.admin_password and not cfg.api_token:
+        # 로컬 개발 모드. 🔴 보기 전용 비밀번호만 넣는 것으로는 인증이 켜지지 않는다 —
+        # 그 조합은 "관리자 비밀번호 없이 공개" 와 같고, check_binding 이 애초에 기동을 막는다.
+        request.state.role = auth.ADMIN
         return
     if cfg.api_token and x_shorts_token and hmac.compare_digest(x_shorts_token, cfg.api_token):
+        # 기계 클라이언트(CLI·배포 스크립트)는 전권이다. 사람이 브라우저로 쓰는 길이 아니다.
+        request.state.role = auth.ADMIN
         return
-    if cfg.admin_password:
-        token = request.cookies.get(auth.COOKIE_NAME)
-        if token and auth.verify(cfg.admin_password, token):
-            return
-    raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+    role = auth.role_of(
+        cfg.admin_password, cfg.readonly_password, request.cookies.get(auth.COOKIE_NAME)
+    )
+    if role is None:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다")
+    if role != auth.ADMIN and request.method.upper() not in SAFE_METHODS:
+        raise HTTPException(
+            status_code=403, detail="보기 전용으로 로그인했습니다. 이 동작은 관리자만 할 수 있습니다."
+        )
+    request.state.role = role
+
+
+def current_role(request: Request) -> str:
+    """이 요청의 역할. `require_auth` 를 통과한 뒤에만 뜻이 있다."""
+    return getattr(request.state, "role", auth.ADMIN)
 
 
 def connect() -> AbstractContextManager[psycopg.Connection]:

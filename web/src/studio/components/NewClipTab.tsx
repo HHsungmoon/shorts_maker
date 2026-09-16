@@ -44,14 +44,14 @@ export function NewClipTab({ view }: { view: SourceView }) {
 		<>
 			<p className="sm-newclip__lead">
 				시청자 질문과 별개로, 기준을 직접 적어 영상에서 구간을 고릅니다. 만든 클립은{" "}
-				<Link to={`/sources/${sourceId}/clips`}>공개</Link> 탭에 쌓이고, 거기서 시청자에게 내보냅니다.
+				<Link to={`/studio/sources/${sourceId}/clips`}>공개</Link> 탭에 쌓이고, 거기서 시청자에게 내보냅니다.
 			</p>
 
 			{/* 구간이 없으면 고를 대상 자체가 없다. 버튼만 잠겨 있으면 왜 안 눌리는지 알 수 없다. */}
 			{!prepDone && (
 				<p className="sm-meta sm-hint">
 					영상 준비가 끝나야 구간을 고를 수 있습니다 —{" "}
-					<Link to={`/sources/${sourceId}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
+					<Link to={`/studio/sources/${sourceId}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
 				</p>
 			)}
 
@@ -130,7 +130,7 @@ export function NewClipTab({ view }: { view: SourceView }) {
 									)}
 									{/* 만든 클립은 공개 탭에 있다. 이름만 적어 두면 어디 가서 봐야 하는지 모른다. */}
 									{clip && (
-										<Link className="sm-badge sm-badge--link" to={`/sources/${sourceId}/clips`}>
+										<Link className="sm-badge sm-badge--link" to={`/studio/sources/${sourceId}/clips`}>
 											클립 {clip.id} · {Math.round(clip.end_sec - clip.start_sec)}초
 											{clip.rendered && " · 공개 탭에서 보기 →"}
 										</Link>
