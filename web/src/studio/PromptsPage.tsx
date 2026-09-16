@@ -81,7 +81,7 @@ function StandardEditor({ catalog, onSaved }: { catalog: PromptCatalog; onSaved:
 	const saved = catalog.standard.body;
 	const max = catalog.standard.maxChars;
 	// 🔴 편집 중인 글은 따로 들고 있는다. 서버 값으로 매번 덮으면 저장 전에 고친 것이 사라진다.
-	const { canAct } = useAuth();
+	const { canAct, refuse } = useAuth();
 	const [draft, setDraft] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -140,11 +140,13 @@ function StandardEditor({ catalog, onSaved }: { catalog: PromptCatalog; onSaved:
 							되돌리기
 						</button>
 					)}
+					{/* 보기 전용도 누를 수 있게 둔다 — 막힌 이유를 토스트가 말한다(DeniedToast).
+					    글자 수 초과·변경 없음처럼 **눌러도 의미가 없는** 경우만 비활성화다. */}
 					<button
 						type="button"
 						className="button button--small sm-go"
-						onClick={save}
-						disabled={busy || over || !dirty || !canAct}
+						onClick={() => (canAct ? save() : refuse())}
+						disabled={busy || over || !dirty}
 					>
 						{busy ? "저장 중…" : length === 0 && saved ? "기준 지우기" : "저장"}
 					</button>

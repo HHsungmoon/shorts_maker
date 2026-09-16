@@ -11,6 +11,14 @@ import { onForbidden, onUnauthorized } from "../shared/client";
 // 로그인 화면이 한 번 번쩍인다.
 type Status = "checking" | "in" | "out";
 
+/**
+ * 보기 전용이 막힌 것을 눌렀을 때의 문구.
+ *
+ * 🔴 여기(권한)에 둔다. 예전에는 잡 훅(useStudioJob)에 있었는데, 잡과 상관없는 자리(삭제·기준
+ * 저장·클러스터 패널)도 같은 문구를 쓰면서 그쪽이 훅을 import 하는 이상한 의존이 생겼다.
+ */
+export const READ_ONLY_NOTICE = "보기 전용으로 로그인했습니다. 이 동작은 관리자만 할 수 있습니다.";
+
 interface AuthValue {
 	status: Status;
 	// 서버가 비밀번호 없이 떠 있으면(로컬 개발) 로그아웃 버튼을 숨긴다 — 누를 수 없는 버튼이다.
@@ -25,8 +33,13 @@ interface AuthValue {
 	canAct: boolean;
 	/** 로그인 화면에 적어 주는 보기 전용 비밀번호. 서버가 준다(authApi.AuthState). */
 	readonlyHint: string | null;
-	/** 403 이 왔을 때의 안내 문구. 한 곳에서 받아 배너로 보여준다. */
+	/**
+	 * 지금 보여줄 거절 안내. 서버가 준 403 이거나, 화면이 미리 막은 것이다.
+	 * 🔴 한 곳에 모은다 — 화면마다 따로 알리면 어떤 버튼은 배너, 어떤 버튼은 아무 반응도 없게 된다.
+	 */
 	denied: string | null;
+	/** 막힌 것을 눌렀다고 알린다. 기본 문구는 READ_ONLY_NOTICE. */
+	refuse: (message?: string) => void;
 	clearDenied: () => void;
 	signIn: (password: string) => Promise<void>;
 	signOut: () => Promise<void>;
@@ -73,6 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 		return () => onForbidden(null);
 	}, []);
 
+	// 🔴 안정적인 함수여야 한다 — 이 값을 의존성에 넣는 useCallback 들이 매 렌더 다시 만들어진다.
+	const refuse = useCallback((message?: string) => setDenied(message ?? READ_ONLY_NOTICE), []);
+	// 🔴 인라인 화살표로 두면 매 렌더 새 함수가 되고, 이걸 의존성에 넣은 토스트의 자동 닫기
+	// 타이머가 그때마다 처음부터 다시 시작된다(= 영영 안 닫힌다).
+	const clearDenied = useCallback(() => setDenied(null), []);
+
 	const signIn = useCallback(async (password: string) => {
 		const result = await postSignIn(password);
 		// 비밀번호 하나로 역할이 갈린다 — 어느 문으로 들어왔는지 서버가 알려준다.
@@ -102,7 +121,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 				canAct: role !== "readonly",
 				readonlyHint,
 				denied,
-				clearDenied: () => setDenied(null),
+				refuse,
+				clearDenied,
 				signIn,
 				signOut,
 			}}

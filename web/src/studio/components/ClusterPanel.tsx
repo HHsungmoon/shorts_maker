@@ -9,7 +9,6 @@ import {
 	publishClip,
 } from "../api";
 import { useAuth } from "../AuthContext";
-import { READ_ONLY_NOTICE } from "../useStudioJob";
 import { ClipVideo } from "./ClipVideo";
 import { time } from "../../shared/format";
 import type {
@@ -80,7 +79,7 @@ export function ClusterPanel({
 	// 지금 요청이 날아가 있는 클러스터. 발행/보류/다시 열기가 겹쳐 눌리는 걸 막는다.
 	const [pending, setPending] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const { canAct } = useAuth();
+	const { canAct, refuse } = useAuth();
 	const [filter, setFilter] = useState("all");
 	// 🔴 고른 질문은 URL 에 둔다(`?cluster=12`). 로컬 state 로 두면 새로고침하면 첫 질문으로
 	// 돌아가고, 링크로 "이 질문 좀 봐 줘" 를 건넬 수도 없다. replace 로 바꿔서 목록을 훑는 동안
@@ -143,7 +142,7 @@ export function ClusterPanel({
 	async function act(clusterId: number, run: () => Promise<unknown>) {
 		// 🔴 이 패널은 자기 실행 함수를 따로 들고 있다(useStudioJob 의 act 가 아니다). 여기도 막는다.
 		if (!canAct) {
-			setError(READ_ONLY_NOTICE);
+			refuse();
 			return;
 		}
 		setError(null);

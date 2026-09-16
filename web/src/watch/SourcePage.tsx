@@ -38,12 +38,17 @@ function ClipCard({
 				}}
 			/>
 			<div className="watch-clip__body">
-				{clip.title && <p className="watch-clip__question">{clip.title}</p>}
+				{/* title 속성: 한 줄로 잘린 제목의 전문을 마우스를 올리면 보여준다(watch.css). */}
+				{clip.title && (
+					<p className="watch-clip__question" title={clip.title}>
+						{clip.title}
+					</p>
+				)}
 				<p className="watch-clip__meta">
 					{/* 🔴 질문에서 나온 숏폼만 "물어봤어요"를 붙인다. 크리에이터가 직접 뽑은 것에 붙이면
-					    거짓말이 된다. 1명이면 오히려 초라해서 여럿일 때만 말한다. */}
+					    거짓말이 된다. 1명이면 오히려 초라해서 여럿일 때만 말한다.
+					    길이(초)는 빼 뒀다 — 30초 예산 안이라 그 숫자로 고를 일이 없다. */}
 					{clip.question && clip.asked_by > 1 && <span>{clip.asked_by}명이 물어봤어요</span>}
-					{clip.total_sec ? <span>{Math.round(clip.total_sec)}초</span> : null}
 				</p>
 				{/* 🔴 **이 버튼이 이 제품의 결론이다**(tease §2-1 5단계). 숏폼은 답을 주고 끝나는
 				    물건이 아니라 원본으로 데려가는 입구다. 그래서 답을 다 들은 자리에 놓는다.
@@ -56,7 +61,8 @@ function ClipCard({
 					className={`watch-jump${ended ? " watch-jump--ready" : ""}`}
 					onClick={() => onJump(clip)}
 				>
-					<span>{ended ? "원본에서 이어 보기" : "이 구간부터 원본 보기"}</span>
+					{/* 카드가 좁아 라벨을 줄였다(2026-09-17). 옆의 시각이 "어디로 가는지" 를 말해 준다. */}
+					<span>{ended ? "이어 보기" : "원본 보기"}</span>
 					<span className="watch-jump__at">{time(clip.start_sec)}</span>
 				</button>
 			</div>
@@ -250,9 +256,10 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		return mine ? { ...question, likes: mine.likes, liked_by_me: mine.liked } : question;
 	});
 
-	// 🔴 답변 숏폼을 **영상 오른쪽**에 세로로 둔다(유튜브의 관련 영상 자리). 아래에 가로로 깔면
-	// 스크롤을 내려야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에
-	// 있어야 한다. 좁은 화면에서는 한 단으로 접히고 숏폼이 질문 폼보다 위로 온다.
+	// 🔴 답변 숏폼을 **영상 오른쪽**에 둔다(유튜브의 관련 영상 자리). 본문 아래로 내리면 스크롤을
+	// 해야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에 있어야 한다.
+	// 그 단 안에서 카드는 **가로 2개씩**이고 영상 아래에 제목과 CTA 가 온다(2026-09-17, watch.css).
+	// 좁은 화면에서는 한 단으로 접히고 숏폼이 질문 폼보다 위로 온다.
 	const shorts = (
 		<section className="watch-shorts">
 			{/* 🔴 "질문에 대한 답" 이라고 부르지 않는다. 이 목록에는 크리에이터가 자기 기준으로

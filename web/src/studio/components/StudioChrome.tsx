@@ -50,7 +50,7 @@ export function StudioBanners({
 	studio: StudioJob;
 }) {
 	const { job, jobBusy, foreignJob, error, notice } = studio;
-	const { canAct, denied, clearDenied } = useAuth();
+	const { canAct } = useAuth();
 	return (
 		<>
 			{/* 🔴 늘 보이게 둔다. 접어 두면 "왜 버튼이 안 먹지" 가 되고, 그게 심사 중에 일어나면
@@ -60,11 +60,8 @@ export function StudioBanners({
 					보기 전용으로 로그인했습니다. 화면은 전부 볼 수 있고 실행·발행·수정만 막혀 있습니다.
 				</div>
 			)}
-			{denied && (
-				<p className="state state--error" role="status" onClick={clearDenied}>
-					{denied}
-				</p>
-			)}
+			{/* 거절 안내는 여기 배너가 아니라 화면 위 토스트다(components/DeniedToast). 이 배너는
+			    본문 맨 위라, 아래쪽 버튼을 누른 사람 눈에는 아무 일도 안 일어난 것처럼 보였다. */}
 			{status.error && (
 				<div className="notice">
 					서버 상태를 읽지 못했습니다. {REPO_NAME} 가 떠 있는지 확인하세요 ({status.error.message}).

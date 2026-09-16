@@ -5,7 +5,9 @@
  */
 
 .watch {
-	/* 2단(영상 + 오른쪽 숏폼)이 되려면 900px 로는 좁다. 목록 화면도 같은 폭을 쓴다. */
+	/* 2단(영상 + 오른쪽 숏폼)이 되려면 900px 로는 좁다. 목록 화면도 같은 폭을 쓴다.
+	   1320 까지 넓혔다가 되돌렸다(2026-09-17) — 오른쪽 단이 360px 로 줄어 플레이어가 좁아질 걱정이
+	   없어졌고, 넓힌 만큼 화면 좌우 여백만 커져 보였다. */
 	max-width: 1240px;
 	margin: 0 auto;
 	padding: 24px 20px 72px;
@@ -232,9 +234,13 @@
 
 /* 🔴 유튜브의 관련 영상 자리다. 아래에 가로로 깔면 스크롤을 내려야 보이는데, 이 제품의 값이
    갚아지는 자리("물어봤더니 답이 왔다")가 거기다 — 영상을 보는 내내 눈에 있어야 한다. */
+/* 360px: 숏폼 2열이 한 장에 약 174px 씩 돌아가는 폭이다((360 - 간격 12) / 2).
+   눈으로 맞춘 값이다(2026-09-17) — 420px 2열(195px)은 컸고, 420px 3열(132px)은 작았다.
+   🔴 열 수는 `.watch-side .watch-clips` 가 2로 못박는다. 여기 폭만 바꾸면 카드 크기가 그대로
+   따라온다(예: 320px → 154px, 400px → 194px). 단을 줄인 만큼 왼쪽 플레이어가 넓어진다. */
 .watch-columns {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) 340px;
+	grid-template-columns: minmax(0, 1fr) 360px;
 	gap: 24px;
 	align-items: start;
 }
@@ -270,25 +276,36 @@
 	color: var(--text-muted);
 }
 
+/* 이 목록은 두 곳에서 쓰인다 — 오른쪽 단과 질문 직후 추천 영역(본문 폭). 기본값은 폭에 맞춰
+   채우는 방식이고, 오른쪽 단만 아래에서 **열 수를 못박는다**. */
 .watch-clips {
 	list-style: none;
 	margin: 0;
 	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+	gap: 14px 12px;
 }
 
-/* 썸네일 왼쪽 · 글 오른쪽. 9:16 영상을 단 폭 그대로 두면 한 장이 화면을 다 먹는다. */
+/* 🔴 오른쪽 단은 **2열로 고정**한다(2026-09-17). auto-fill 로 두었다가 당했다: 단을 420 → 540px
+   으로 넓혔더니 열이 3개에서 **4개로 늘어** 카드가 132px → 126px 로 오히려 작아졌고, 숏폼이 3개일
+   때 네 번째 칸이 빈 채 남아 오른쪽이 휑해 보였다. 폭을 넓히는 행동과 카드를 키우는 의도가
+   auto-fill 에서는 어긋난다 — 칸 수를 코드가 정해야 폭이 곧 카드 크기가 된다.
+   360px / 2열 = 약 174px. */
+.watch-side .watch-clips {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* 영상 위 · 글 아래(2026-09-17). 예전에는 썸네일이 왼쪽이고 글이 오른쪽이었는데, 그 배치는
+   영상을 108px 로 묶어 두어야 성립했다 — 세로 영상이 그 정도면 무엇이 찍혔는지 안 보인다. */
 .watch-clip {
 	display: flex;
-	gap: 10px;
-	align-items: flex-start;
+	flex-direction: column;
+	gap: 8px;
 }
 
 .watch-clip__video {
-	flex: 0 0 auto;
-	width: 108px;
+	width: 100%;
 	aspect-ratio: 9 / 16;
 	border-radius: var(--radius);
 	border: 1px solid var(--border);
@@ -298,28 +315,41 @@
 
 .watch-clip__body {
 	min-width: 0;
-	padding-top: 2px;
+	/* 카드 높이를 맞춘다 — CTA 가 카드마다 다른 높이에 있으면 줄이 들쭉날쭉해 보인다. */
+	display: flex;
+	flex-direction: column;
+	flex: 1;
 }
 
+/* 🔴 두 줄까지(2026-09-17). 한 줄로 조였더니 카드가 좁아 제목이 거의 다 잘렸다 — 무엇에 대한
+   숏폼인지 목록에서 읽히지 않으면 카드가 그냥 검은 네모가 된다. 두 줄로 **모든 카드가 같은 높이**를
+   쓰므로 줄은 여전히 맞는다. 넘친 전문은 마우스를 올리면 툴팁으로 보인다(마크업의 title 속성). */
 .watch-clip__question {
-	margin: 0 0 6px;
-	font-size: 14px;
-	line-height: 1.45;
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.4;
 	overflow-wrap: anywhere;
-	/* 질문이 길어도 카드 높이가 영상보다 커지지 않게 세 줄로 묶는다. */
 	display: -webkit-box;
-	-webkit-line-clamp: 3;
+	-webkit-line-clamp: 2;
 	-webkit-box-orient: vertical;
 	overflow: hidden;
+	/* 한 줄짜리 제목이 있어도 아래 CTA 줄이 카드마다 맞게 두 줄 자리를 늘 차지한다. */
+	min-height: calc(2 * 1.4em);
 }
 
+/* 지금 여기 남는 건 "N명이 물어봤어요" 뿐이다. 길이(초)는 뺐다(2026-09-17) — 숏폼은 어차피
+   30초 예산 안이라 그 숫자로 고를 일이 없고, 좁은 카드에서 줄만 하나 더 먹었다. */
 .watch-clip__meta {
-	margin: 0;
+	margin: 2px 0 0;
 	display: flex;
 	gap: 8px;
 	flex-wrap: wrap;
-	font-size: 12px;
+	font-size: 11px;
 	color: var(--text-muted);
+}
+
+.watch-clip__meta:empty {
+	display: none;
 }
 
 /* 원본으로 보내는 CTA.
@@ -329,33 +359,32 @@
  *
  * 다 본 뒤(--ready)에는 테두리만 있던 것이 채워진 버튼이 된다 — 답을 다 들은 그 순간이
  * 원본으로 넘어갈 가장 좋은 때라서, 그때 시선을 가장 세게 끈다. */
+/* 🔴 작게 둔다(2026-09-17). 카드가 132px 라 테두리 친 큰 버튼을 폭 가득 채우면 카드에서 가장
+   큰 것이 버튼이 되고, 정작 봐야 할 영상이 밀린다. 색(accent)은 유지한다 — 카드 안에서 유일하게
+   색을 쓰는 요소라, 크기를 줄여도 여기가 누를 곳이라는 건 그대로 읽힌다. */
 .watch-jump {
-	margin-top: 8px;
+	margin-top: 4px;
 	display: inline-flex;
+	align-self: flex-start;
 	align-items: center;
-	gap: 6px;
-	padding: 5px 9px;
+	gap: 4px;
+	padding: 2px 0;
 	font: inherit;
-	font-size: 12px;
-	line-height: 1.2;
+	font-size: 11px;
+	line-height: 1.3;
 	color: var(--accent);
 	background: transparent;
-	border: 1px solid var(--accent);
-	border-radius: var(--radius);
+	border: 0;
 	cursor: pointer;
 }
 
 .watch-jump:hover {
-	background: color-mix(in srgb, var(--accent) 8%, transparent);
+	text-decoration: underline;
 }
 
+/* 다 본 뒤에는 굵어진다. 채운 버튼으로 바꾸던 것을 물렀다 — 카드가 작아 그 덩어리가 너무 셌다. */
 .watch-jump--ready {
-	color: #fff;
-	background: var(--accent);
-}
-
-.watch-jump--ready:hover {
-	background: color-mix(in srgb, var(--accent) 88%, #000);
+	font-weight: 700;
 }
 
 /* 이동할 지점. 유튜브 플레이어에 적히는 것과 같은 표기다(shared/format.time). */
@@ -488,8 +517,9 @@
 		grid-template-columns: 1fr;
 	}
 
-	.watch-clip__video {
-		width: 96px;
+	/* 좁은 화면에서도 숏폼은 두 줄로 깐다 — 한 장씩 깔면 9:16 한 장이 화면을 다 먹는다. */
+	.watch-clips {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
 

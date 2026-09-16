@@ -6,7 +6,7 @@ import { useAuth } from "./AuthContext";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { NewSourceModal } from "./components/NewSourceModal";
 import { StudioBanners, StudioHead } from "./components/StudioChrome";
-import { READ_ONLY_NOTICE, useStudioJob } from "./useStudioJob";
+import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type { ShortsMediaList, ShortsSourceListItem, ShortsStatus } from "./types";
 import "./home.css";
@@ -75,7 +75,7 @@ function Card({ source }: { source: ShortsSourceListItem }) {
 }
 
 export function StudioHome() {
-	const { canAct } = useAuth();
+	const { canAct, refuse } = useAuth();
 	const studio = useStudioJob();
 	const [modalOpen, setModalOpen] = useState(false);
 
@@ -93,7 +93,7 @@ export function StudioHome() {
 		async (name: string) => {
 			// 🔴 삭제는 되돌릴 수 없다. useStudioJob 의 act 를 안 거치는 자리라 여기서 따로 막는다.
 			if (!canAct) {
-				setNotice(READ_ONLY_NOTICE);
+				refuse();
 				return;
 			}
 			const item = media.data?.items.find((i) => i.name === name);
@@ -111,7 +111,7 @@ export function StudioHome() {
 				setError(e instanceof Error ? e.message : String(e));
 			}
 		},
-		[canAct, media.data, setError, setNotice, reload],
+		[canAct, refuse, media.data, setError, setNotice, reload],
 	);
 
 	const items = sources.data ?? [];
@@ -123,11 +123,12 @@ export function StudioHome() {
 				<Link to="/studio/prompts" className="button button--small">
 					프롬프트
 				</Link>
+				{/* 🔴 보기 전용이라고 비활성화하지 않는다. 눌리지 않는 버튼은 이유를 말할 기회가
+				    없어서 "고장난 화면" 으로 읽힌다 — 눌리게 두고 왜 안 되는지를 모달로 말한다. */}
 				<button
 					type="button"
 					className="button button--small sm-go"
-					disabled={!canAct}
-					onClick={() => setModalOpen(true)}
+					onClick={() => (canAct ? setModalOpen(true) : refuse())}
 				>
 					+ 새로 만들기
 				</button>
