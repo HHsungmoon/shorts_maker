@@ -61,9 +61,10 @@ def pool(url: str) -> ConnectionPool:
     수백 행 스캔뿐이라 한 요청이 연결을 쥐는 시간이 ms 단위고, 8개면 그 수십 배의 동시 요청을
     받아넘긴다.
 
-    🔴 크게 잡는 것은 공짜가 아니다. Postgres 는 **연결마다 백엔드 프로세스**를 띄우고(수 MB),
-    운영 db 컨테이너에는 `mem_limit: 400m` 이 걸려 있다(compose.yaml) — shared_buffers 128MB 에
-    20 연결을 더하면 그 상한에 닿는다. 20 으로 올리려면 db 메모리 상한도 함께 올린다.
+    운영은 20이다(compose.yaml 의 `SHORTS_DB_POOL_MAX`). 🔴 크게 잡는 비용은 **연결 자체가 아니다** —
+    실측(2026-09-16): 연결 하나가 1.8MB 이고 20연결을 유지해도 db 컨테이너는 47MiB → 81MiB 였다.
+    상한을 400m → 600m 로 올린 건 autovacuum(64MB × 워커 3)과 work_mem(4MB × 정렬 × 연결) 쪽
+    꼬리 때문이다. 그래서 풀을 더 키울 일이 생기면 보는 값은 연결 수가 아니라 **그 두 개**다.
     """
     with _pools_lock:
         found = _pools.get(url)

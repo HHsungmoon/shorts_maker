@@ -10,9 +10,9 @@ from urllib.parse import quote
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULTS = {
-    # DB 커넥션 풀의 최대 연결 수. 🔴 올리는 게 공짜가 아니다 — Postgres 는 연결마다 백엔드
-    # 프로세스를 띄우고(수 MB), 운영 db 컨테이너는 mem_limit 400m 다(compose.yaml). 20 으로
-    # 쓰려면 그 상한도 같이 올려야 한다. 로컬·테스트는 기본값으로 충분하다(db/store.py 주석).
+    # DB 커넥션 풀의 최대 연결 수. 컨테이너는 compose 에서 20을 받고(2026-09-16), 이 기본값 8은
+    # 호스트 CLI·테스트용이다 — 둘 다 프로세스 하나에서 순차로 일해 더 필요하지 않다.
+    # 🔴 올릴 때 보는 값은 연결 수가 아니라 autovacuum·work_mem 이다(db/store.py 주석의 실측).
     "SHORTS_DB_POOL_MAX": "8",
     "SHORTS_GEMINI_MODEL": "gemini-3.6-flash",
     "SHORTS_WHISPER_MODEL": "small",

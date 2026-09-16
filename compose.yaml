@@ -22,9 +22,16 @@ services:
     volumes:
       - shorts-pg:/var/lib/postgresql/data
     # 🔴 상한이 없으면 db 가 새는 순간 커널 OOM Killer 가 **관계없는** shorts 를 골라 죽인다.
-    # Postgres 는 shared_buffers 기본 128MB + 커넥션당 수 MB 라 400m 면 이 워크로드에 넉넉하다 —
-    # 풀이 작고 큰 정렬이 없다(SQL 은 인덱스 조회와 수백 행 스캔뿐이다).
-    mem_limit: 400m
+    #
+    # 600m (2026-09-16, 커넥션 풀을 20으로 올리며). **연결 때문이 아니다** — 실측으로 연결 하나는
+    # 1.8MB 다(이 컨테이너에서 기준선 47MiB → 20연결 유지 81MiB). 풀 20의 정상 상태는 83MB 라
+    # 400m 로도 남았다. 상한을 올린 건 이번 측정에 안 잡히는 **꼬리** 때문이다:
+    #   · autovacuum: maintenance_work_mem 64MB × autovacuum_max_workers 3 = 최악 192MB.
+    #     테이블이 작은 지금은 훨씬 적지만 utterances 는 영상이 쌓일수록 커진다 — 가장 큰 한 항목이다
+    #   · work_mem 4MB × 정렬 × 연결. 지금 SQL 은 수백 행 정렬이라 닿지 않지만 연결이 20이면 꼬리가 길다
+    #   · shared_buffers 128MB 는 공유라 한 번만 센다
+    # 🔴 스왑은 여유로 치지 않는다. DB 가 스왑에 들어가면 "안 죽는데 느린" 상태가 되어 원인을 못 찾는다.
+    mem_limit: 600m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U shorts -d shorts"]
       interval: 5s
@@ -57,6 +64,10 @@ services:
       SHORTS_API_HOST: 0.0.0.0
       SHORTS_API_PORT: "8100"
       SHORTS_DB_HOST: db
+      # 커넥션 풀 상한. 여럿이 동시에 화면을 볼 때를 위한 값이다(2026-09-16).
+      # 🔴 호스트에서 도는 `uv run sm`·테스트는 이 값을 못 본다 — 기본 8로 돈다. 그래도 되는 게
+      # CLI 는 프로세스 하나에서 순차로 일한다. 이 값이 필요한 건 API 프로세스뿐이다.
+      SHORTS_DB_POOL_MAX: "20"
       SHORTS_WORK_DIR: /data/work
       SHORTS_SOURCE_DIR: /sources
       SHORTS_WEB_DIR: /app/web
@@ -76,8 +87,10 @@ services:
     # 🔴 4GB VM 에서 이 서비스가 **유일한 워크로드**라는 전제다(backend 와 같은 VM 을 쓰던
     # 시절의 1400m 에서 올렸다). 다른 것을 같은 VM 에 얹으면 여기부터 다시 계산해야 한다.
     #
-    # 배분(2026-09-15, 운영 VM 을 NCP c2-g3a = vCPU 2 / 4GB 로 확정하며 다시 잡았다):
-    #   물리 3.8Gi(3891MB) = shorts 2600m + db 400m + 나머지 ~890MB(OS·sshd·docker 데몬·nginx)
+    # 배분(2026-09-16, db 를 600m 으로 올리며 다시 잡았다. VM 은 NCP c2-g3a = vCPU 2 / 4GB):
+    #   물리 3.8Gi(3891MB) = shorts 2600m + db 600m + 나머지 ~690MB(OS·sshd·docker 데몬·nginx)
+    # 🔴 db 가 가져간 200MB 는 **OS 여유에서 나왔다.** 여기가 빠듯해지면 먼저 줄일 곳은 shorts 다 —
+    # whisper small 추론이 실측 1.1GB 라 2600m 에는 아직 슬랙이 있다(make_shorts §7).
     # 3000m 이던 값을 내린 이유는 여유가 남아서가 아니라 **db 에 상한이 없었기 때문**이다 —
     # 둘을 합치면 물리보다 커서, 한쪽이 새면 커널이 아무 컨테이너나 골라 죽이는 배분이었다.
     # whisper `small` 추론이 실측 1.1GB(make_shorts §7)라 2600m 는 ffmpeg 와 겹쳐도 여유가 있고,
