@@ -40,28 +40,33 @@ main() {
 		echo "warning: not on main" >&2
 	fi
 
-	# 빌드 전에 지금 돌고 있는 이미지의 ID 를 붙든다. 빌드가 같은 태그를 덮어쓰면 이 ID 는
-	# 태그를 잃으므로(<none>), 여기서 기억해 두지 않으면 되돌아갈 곳이 사라진다.
-	PREV_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || true)
+	# 🔴 롤백 지점은 **빌드 전에, 태그로** 만든다(2026-09-17에 고쳤다).
+	#
+	# 예전에는 빌드 전에 이미지 **ID** 만 붙들었다가 빌드가 끝난 뒤 그 ID 에 태그를 달았다.
+	# 실제 배포에서 `Error response from daemon: No such image` 로 죽었다 — 새 빌드가 같은 태그를
+	# 가져가면 옛 이미지는 참조가 하나도 없어져 그 자리에서 회수된다(containerd 이미지 저장소).
+	# 즉 "빌드 뒤에 옛 ID 가 남아 있다" 는 전제가 틀렸다. `set -e` 라 그 한 줄이 배포 전체를 끊어
+	# **헬스체크도 prune 도 돌지 않았다** — 컨테이너는 떠 있는데 스크립트만 죽어 조용했다.
+	#
+	# 이미지가 살아 있을 때 태그를 달아 두는 것이 유일하게 확실하다. 실패해도 배포는 계속한다:
+	# 롤백 지점이 없는 것은 불편이고, 배포가 중간에 멈추는 것은 장애다.
+	#
+	# 이미지를 딱 두 벌로 유지하는 방법이기도 하다. `docker image prune` 은 **태그 없는 것만**
+	# 지우므로, 직전 것 하나에 태그를 달아 두면 그것만 살아남고 더 오래된 것들은 태그를 잃은
+	# 채 prune 에 쓸려 간다. 이 이미지는 whisper 모델 464MB 를 품어 한 벌이 수 GB다.
+	if docker image inspect "$IMAGE" > /dev/null 2>&1; then
+		if docker tag "$IMAGE" "$PREV" 2>/dev/null; then
+			echo "==> rollback point: $PREV"
+		else
+			echo "warning: could not tag the rollback point — deploying anyway" >&2
+		fi
+	fi
 
 	echo "==> pulling"
 	git pull --ff-only
 
 	echo "==> building and restarting"
 	docker compose up -d --build
-
-	# 🔴 롤백 지점은 **헬스체크보다 먼저** 만든다. 되돌릴 일이 생기는 건 헬스체크가 실패했을
-	# 때인데, 실패하면 아래에서 exit 1 로 빠져나가 여기까지 오지 못하기 때문이다.
-	#
-	# 이미지를 딱 두 벌로 유지하는 방법이기도 하다. `docker image prune` 은 **태그 없는 것만**
-	# 지우므로, 직전 것 하나에 태그를 달아 두면 그것만 살아남고 더 오래된 것들은 태그를 잃은
-	# 채 prune 에 쓸려 간다. 새 prev 를 달면 옛 prev 도 태그를 잃어 다음 배포 때 정리된다.
-	# 이 이미지는 whisper 모델 464MB 를 품어 한 벌이 수 GB다 — 50GB 디스크에서 무한정 쌓게 둘 수 없다.
-	NEW_ID=$(docker image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null || true)
-	if [ -n "$PREV_ID" ] && [ "$PREV_ID" != "$NEW_ID" ]; then
-		docker tag "$PREV_ID" "$PREV"
-		echo "==> rollback point: $PREV"
-	fi
 
 	echo "==> waiting for the service to answer"
 	for i in $(seq 1 30); do
