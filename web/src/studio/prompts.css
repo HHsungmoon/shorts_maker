@@ -97,6 +97,13 @@
 	margin: 8px 0 14px 34px;
 }
 
+/* 값 셋을 세로로 쌓는다 — 제목은 한 줄, 유튜브 id 와 개요는 설명을 위에 달고 내려온다. */
+.sm-context__field {
+	display: block;
+	margin-top: 10px;
+}
+
+.sm-context__line,
 .sm-context textarea {
 	width: 100%;
 	box-sizing: border-box;
