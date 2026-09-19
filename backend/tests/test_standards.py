@@ -3,9 +3,9 @@
 🔴 여기서 지키는 것 셋:
   1. **append-only.** 고칠 때마다 행이 쌓이고 최신이 이긴다 — "지난주 클립은 어떤 기준으로 뽑혔나" 에
      답할 수 있어야 한다
-  2. **넣는 곳과 안 넣는 곳.** 순위·후보·자르기·판정 점수에는 들어가고, 구간 분할과 답 구간 찾기에는
-     **절대 안 들어간다.** 구간은 모든 기준이 재사용하는 중립 자산이고, "어디에 답이 있나" 는 사실
-     판단이다. 누가 나중에 무심코 넣으면 이 테스트가 막는다
+  2. **넣는 곳과 안 넣는 곳.** 순위·후보·자르기·판정 점수에는 들어가고, 구간 분할·답 구간 찾기·
+     영상 개요에는 **절대 안 들어간다.** 구간은 모든 기준이 재사용하는 중립 자산이고, "어디에 답이
+     있나" 와 "이 영상이 무엇인가" 는 사실 판단이다. 누가 나중에 무심코 넣으면 이 테스트가 막는다
   3. **판정에서는 점수에만.** 두 관문에 섞이면 선호가 숨은 탈락 조건이 된다
 """
 
@@ -16,7 +16,7 @@ import psycopg
 
 from shorts_maker import standards
 from shorts_maker.answers import judge, routing
-from shorts_maker.pipeline import cutting, ranking, segmentation
+from shorts_maker.pipeline import cutting, overview, ranking, segmentation
 
 from .support import DbTestCase
 
@@ -140,6 +140,15 @@ class WhereItGoesTest(unittest.TestCase):
         사라져 답할 수 있는 질문을 못 답하게 된다."""
         self.assertNotIn("standard", inspect.signature(routing.build_prompt).parameters)
         self.assertNotIn("standard", inspect.signature(routing.decide).parameters)
+
+    def test_the_overview_draft_cannot_take_a_standard(self):
+        """🔴 영상 개요는 "이 영상이 무엇인가" 라는 **사실**이다(프롬프트 3층).
+
+        취향이 섞이면 그 취향이 3층으로 위장해 이후 모든 호출에 따라붙고, 그때는 어느 층에서
+        왔는지 아무도 모른다 — 2층은 화면에서 고치고 지울 수 있지만 3층에 스며든 것은 못 뺀다.
+        """
+        self.assertNotIn("standard", inspect.signature(overview.build_prompt).parameters)
+        self.assertNotIn("관리자 기준", overview.build_prompt("제목", ["구간 요약"]))
 
     # ---- 비었을 때 ----
 

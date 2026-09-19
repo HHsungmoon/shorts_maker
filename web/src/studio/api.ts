@@ -123,6 +123,14 @@ export function runSegment(sourceId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/segment`, { method: "POST" });
 }
 
+/**
+ * 구간 요약을 읽어 영상 개요 **초안**을 쓴다. 🔴 저장하지 않는다 — 결과는 잡의 `result.context`
+ * 로만 오고, 사람이 입력칸에서 읽고 고친 뒤 저장을 누른다.
+ */
+export function draftOverview(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/overview`, { method: "POST" });
+}
+
 export function runRank(sourceId: number, criteria: string | null): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/rank`, {
 		method: "POST",

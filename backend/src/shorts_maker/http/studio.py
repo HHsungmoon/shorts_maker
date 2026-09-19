@@ -25,7 +25,9 @@ from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, report, suggest
 from . import auth, deps, prompt_catalog
-from ..pipeline import cutting, ingest, media, orchestrate, ranking, render, segmentation, stt
+from ..pipeline import (
+    cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
+)
 from ..db import store
 from .deps import connect, require_auth, rows, submit
 
@@ -447,6 +449,39 @@ def run_segment(source_id: int, force: bool = False) -> dict:
         return {"segments": len(segments)}
 
     return submit("segment", f"source {source_id}", work)
+
+
+@router.post("/sources/{source_id}/overview")
+def draft_overview(source_id: int) -> dict:
+    """구간 요약을 읽어 영상 개요 **초안**을 쓴다(LLM 1회).
+
+    🔴 **저장하지 않는다.** 초안을 잡 결과로 돌려주고 멈춘다 — 이 글은 이후 모든 호출에 붙어서
+    틀린 한 줄이 조용히 파이프라인 전체에 퍼진다. 사람이 읽고 `PATCH /api/sources/{id}` 로 넣는다.
+
+    잡 큐를 지나는 이유는 이 레포의 다른 LLM 호출과 같다 — 워커가 하나라 동시 1건이고, 도는 잡이
+    있으면 409 다. 호출 하나는 몇 초지만 예외를 두면 그 예외가 다음 예외의 근거가 된다.
+
+    🔴 전제는 **잡을 띄우기 전에** 본다(`add_source_from_url` 과 같은 이유). 큐에 넣고 실패하면
+    사용자는 배너가 빨개진 뒤에야 "구간이 아직 없다" 를 안다.
+    """
+    with connect() as conn:
+        found = conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone()
+        if found is None:
+            raise HTTPException(404, "source not found")
+        ready = conn.execute(
+            "select count(*) as n from segments sg join chunks ch on ch.id = sg.chunk_id"
+            " where ch.source_id = %s and sg.description is not null",
+            (source_id,),
+        ).fetchone()["n"]
+    if not ready:
+        # 409 — 요청은 옳고 지금 상태와 충돌할 뿐이다(발행 거절과 같은 자리).
+        raise HTTPException(409, "구간 요약이 아직 없습니다 — 주제 분할을 먼저 끝내 주세요")
+
+    def work() -> dict:
+        with connect() as conn:
+            return {"context": overview.draft(conn, deps.cfg, source_id)}
+
+    return submit("overview", f"source {source_id}", work)
 
 
 @router.post("/sources/{source_id}/rank")

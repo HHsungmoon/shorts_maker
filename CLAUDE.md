@@ -11,7 +11,7 @@ web/       React + Vite. 빌드 결과를 backend 가 같은 오리진에서 서
 backend/   FastAPI + CLI. 파이프라인 본체
   src/shorts_maker/
     http/        FastAPI 앱·라우터·인증 (server · deps · studio · auth · debug_page). 도메인 로직 없음
-    pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate)
+    pipeline/    ingest → stt → segmentation → ranking → cutting → render (+ media · subtitles · orchestrate · overview)
                  🔴 긴 영상은 **청크 여러 개**로 나뉜다 — 메모리 상한 때문이다(아래 Stack). 화면·CLI 는
                  소스 단위로만 말한다(`add_chunks` · `stt.run_for_source` · `segmentation.run_for_source`)
     answers/     시청자 질문 → 답 클립. 제품명 CLIPQ 는 코드에 안 쓴다 — 여기가 그 기능이다

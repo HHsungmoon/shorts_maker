@@ -23,6 +23,11 @@ export interface ShortsJob {
 	target: string;
 	status: "QUEUED" | "RUNNING" | "DONE" | "FAILED";
 	error: string | null;
+	/**
+	 * 잡이 돌려준 것. 대부분은 DB 에 쓰고 끝나서 화면이 볼 일이 없지만, 저장하지 않고 **초안만**
+	 * 돌려주는 잡이 있다(개요 초안). 그건 여기로만 온다.
+	 */
+	result: unknown;
 }
 
 export interface ShortsSource {
