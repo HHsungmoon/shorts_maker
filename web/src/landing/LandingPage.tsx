@@ -71,6 +71,49 @@ export function LandingPage() {
 					<strong> 실행만 막힙니다</strong> — 남의 데이터가 바뀌지 않으니 마음껏 눌러 보셔도 됩니다.
 				</p>
 			)}
+
+			<ThanksNote />
 		</main>
+	);
+}
+
+/**
+ * 영상을 쓰게 해 주신 곳에 대한 감사 인사.
+ *
+ * 🔴 **이 제품은 남의 영상으로 굴러간다.** 허락을 받아서 쓴다는 사실이 첫 화면에 보이는 편이
+ * 맞고, 구석의 작은 각주보다 눈에 띄는 자리가 낫다 — 감사는 크게 하는 것이다.
+ *
+ * 하트는 장식이라 `aria-hidden` 이다. 화면 낭독기가 "path path path" 를 읽으면 문장이 끊긴다.
+ */
+function ThanksNote() {
+	return (
+		<section className="thanks" aria-label="감사 인사">
+			<Heart className="thanks__heart thanks__heart--a" />
+			<Heart className="thanks__heart thanks__heart--b" />
+			<Heart className="thanks__heart thanks__heart--c" />
+			<Heart className="thanks__heart thanks__heart--d" />
+			<p className="thanks__line">
+				영상 사용을 허가해 주신
+				<br />
+				<strong>서강대학교</strong>에 감사합니다.
+			</p>
+			<p className="thanks__sign">— Team TEASE</p>
+		</section>
+	);
+}
+
+function Heart({ className }: { className: string }) {
+	return (
+		<svg className={className} viewBox="0 0 24 22" aria-hidden="true" focusable="false">
+			{/* 선으로만 그린다 — 꽉 찬 하트는 무겁고, 손으로 그린 느낌은 획에서 온다. */}
+			<path
+				d="M12 20.5C12 20.5 1.8 14.2 1.8 7.6 1.8 4.2 4.4 1.8 7.4 1.8c2 0 3.7 1.1 4.6 2.8.9-1.7 2.6-2.8 4.6-2.8 3 0 5.6 2.4 5.6 5.8 0 6.6-10.2 12.9-10.2 12.9z"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="1.6"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+			/>
+		</svg>
 	);
 }
