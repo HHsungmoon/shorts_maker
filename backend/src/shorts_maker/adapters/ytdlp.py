@@ -12,7 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .. import config
 
@@ -28,6 +28,30 @@ ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{5,64}$")
 
 class DownloadError(RuntimeError):
     pass
+
+
+# 🔴 유튜브는 **데이터센터 IP 를 막는다**(2026-09-17 운영에서 겪었다). 같은 영상이 맥에서는
+# 받아지고 서버에서만 `Video unavailable` 로 죽었다 — 영상이 내려간 게 아니라 **주소가 막힌 것**이다.
+# yt-dlp 원문만 보여주면 사람은 영상을 의심하고 다른 URL 을 계속 넣어 본다. 그래서 여기서 번역한다.
+#
+# 표식을 넓게 잡지 않는다 — 진짜로 없는 영상까지 "IP 문제" 로 안내하면 반대 방향으로 헤매게 된다.
+BLOCKED_SIGNS = (
+    "video unavailable",
+    "sign in to confirm you're not a bot",
+    "confirm you're not a bot",
+    "this content isn't available",
+    "failed to extract any player response",
+)
+
+BLOCKED_HINT = (
+    "데이터센터 IP 로는 유튜브 영상 다운로드가 어렵습니다. "
+    "영상을 직접 내려받아 서버의 sources 폴더에 올린 뒤 '서버에 저장된 파일' 로 등록해 주세요."
+)
+
+
+def _blocked(stderr: str) -> bool:
+    lowered = stderr.lower()
+    return any(sign in lowered for sign in BLOCKED_SIGNS)
 
 
 @dataclass
@@ -49,6 +73,26 @@ def check_url(raw: str) -> str:
     return raw.strip()
 
 
+def parse_video_id(raw: str) -> str:
+    """사람이 준 값에서 영상 id 만 뽑는다.
+
+    🔴 **URL 을 그대로 저장하면 임베드가 조용히 깨진다** — 플레이어는 id 만 받는다. 등록 경로에서는
+    yt-dlp 가 id 를 주지만 손으로 채우는 자리(파일로 올린 원본)는 사람이 URL 을 붙여넣는다.
+    받아 주는 편이 "id 만 넣으세요" 라고 적어 두는 것보다 확실하다.
+    """
+    value = raw.strip()
+    if ID_PATTERN.match(value):
+        return value
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    if host in ALLOWED_HOSTS:
+        # youtu.be/<id> · watch?v=<id> · shorts/<id> · embed/<id> 를 모두 같은 자리로 모은다.
+        candidate = parse_qs(parsed.query).get("v", [""])[0] or parsed.path.rstrip("/").rsplit("/", 1)[-1]
+        if ID_PATTERN.match(candidate):
+            return candidate
+    raise DownloadError(f"유튜브 영상 id 를 읽지 못했다: {raw!r}")
+
+
 def _run(args: list[str], timeout: int) -> str:
     try:
         done = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -57,7 +101,11 @@ def _run(args: list[str], timeout: int) -> str:
     except subprocess.TimeoutExpired as exc:
         raise DownloadError(f"시간 초과({timeout}s)") from exc
     if done.returncode != 0:
-        raise DownloadError(f"yt-dlp 실패: {done.stderr.strip()[-400:]}")
+        detail = done.stderr.strip()[-400:]
+        # 원문을 버리지 않는다 — 안내는 추측이고, 진짜 원인은 뒤에 붙은 yt-dlp 의 말에 있다.
+        if _blocked(done.stderr):
+            raise DownloadError(f"{BLOCKED_HINT} (yt-dlp: {detail})")
+        raise DownloadError(f"yt-dlp 실패: {detail}")
     return done.stdout
 
 

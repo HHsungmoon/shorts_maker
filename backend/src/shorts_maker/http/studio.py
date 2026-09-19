@@ -215,13 +215,18 @@ class StandardIn(BaseModel):
 
 
 class SourcePatchIn(BaseModel):
-    """영상 개요(프롬프트 3층).
+    """사람이 고치는 원본 값 — 제목 · 영상 개요 · 유튜브 id.
 
-    🔴 500자 상한. 이 글은 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 영상이 무엇인지
-    한두 문장이면 되고, 길게 쓰면 대사보다 개요가 프롬프트를 더 차지한다.
+    🔴 개요는 500자 상한. 이 글은 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 영상이
+    무엇인지 한두 문장이면 되고, 길게 쓰면 대사보다 개요가 프롬프트를 더 차지한다.
+
+    🔴 **보내지 않은 필드는 건드리지 않는다.** 셋이 한 폼에 있어도 고친 것만 오는 경우가 있고,
+    제목만 바꾸려던 요청이 개요를 지우면 안 된다(`model_fields_set` 으로 가른다).
     """
 
+    title: str | None = Field(default=None, max_length=300)
     context: str | None = Field(default=None, max_length=500)
+    youtubeId: str | None = Field(default=None, max_length=200)
 
 
 class ClusterPatchIn(BaseModel):
@@ -724,16 +729,47 @@ def put_standard(body: StandardIn) -> dict:
 
 @router.patch("/sources/{source_id}")
 def patch_source(source_id: int, body: SourcePatchIn) -> dict:
-    """영상 개요를 고친다.
+    """제목 · 영상 개요 · 유튜브 id 를 고친다.
 
-    🔴 **이미 나눈 구간에는 반영되지 않는다.** 구간 분할도 개요를 쓰지만 구간은 캐시된 자산이라
-    다시 나누기 전까지 그대로다. 이후 순위·자르기·후보 생성에는 바로 반영된다.
+    🔴 개요는 **이미 나눈 구간에는 반영되지 않는다.** 구간 분할도 개요를 쓰지만 구간은 캐시된
+    자산이라 다시 나누기 전까지 그대로다. 이후 순위·자르기·후보 생성에는 바로 반영된다.
+
+    🔴 **제목이 왜 고칠 수 있어야 하나**: 파일로 등록한 원본의 제목은 파일 이름이다
+    (`media/{name}/register` 가 `path.stem` 을 쓴다). 그게 시청자 화면에 그대로 나가서
+    `MVqTWMg4n0o` 같은 것이 사람 앞에 보였다(2026-09-19).
+
+    🔴 **유튜브 id 도 같은 이유다.** 파일로 등록한 원본에는 id 가 없어 임베드가 막히는데,
+    예전에는 그걸 채울 길이 psql 밖에 없었다. URL 을 통째로 붙여넣어도 id 만 뽑아 저장한다.
     """
-    context = (body.context or "").strip() or None
+    # 보낸 것만 담는다 — null 을 보내 지우는 것과, 아예 안 보낸 것은 뜻이 다르다.
+    updates: dict[str, str | None] = {}
+    if "title" in body.model_fields_set:
+        title = (body.title or "").strip()
+        if not title:
+            # 🔴 제목은 비울 수 없다. 목록과 시청자 화면이 이 값으로 영상을 가리킨다.
+            raise HTTPException(400, "제목은 비울 수 없습니다")
+        updates["title"] = title
+    if "context" in body.model_fields_set:
+        updates["context"] = (body.context or "").strip() or None
+    if "youtubeId" in body.model_fields_set:
+        raw = (body.youtubeId or "").strip()
+        if raw:
+            try:
+                updates["youtube_id"] = ytdlp.parse_video_id(raw)
+            except ytdlp.DownloadError as exc:
+                raise HTTPException(400, str(exc)) from exc
+        else:
+            updates["youtube_id"] = None
+    if not updates:
+        raise HTTPException(400, "고칠 값이 없습니다")
+
+    # 컬럼 이름은 위에서 코드가 정한 것만 들어온다 — 사용자 입력이 식별자 자리에 오지 않는다.
+    assignments = ", ".join(f"{column} = %s" for column in updates)
     with connect() as conn:
         row = conn.execute(
-            "update sources set context = %s where id = %s returning id, context",
-            (context, source_id),
+            f"update sources set {assignments}, updated_at = now() where id = %s"
+            " returning id, title, context, youtube_id",
+            (*updates.values(), source_id),
         ).fetchone()
         if row is None:
             raise HTTPException(404, "source not found")

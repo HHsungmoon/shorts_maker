@@ -292,12 +292,15 @@ export function saveStandard(body: string): Promise<PromptStandard> {
 }
 
 /** 영상 개요. 🔴 이미 나눈 구간에는 반영되지 않는다. */
-export function saveSourceContext(
+/**
+ * 원본의 사람이 고치는 값을 고친다 — 제목 · 영상 개요 · 유튜브 id.
+ *
+ * 🔴 **보낼 것만 담아 보낸다.** 서버는 받은 필드만 고치므로, 안 고친 값을 실어 보내면
+ * 두 사람이 같은 화면을 열었을 때 남의 수정을 옛 값으로 덮어쓴다.
+ */
+export function patchSource(
 	sourceId: number,
-	context: string,
-): Promise<{ id: number; context: string | null }> {
-	return request<{ id: number; context: string | null }>(`/api/sources/${sourceId}`, {
-		method: "PATCH",
-		body: { context },
-	});
+	patch: { title?: string; context?: string; youtubeId?: string },
+): Promise<{ id: number; title: string; context: string | null; youtube_id: string | null }> {
+	return request(`/api/sources/${sourceId}`, { method: "PATCH", body: patch });
 }

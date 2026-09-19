@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createChunk, publishSource, runSegment, runStt, saveSourceContext } from "../api";
+import { createChunk, patchSource, publishSource, runSegment, runStt } from "../api";
 import { Step } from "./Step";
 import { time } from "../../shared/format";
 import type { SourceView } from "../SourcePage";
@@ -91,12 +91,14 @@ export function PrepareTab({ view }: { view: SourceView }) {
 				}
 			/>
 
-			{/* 영상 개요(프롬프트 3층). 단계가 아니라서 번호를 주지 않는다 — 비어 있어도 다음으로 갈 수 있다. */}
+			{/* 원본 정보(제목·유튜브 id·개요). 단계가 아니라서 번호를 주지 않는다 — 비어 있어도 다음으로 갈 수 있다. */}
 			{data && (
-				<ContextEditor
+				<SourceInfoEditor
 					key={data.source.id}
 					sourceId={data.source.id}
-					saved={data.source.context}
+					savedTitle={data.source.title}
+					savedYoutubeId={data.source.youtube_id}
+					savedContext={data.source.context}
 					disabled={jobBusy}
 					onSaved={reload}
 				/>
@@ -324,37 +326,63 @@ function TimeField({
 
 
 /**
- * 영상 개요 — 이 영상이 무엇인지 한두 문장(프롬프트 3층).
+ * 원본 정보 — 제목 · 유튜브 id · 영상 개요. 사람이 고치는 값 셋을 한 자리에 모은다.
  *
- * 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 그래서 짧아야 하고(500자) 사실만 적는다 —
- * "무엇을 좋게 볼지" 는 여기가 아니라 프롬프트 화면의 관리자 기준에 적는다.
+ * **제목**은 파일로 등록한 원본이면 파일 이름이다(`media/{name}/register` 가 `path.stem` 을 쓴다).
+ * 🔴 그 값이 시청자 화면까지 그대로 나가서 `MVqTWMg4n0o` 가 사람 앞에 보였다(2026-09-19).
  *
+ * **유튜브 id** 가 없으면 시청자가 원본을 못 본다(임베드 플레이어가 이 값으로 연다). 파일로
+ * 올린 원본에는 없어서, 전에는 psql 로 넣어야 했다. URL 을 통째로 붙여넣어도 서버가 id 만 뽑는다.
+ *
+ * **영상 개요**(프롬프트 3층)는 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 그래서
+ * 짧아야 하고(500자) 사실만 적는다 — "무엇을 좋게 볼지" 는 프롬프트 화면의 관리자 기준에 적는다.
  * 🔴 **이미 나눈 구간에는 반영되지 않는다.** 구간은 캐시된 자산이라 다시 나누기 전까지 그대로다.
  */
-function ContextEditor({
+function SourceInfoEditor({
 	sourceId,
-	saved,
+	savedTitle,
+	savedYoutubeId,
+	savedContext,
 	disabled,
 	onSaved,
 }: {
 	sourceId: number;
-	saved: string | null;
+	savedTitle: string;
+	savedYoutubeId: string | null;
+	savedContext: string | null;
 	disabled: boolean;
 	onSaved: () => void;
 }) {
-	const [draft, setDraft] = useState<string | null>(null);
+	const [titleDraft, setTitleDraft] = useState<string | null>(null);
+	const [youtubeDraft, setYoutubeDraft] = useState<string | null>(null);
+	const [contextDraft, setContextDraft] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const text = draft ?? saved ?? "";
-	const dirty = text.trim() !== (saved ?? "").trim();
-	const over = text.trim().length > 500;
+
+	const title = titleDraft ?? savedTitle;
+	const youtubeId = youtubeDraft ?? savedYoutubeId ?? "";
+	const context = contextDraft ?? savedContext ?? "";
+
+	const titleDirty = title.trim() !== savedTitle.trim();
+	const youtubeDirty = youtubeId.trim() !== (savedYoutubeId ?? "").trim();
+	const contextDirty = context.trim() !== (savedContext ?? "").trim();
+	const dirty = titleDirty || youtubeDirty || contextDirty;
+	const over = context.trim().length > 500;
+	const emptyTitle = title.trim().length === 0;
 
 	const save = async () => {
 		setBusy(true);
 		setError(null);
 		try {
-			await saveSourceContext(sourceId, text);
-			setDraft(null);
+			// 🔴 고친 것만 보낸다. 안 고친 값을 실어 보내면 다른 창의 수정을 옛 값으로 덮어쓴다.
+			await patchSource(sourceId, {
+				...(titleDirty ? { title } : {}),
+				...(youtubeDirty ? { youtubeId } : {}),
+				...(contextDirty ? { context } : {}),
+			});
+			setTitleDraft(null);
+			setYoutubeDraft(null);
+			setContextDraft(null);
 			onSaved();
 		} catch (e: unknown) {
 			setError(e instanceof Error ? e.message : String(e));
@@ -365,28 +393,55 @@ function ContextEditor({
 
 	return (
 		<section className="sm-context">
-			<span className="sm-step__title">영상 개요</span>{" "}
-			<span className="sm-meta">
-				이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 반영되고, 이미 나눈 구간에는 반영되지
-				않습니다.
-			</span>
-			<textarea
-				rows={2}
-				value={text}
-				maxLength={600}
-				placeholder="예) 쏘카 개발·프로덕트·데이터 직군 채용설명회. CTO 발표와 본부장 패널 토크."
-				onChange={(event) => setDraft(event.target.value)}
+			<span className="sm-step__title">원본 정보</span>{" "}
+			<span className="sm-meta">제목은 시청자 화면에 그대로 보입니다.</span>
+			<input
+				className="sm-context__line"
+				type="text"
+				value={title}
+				maxLength={300}
+				placeholder="영상 제목"
+				onChange={(event) => setTitleDraft(event.target.value)}
 			/>
+			<label className="sm-context__field">
+				<span className="sm-meta">
+					유튜브 id — 시청자 화면의 플레이어가 이 값으로 원본을 엽니다. 주소를 통째로 붙여넣어도 됩니다.
+				</span>
+				<input
+					className="sm-context__line"
+					type="text"
+					value={youtubeId}
+					maxLength={200}
+					placeholder="예) MVqTWMg4n0o 또는 https://youtu.be/MVqTWMg4n0o"
+					onChange={(event) => setYoutubeDraft(event.target.value)}
+				/>
+			</label>
+			<label className="sm-context__field">
+				<span className="sm-meta">
+					영상 개요 — 이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 반영되고, 이미 나눈
+					구간에는 반영되지 않습니다.
+				</span>
+				<textarea
+					rows={2}
+					value={context}
+					maxLength={600}
+					placeholder="예) 쏘카 개발·프로덕트·데이터 직군 채용설명회. CTO 발표와 본부장 패널 토크."
+					onChange={(event) => setContextDraft(event.target.value)}
+				/>
+			</label>
 			<div className="sm-actions">
-				<span className={`sm-meta${over ? " pr-counter--over" : ""}`}>{text.trim().length} / 500자</span>
+				<span className={`sm-meta${over ? " pr-counter--over" : ""}`}>
+					개요 {context.trim().length} / 500자
+				</span>
 				<span className="sm-actions sm-actions--end">
+					{emptyTitle && <span className="sm-meta">제목은 비울 수 없습니다</span>}
 					<button
 						type="button"
 						className="button button--small"
 						onClick={save}
-						disabled={disabled || busy || over || !dirty}
+						disabled={disabled || busy || over || emptyTitle || !dirty}
 					>
-						{busy ? "저장 중…" : "개요 저장"}
+						{busy ? "저장 중…" : "원본 정보 저장"}
 					</button>
 				</span>
 			</div>
