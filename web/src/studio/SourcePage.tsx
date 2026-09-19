@@ -51,6 +51,11 @@ export interface SourceView {
 	geminiReady: boolean;
 	sourceBusy: boolean;
 	jobBusy: boolean;
+	/**
+	 * 이 탭이 띄운 잡. 대부분의 탭은 `jobBusy` 로 충분하지만, **결과를 DB 가 아니라 잡에서
+	 * 받아오는** 자리가 있어서(개요 초안) 잡 자체가 필요하다.
+	 */
+	job: ShortsJob | null;
 	submit: (start: () => Promise<ShortsJob>) => void;
 	act: (run: () => Promise<unknown>) => void;
 	reload: () => void;
@@ -114,7 +119,7 @@ export function SourcePage() {
 	const sourceId = /^\d+$/.test(raw) ? Number(raw) : null;
 
 	const studio = useStudioJob();
-	const { jobBusy, reloadToken, reload, submit, act } = studio;
+	const { job, jobBusy, reloadToken, reload, submit, act } = studio;
 
 	const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
 	const [openPreview, setOpenPreview] = useState<number | null>(null);
@@ -211,6 +216,7 @@ export function SourcePage() {
 		geminiReady,
 		sourceBusy,
 		jobBusy,
+		job,
 		submit,
 		act,
 		reload,

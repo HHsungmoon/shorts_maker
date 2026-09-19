@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { createChunk, patchSource, publishSource, runSegment, runStt } from "../api";
+import { useEffect, useState } from "react";
+import { createChunk, draftOverview, patchSource, publishSource, runSegment, runStt } from "../api";
 import { Step } from "./Step";
 import { time } from "../../shared/format";
 import type { SourceView } from "../SourcePage";
@@ -36,7 +36,15 @@ export function PrepareTab({ view }: { view: SourceView }) {
 		setRangeOpen,
 		language,
 		setLanguage,
+		job,
 	} = view;
+
+	// 개요 초안은 DB 가 아니라 **잡 결과**로 온다 — 저장하지 않고 돌려주기 때문이다.
+	// 🔴 다른 잡의 결과를 개요 칸에 붓지 않도록 kind 까지 본다.
+	const overviewDraft =
+		job !== null && job.kind === "overview" && job.status === "DONE"
+			? ((job.result as { context?: string } | null)?.context ?? null)
+			: null;
 
 	return (
 		<>
@@ -101,6 +109,10 @@ export function PrepareTab({ view }: { view: SourceView }) {
 					savedContext={data.source.context}
 					disabled={jobBusy}
 					onSaved={reload}
+					// 구간 요약이 있어야 개요를 쓸 재료가 있다(pipeline/overview.py 머리 주석).
+					canDraft={segments.length > 0}
+					onDraft={() => submit(() => draftOverview(data.source.id))}
+					draftedContext={overviewDraft}
 				/>
 			)}
 
@@ -345,6 +357,9 @@ function SourceInfoEditor({
 	savedContext,
 	disabled,
 	onSaved,
+	canDraft,
+	onDraft,
+	draftedContext,
 }: {
 	sourceId: number;
 	savedTitle: string;
@@ -352,12 +367,29 @@ function SourceInfoEditor({
 	savedContext: string | null;
 	disabled: boolean;
 	onSaved: () => void;
+	/** 구간 요약이 있는가. 없으면 개요를 쓸 재료가 없다. */
+	canDraft: boolean;
+	onDraft: () => void;
+	/** 방금 끝난 개요 초안. 저장하지 않고 입력칸에만 들어간다. */
+	draftedContext: string | null;
 }) {
 	const [titleDraft, setTitleDraft] = useState<string | null>(null);
 	const [youtubeDraft, setYoutubeDraft] = useState<string | null>(null);
 	const [contextDraft, setContextDraft] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// 초안이 도착하면 입력칸에 **붓기만** 한다. 저장은 사람이 누른다 — 이 글은 이후 모든 호출에
+	// 붙어서 틀린 한 줄이 조용히 파이프라인 전체에 퍼진다.
+	//
+	// 🔴 사람이 이미 손댄 개요는 덮지 않는다. 초안을 기다리는 동안 직접 쓰고 있었을 수 있고,
+	// 그걸 지우면 그 사람의 문장은 어디에도 남지 않는다.
+	useEffect(() => {
+		if (draftedContext === null) {
+			return;
+		}
+		setContextDraft((current) => (current === null ? draftedContext : current));
+	}, [draftedContext]);
 
 	const title = titleDraft ?? savedTitle;
 	const youtubeId = youtubeDraft ?? savedYoutubeId ?? "";
@@ -419,7 +451,21 @@ function SourceInfoEditor({
 			<label className="sm-context__field">
 				<span className="sm-meta">
 					영상 개요 — 이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 반영되고, 이미 나눈
-					구간에는 반영되지 않습니다.
+					구간에는 반영되지 않습니다.{" "}
+					{/* 🔴 눌리지 않는 버튼을 두지 않는다 — 이유를 말할 기회가 없어 "고장난 화면" 으로 읽힌다.
+					    재료가 없을 때는 버튼 대신 무엇이 필요한지를 적는다. */}
+					{canDraft ? (
+						<button
+							type="button"
+							className="button button--small"
+							onClick={onDraft}
+							disabled={disabled || busy}
+						>
+							AI로 초안 쓰기
+						</button>
+					) : (
+						<span className="sm-meta">— 주제 분할을 끝내면 AI가 초안을 써 줍니다</span>
+					)}
 				</span>
 				<textarea
 					rows={2}

@@ -186,7 +186,7 @@ class SegmentRangeTest(SchemaTestCase):
 
 class StageCallTest(SchemaTestCase):
     STAGES = (
-        "ping", "chunk", "stt", "segment", "describe", "rank", "cut", "render",
+        "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
         "caption", "embed", "retrieve", "cluster", "judge", "classify", "download", "preview",
     )
 

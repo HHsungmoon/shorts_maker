@@ -17,6 +17,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	chunk: "구간 추출",
 	stt: "음성 인식",
 	segment: "주제 분할",
+	overview: "개요 초안",
 	rank: "선정",
 	cut: "클립 만들기",
 	render: "렌더",
