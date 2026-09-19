@@ -93,6 +93,104 @@
 	background: var(--bg);
 }
 
+/* 감사 인사.
+ *
+ * 🔴 화면의 다른 곳과 **일부러 다르게** 생겼다. 나머지는 도구의 얼굴(회색 판·각진 카드)이고
+ * 여기만 사람의 말이라, 같은 팔레트로 그리면 각주처럼 읽혀 아무도 안 본다.
+ * 색은 크림·먹빛·연분홍으로 따로 잡는다 — 이 블록 밖으로 나가지 않으므로 전역 토큰을 건드리지 않는다. */
+.thanks {
+	position: relative;
+	margin: 34px 0 0;
+	padding: 34px 24px 30px;
+	overflow: hidden;
+	background: linear-gradient(160deg, #fdf7f0 0%, #fbeee8 100%);
+	border: 1px solid #f0ded2;
+	border-radius: 16px;
+}
+
+.thanks__line {
+	position: relative;
+	margin: 0;
+	/* 손글씨체를 못 받으면 시스템 글꼴로 떨어진다. 그때도 읽히도록 크기·자간을 여기서 정한다. */
+	font-family: "Nanum Pen Script", "Apple SD Gothic Neo", system-ui, sans-serif;
+	font-size: 34px;
+	font-weight: 400;
+	line-height: 1.45;
+	color: #5c4638;
+}
+
+.thanks__line strong {
+	font-weight: 400;
+	/* 학교 이름만 색으로 든다 — 손글씨에 굵기를 더하면 뭉개진다. */
+	color: #c0504d;
+}
+
+.thanks__sign {
+	position: relative;
+	margin: 6px 0 0;
+	font-family: "Nanum Pen Script", "Apple SD Gothic Neo", system-ui, sans-serif;
+	font-size: 22px;
+	color: #9b8578;
+}
+
+.thanks__heart {
+	position: absolute;
+	width: 22px;
+	height: 22px;
+	color: #efb0bb;
+	pointer-events: none;
+}
+
+.thanks__heart--a {
+	top: 16px;
+	left: 10%;
+	transform: rotate(-18deg);
+}
+
+.thanks__heart--b {
+	top: 30px;
+	right: 12%;
+	width: 30px;
+	height: 30px;
+	color: #f5c6ce;
+	transform: rotate(14deg);
+}
+
+.thanks__heart--c {
+	bottom: 18px;
+	left: 18%;
+	width: 16px;
+	height: 16px;
+	color: #f5c6ce;
+	transform: rotate(10deg);
+}
+
+.thanks__heart--d {
+	bottom: 26px;
+	right: 16%;
+	transform: rotate(-8deg);
+}
+
+@media (max-width: 600px) {
+	.thanks {
+		padding: 28px 16px 24px;
+	}
+
+	.thanks__line {
+		font-size: 27px;
+	}
+
+	.thanks__sign {
+		font-size: 19px;
+	}
+
+	/* 좁은 화면에서는 하트가 글자 위로 올라온다. 장식이라 지운다. */
+	.thanks__heart--a,
+	.thanks__heart--c {
+		display: none;
+	}
+}
+
 @media (max-width: 600px) {
 	.landing {
 		padding: 44px 16px 48px;

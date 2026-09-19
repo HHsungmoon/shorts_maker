@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- src/shared/brand.ts PRODUCT_NAME 과 같은 값 -->
     <title>CLIPQ</title>
+    <!-- 첫 화면의 감사 인사에만 쓰는 손글씨 폰트. 🔴 `display=swap` 이라 폰트를 못 받아도 글은
+         시스템 글꼴로 먼저 그려진다 — 첫 화면이 바깥 서버를 기다리게 두지 않는다. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nanum+Pen+Script&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <div id="root"></div>
