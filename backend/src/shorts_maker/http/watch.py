@@ -80,13 +80,25 @@ def _published_clips(conn, source_id: int, ids: list[int] | None = None) -> list
                       -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
                       coalesce(c.title, qc.canonical_text) as title,
                       qc.canonical_text as question,
-                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
+                      (select count(*) from questions q where q.cluster_id = qc.id) as asked_by,
+                      -- 🔴 이 줄이 목록의 **정렬 기준**이다. 묶음에 달린 좋아요를 전부 더한 수 —
+                      -- "나도 그거 궁금해요" 를 누른 사람 수다.
+                      (select count(*) from question_likes l
+                         join questions q on q.id = l.question_id
+                        where q.cluster_id = qc.id) as liked_by
                from clips c
                join runs r on r.id = c.run_id
                left join question_clusters qc on qc.id = c.question_cluster_id
                where r.source_id = %s and c.published_at is not null
                  and (%s::int[] is null or c.id = any(%s))
-               order by c.published_at desc""",
+               -- 🔴 **수요 순이다, 발행 순이 아니다**(2026-09-20). 발행 순이면 방금 만든 것이
+               -- 늘 맨 앞에 오는데, 그건 크리에이터의 사정이지 보는 사람의 관심사가 아니다.
+               -- 이 제품의 주장이 "여러 사람이 궁금해한 것부터 보여준다" 라서 목록의 순서가
+               -- 그 주장을 직접 드러내야 한다.
+               -- 🔴 질문에서 나오지 않은 클립(크리에이터가 기준으로 직접 뽑은 것)은 묶음이 없어
+               -- 0 이 되고 맨 뒤로 간다. 수요가 낮은 게 아니라 **재어 본 적이 없는** 것이라,
+               -- 그 안에서는 최신 순으로 둔다.
+               order by liked_by desc, asked_by desc, c.published_at desc""",
         (source_id, ids, ids),
     )
 

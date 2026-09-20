@@ -82,9 +82,12 @@ class WatchTestCase(unittest.TestCase):
             run_id = conn.execute(
                 "insert into runs (source_id) values (%s) returning id", (source_id,)
             ).fetchone()["id"]
+            # 한 소스에 클립을 여러 개 올리는 테스트가 있다 — (source_id, idx) 가 유니크라
+            # 청크 번호를 이어 붙인다.
             chunk_id = conn.execute(
                 "insert into chunks (source_id, idx, start_sec, end_sec, path)"
-                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
+                " select %s, coalesce(max(idx) + 1, 0), 0, 300, 'c.wav' from chunks"
+                " where source_id = %s returning id", (source_id, source_id)
             ).fetchone()["id"]
             segment_id = conn.execute(
                 "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
@@ -577,9 +580,12 @@ class ClipTitleTest(WatchTestCase):
             run_id = conn.execute(
                 "insert into runs (source_id) values (%s) returning id", (source_id,)
             ).fetchone()["id"]
+            # 한 소스에 클립을 여러 개 올리는 테스트가 있다 — (source_id, idx) 가 유니크라
+            # 청크 번호를 이어 붙인다.
             chunk_id = conn.execute(
                 "insert into chunks (source_id, idx, start_sec, end_sec, path)"
-                " values (%s, 0, 0, 300, 'c.wav') returning id", (source_id,)
+                " select %s, coalesce(max(idx) + 1, 0), 0, 300, 'c.wav' from chunks"
+                " where source_id = %s returning id", (source_id, source_id)
             ).fetchone()["id"]
             segment_id = conn.execute(
                 "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx,"
@@ -620,6 +626,55 @@ class ClipTitleTest(WatchTestCase):
         # 질문 자체도 따로 온다 — 화면이 "몇 명이 물어봤다"를 붙이는 데 쓴다.
         clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
         self.assertEqual(clip["question"], "연봉은 얼마인가요?")
+
+    def demand(self, clip_id: int, questions: int, likes_each: int) -> None:
+        """그 클립이 답하는 묶음에 질문과 좋아요를 달아 수요를 만든다."""
+        with store.connect(self.url) as conn:
+            cluster_id = conn.execute(
+                "select question_cluster_id as c from clips where id = %s", (clip_id,)
+            ).fetchone()["c"]
+            for n in range(questions):
+                question_id = conn.execute(
+                    "insert into questions (source_id, text, viewer_id, cluster_id)"
+                    " select source_id, %s, %s, %s from question_clusters where id = %s returning id",
+                    (f"질문 {clip_id}-{n}", f"v-{clip_id}-{n}", cluster_id, cluster_id),
+                ).fetchone()["id"]
+                for k in range(likes_each):
+                    conn.execute(
+                        "insert into question_likes (question_id, viewer_id) values (%s, %s)",
+                        (question_id, f"like-{clip_id}-{n}-{k}"),
+                    )
+            conn.commit()
+
+    def test_the_list_is_ordered_by_total_likes_not_by_publish_time(self):
+        """🔴 발행 순이면 방금 만든 것이 늘 맨 앞에 온다 — 그건 크리에이터의 사정이지
+        보는 사람의 관심사가 아니다. 이 제품의 주장이 "여러 사람이 궁금해한 것부터" 라서
+        목록의 순서가 그 주장을 직접 드러내야 한다."""
+        source_id = self.source()
+        first = self.publish(source_id, title="먼저 발행", question="가장 궁금한 것")
+        second = self.publish(source_id, title="나중 발행", question="덜 궁금한 것")
+        self.demand(first, questions=2, likes_each=30)   # 좋아요 60
+        self.demand(second, questions=5, likes_each=2)   # 좋아요 10, 질문은 더 많다
+        # 나중에 발행됐고 질문 수도 많지만, 좋아요 합이 적어서 뒤로 간다.
+        self.assertEqual(self.titles(source_id), ["먼저 발행", "나중 발행"])
+
+    def test_the_like_total_comes_with_the_clip(self):
+        """정렬 기준이 화면에 보이는 숫자와 같아야 순서가 고장난 것처럼 읽히지 않는다."""
+        source_id = self.source()
+        clip_id = self.publish(source_id, title=None, question="연봉은 얼마인가요?")
+        self.demand(clip_id, questions=3, likes_each=4)
+        clip = self.client.get(f"/api/watch/sources/{source_id}").json()["clips"][0]
+        self.assertEqual(clip["asked_by"], 3)
+        self.assertEqual(clip["liked_by"], 12)
+
+    def test_a_clip_with_no_question_sinks_to_the_bottom(self):
+        """🔴 수요가 낮은 게 아니라 **재어 본 적이 없는** 것이다. 그래도 맨 뒤가 맞다 —
+        시청자 화면의 줄은 "여러 사람이 궁금해한 것" 순서라고 말하고 있다."""
+        source_id = self.source()
+        self.publish(source_id, title="크리에이터가 뽑은 것", question=None)
+        asked = self.publish(source_id, title="질문에서 나온 것", question="궁금한 것")
+        self.demand(asked, questions=1, likes_each=1)
+        self.assertEqual(self.titles(source_id), ["질문에서 나온 것", "크리에이터가 뽑은 것"])
 
 
 if __name__ == "__main__":
