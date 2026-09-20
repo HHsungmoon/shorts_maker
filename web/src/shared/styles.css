@@ -309,12 +309,25 @@ img {
 }
 
 .modal__head {
+	padding: 16px 20px;
+	border-bottom: 1px solid var(--border);
+}
+
+/* 제목과 닫기. 예전엔 .modal__head 가 이 역할을 겸했는데, 제목 아래 한 줄(subhead)이
+   생기면서 갈랐다 — 한 칸에 둘을 넣으면 그 줄이 닫기 버튼 옆으로 끼어 들어간다. */
+.modal__headrow {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	padding: 16px 20px;
-	border-bottom: 1px solid var(--border);
+}
+
+.modal__subhead {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-top: 8px;
 }
 
 .modal__title {

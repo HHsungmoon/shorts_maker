@@ -643,28 +643,21 @@
 }
 
 /* ── 모달 안의 플레이어 ──
- * 🔴 **영상이 주인공이라 세로 한 단이다.** 처음엔 영상 옆에 설명을 두었는데, 세로 영상 옆의
- * 가로 공간은 채울 것이 없어 절반이 비고 그만큼 영상이 작아졌다(2026-09-20). 모달 폭을
- * 영상 폭에 맞춰 줄이고, 곁다리는 위에 한 줄로 눕힌다. */
+ * 🔴 **스크롤이 생기면 진 것이다**(2026-09-20). 30초짜리를 보려고 스크롤을 내려야 하면
+ * 이 모달은 카드 안 재생보다 나을 게 없다. 그래서 영상 높이를 **뷰포트에서 역산**한다 —
+ * 머리(제목+한 줄)와 본문 여백을 뺀 나머지가 영상 몫이고, 폭은 9:16 이 알아서 정한다. */
 .modal--clip {
-	/* 영상 높이(70vh)에서 역산한 폭 + 좌우 여백. 더 넓히면 다시 빈 공간이 생긴다. */
-	width: min(440px, calc(100vw - 32px));
+	/* 폭을 정하지 않는다. 영상 폭이 정해지면 모달이 거기 맞춰 줄어든다. */
+	width: fit-content;
+	max-width: min(560px, calc(100vw - 24px));
 	max-height: 96vh;
 }
 
-.clipmodal {
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-}
-
-/* 수요와 원본 이동을 한 줄에. 작게 둔다 — 지금 주인공은 영상이다. */
-.clipmodal__bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 10px;
-	flex-wrap: wrap;
+/* 🔴 공용 본문의 `max-height: calc(80vh - 60px)` 를 지운다. 그게 스크롤의 원인이었다. */
+.modal--clip .modal__body {
+	padding: 12px 16px 16px;
+	max-height: none;
+	overflow: visible;
 }
 
 .clipmodal__meta {
@@ -695,20 +688,14 @@
 	font-weight: 700;
 }
 
-/* 🔴 **높이가 폭을 정한다.** 세로 영상이라 화면 높이가 한계이고, 폭을 먼저 주면
- * 긴 화면에서는 위아래가 잘리고 낮은 화면에서는 모달이 뷰포트를 넘는다. */
+/* 🔴 **높이가 폭을 정한다.** 세로 영상이라 화면 높이가 한계다. 빼는 값 165px 은
+ * 머리(패딩 32 + 제목 두 줄 45 + 한 줄 30)와 본문 여백(28), 그리고 여유다. */
 .clipmodal__video {
 	display: block;
 	margin: 0 auto;
-	height: min(70vh, 700px);
+	height: min(calc(96vh - 165px), 760px);
 	max-width: 100%;
 	aspect-ratio: 9 / 16;
 	border-radius: var(--radius);
 	background: #000;
-}
-
-@media (max-width: 480px) {
-	.clipmodal__video {
-		height: min(62vh, 620px);
-	}
 }

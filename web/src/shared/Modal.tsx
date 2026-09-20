@@ -8,6 +8,8 @@ interface ModalProps {
 	children: ReactNode;
 	/** 모양을 바꿔야 하는 모달용(세로 영상 등). 기본 폭·여백을 덮어쓴다. */
 	variant?: string;
+	/** 제목 바로 아래 한 줄. 본문을 주인공에게 통째로 내주고 싶을 때 쓴다. */
+	subhead?: ReactNode;
 }
 
 /**
@@ -16,7 +18,7 @@ interface ModalProps {
  * 🔴 `shared/` 에 둔다. 시청자 트리와 스튜디오 트리가 **둘 다** 쓰는데, 스튜디오 쪽에 두고
  * 시청자가 가져다 쓰면 lazy 로 갈라놓은 스튜디오 코드가 시청자 번들로 딸려 온다.
  */
-export function Modal({ open, title, onClose, children, variant }: ModalProps) {
+export function Modal({ open, title, onClose, children, variant, subhead }: ModalProps) {
 	const ref = useRef<HTMLDialogElement>(null);
 
 	useEffect(() => {
@@ -44,10 +46,15 @@ export function Modal({ open, title, onClose, children, variant }: ModalProps) {
 			}}
 		>
 			<div className="modal__head">
-				<h2 className="modal__title">{title}</h2>
-				<button type="button" className="modal__close" onClick={onClose} aria-label="닫기">
-					×
-				</button>
+				<div className="modal__headrow">
+					<h2 className="modal__title">{title}</h2>
+					<button type="button" className="modal__close" onClick={onClose} aria-label="닫기">
+						×
+					</button>
+				</div>
+				{/* 제목에 딸린 한 줄(수요·바로가기 등). 본문이 아니라 머리에 두면 본문 전체를
+				    주인공에게 줄 수 있다 — 숏폼 모달이 그래서 이걸 쓴다. */}
+				{subhead && <div className="modal__subhead">{subhead}</div>}
 			</div>
 			<div className="modal__body">{children}</div>
 		</dialog>
