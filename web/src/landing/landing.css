@@ -66,25 +66,51 @@
 
 /* 보기 전용 비밀번호 안내. 🔴 문(링크) **밖에** 둔다 — 안에 두면 값을 드래그해 복사하려는
  * 순간 링크가 눌려 페이지가 넘어간다. */
+/* 🔴 여기가 첫 방문자에게 하는 유일한 말이다(2026-09-20에 키웠다). 13px 흐린 글씨로는
+ * 읽히기 전에 지나쳐서, 본문 크기·본문 색으로 올렸다. */
 .landing__key {
-	margin: 18px 0 0;
-	padding: 12px 14px;
-	font-size: 13px;
-	line-height: 1.7;
+	margin: 20px 0 0;
+	padding: 18px 20px;
 	text-align: left;
-	color: var(--text-muted);
 	background: var(--surface);
 	border: 1px dashed var(--border);
 	border-radius: var(--radius);
 }
 
-.landing__key code {
-	padding: 2px 6px;
-	font-size: 13px;
+.landing__key-head {
+	margin: 0 0 10px;
+	font-size: 15.5px;
+	font-weight: 700;
 	color: var(--text);
+}
+
+.landing__key-line {
+	margin: 0 0 10px;
+	font-size: 14.5px;
+	line-height: 1.75;
+	color: var(--text);
+}
+
+.landing__key-mail {
+	margin: 0;
+	font-size: 14.5px;
+	color: var(--text);
+}
+
+.landing__key-mail a {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.landing__key code {
+	padding: 2px 7px;
+	font-size: 14.5px;
+	font-weight: 600;
+	color: var(--accent);
 	background: var(--bg);
 	border: 1px solid var(--border);
 	border-radius: 4px;
+	/* 한 번 눌러 통째로 집히게 — 손으로 끌어 고르다 글자를 빠뜨리면 로그인 실패 잠금에 걸린다. */
 	user-select: all;
 }
 

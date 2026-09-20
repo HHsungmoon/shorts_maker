@@ -1,42 +1,38 @@
 import { useCallback, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { time } from "../shared/format";
+
 import { useAsync } from "../shared/useAsync";
 import { clipFileUrl, fetchWatchSource, postQuestion, recordEvent, toggleLike } from "./api";
 import type { WatchClip, WatchQuestion, WatchUnanswerable } from "./api";
+import { ClipModal } from "./ClipModal";
 import { OriginPlayer } from "./OriginPlayer";
 import type { OriginPlayerHandle } from "./OriginPlayer";
 
 const MAX_LENGTH = 200;
 
-function ClipCard({
-	clip,
-	sourceId,
-	onJump,
-}: {
-	clip: WatchClip;
-	sourceId: number;
-	onJump: (clip: WatchClip) => void;
-}) {
-	// 끝까지 본 사람에게는 버튼이 달라진다 — 아래 주석 참고.
-	const [ended, setEnded] = useState(false);
-
+function ClipCard({ clip, onOpen }: { clip: WatchClip; onOpen: (clip: WatchClip) => void }) {
 	return (
 		<li className="watch-clip">
-			{/* preload="metadata" — 목록에 여러 개가 있어 전부 받아오면 첫 화면이 느려진다.
-			    첫 프레임조차 없이 검은 칸만 보이는 것보다는 메타데이터까지가 낫다. */}
-			<video
-				className="watch-clip__video"
-				src={clipFileUrl(clip.id)}
-				controls
-				preload="metadata"
-				playsInline
-				onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
-				onEnded={() => {
-					setEnded(true);
-					recordEvent("short_complete", sourceId, { clipId: clip.id });
-				}}
-			/>
+			{/* 🔴 카드 안에서 재생하지 않는다(2026-09-20). 한 줄에 둘이라 폭이 170px 남짓인데
+			    거기서 9:16 을 틀면 **자막이 안 읽힌다** — 자막이 이 클립 내용의 절반이다.
+			    카드는 고르는 자리고, 보는 자리는 가운데 모달이다(ClipModal).
+
+			    그래서 controls 를 떼고 카드 전체를 버튼으로 만든다. muted 는 자동재생 방지용이
+			    아니라 혹시라도 소리가 나지 않게 하는 보험이다. */}
+			<button type="button" className="watch-clip__thumb" onClick={() => onOpen(clip)}>
+				<video
+					className="watch-clip__video"
+					src={clipFileUrl(clip.id)}
+					preload="metadata"
+					muted
+					playsInline
+					tabIndex={-1}
+				/>
+				<span className="watch-clip__play" aria-hidden="true">
+					▶
+				</span>
+				<span className="sr-only">재생: {clip.title ?? clip.question ?? "숏폼"}</span>
+			</button>
 			<div className="watch-clip__body">
 				{/* title 속성: 한 줄로 잘린 제목의 전문을 마우스를 올리면 보여준다(watch.css). */}
 				{clip.title && (
@@ -57,20 +53,12 @@ function ClipCard({
 						<span>{clip.asked_by}명이 물어봤어요</span>
 					)}
 				</p>
-				{/* 🔴 **이 버튼이 이 제품의 결론이다**(tease §2-1 5단계). 숏폼은 답을 주고 끝나는
-				    물건이 아니라 원본으로 데려가는 입구다. 그래서 답을 다 들은 자리에 놓는다.
-				
-				    끝까지 본 뒤에만 보여주지는 않는다. 앞부분만 듣고 "더 듣고 싶다" 가 되는 게
-				    오히려 흔하고, 그때 버튼이 없으면 그 마음이 갈 곳이 없다. 대신 다 본 뒤에는
-				    문구와 색이 바뀐다 — 그 순간이 원본으로 넘어갈 가장 좋은 때다. */}
-				<button
-					type="button"
-					className={`watch-jump${ended ? " watch-jump--ready" : ""}`}
-					onClick={() => onJump(clip)}
-				>
-					{/* 카드가 좁아 라벨을 줄였다(2026-09-17). 옆의 시각이 "어디로 가는지" 를 말해 준다. */}
-					<span>{ended ? "이어 보기" : "원본 보기"}</span>
-					<span className="watch-jump__at">{time(clip.start_sec)}</span>
+				{/* 🔴 **원본으로 가는 길은 모달 안**으로 옮겼다(2026-09-20). 답을 다 들은 자리에
+				    놓는 것이 이 버튼의 뜻인데, 카드에서는 아직 아무것도 안 들은 상태다.
+				    여기서는 "답을 보러 가는" 입구만 둔다. */}
+				{/* 길이(초)는 붙이지 않는다 — 30초 예산 안이라 그 숫자로 고를 일이 없다(2026-09-17). */}
+				<button type="button" className="watch-jump watch-jump--open" onClick={() => onOpen(clip)}>
+					답변 보기
 				</button>
 			</div>
 		</li>
@@ -101,11 +89,16 @@ function UnanswerableRow({ item }: { item: WatchUnanswerable }) {
 
 function QuestionRow({
 	question,
+	answer,
 	onToggle,
+	onOpen,
 	busy,
 }: {
 	question: WatchQuestion;
+	/** 이 질문이 속한 묶음에 이미 발행된 숏폼. 없으면 아직 답이 안 나온 질문이다. */
+	answer: WatchClip | undefined;
 	onToggle: (id: number) => void;
+	onOpen: (clip: WatchClip) => void;
 	busy: boolean;
 }) {
 	return (
@@ -121,7 +114,21 @@ function QuestionRow({
 				<span aria-hidden="true">♥</span>
 				<span className="watch-like__count">{question.likes}</span>
 			</button>
-			<p className="watch-question__text">{question.text}</p>
+			<div className="watch-question__body">
+				<p className="watch-question__text">{question.text}</p>
+				{/* 🔴 답이 이미 나와 있는데 목록에서는 알 길이 없었다(2026-09-20). 아래 숏폼 줄을
+				    뒤져서 같은 질문을 찾아내라는 것은 시청자의 일이 아니다. 답이 있으면 그
+				    자리에서 말하고, 누르면 바로 튼다. */}
+				{answer && (
+					<button
+						type="button"
+						className="watch-answer"
+						onClick={() => onOpen(answer)}
+					>
+						답변 보기
+					</button>
+				)}
+			</div>
 		</li>
 	);
 }
@@ -148,6 +155,8 @@ function SourceView({ sourceId }: { sourceId: number }) {
 	// 방금 남긴 질문과 비슷한 궁금증에 답한 발행 숏폼. 다음 질문을 보내면 비운다 — 옛 질문의 추천이
 	// 새 질문 밑에 남으면 엉뚱한 답을 권하는 것이 된다.
 	const [suggested, setSuggested] = useState<WatchClip[]>([]);
+	// 가운데에서 크게 트는 숏폼. 카드·질문 줄·추천이 모두 이 하나를 연다.
+	const [playing, setPlaying] = useState<WatchClip | null>(null);
 
 	const submit = useCallback(
 		async (event: React.FormEvent) => {
@@ -263,6 +272,16 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		return mine ? { ...question, likes: mine.likes, liked_by_me: mine.liked } : question;
 	});
 
+	// 질문 → 그 묶음에 이미 발행된 숏폼. 질문 줄의 "답변 보기" 가 이걸로 뜬다.
+	// 🔴 한 묶음에 클립이 여럿이면 목록 순서(수요 순)의 첫 번째를 쓴다 — 목록이 앞세운 것과
+	// 질문 줄이 여는 것이 다르면 같은 화면이 서로 다른 말을 한다.
+	const answerOf = new Map<number, WatchClip>();
+	for (const clip of clips) {
+		if (clip.question_cluster_id !== null && !answerOf.has(clip.question_cluster_id)) {
+			answerOf.set(clip.question_cluster_id, clip);
+		}
+	}
+
 	// 🔴 답변 숏폼을 **영상 오른쪽**에 둔다(유튜브의 관련 영상 자리). 본문 아래로 내리면 스크롤을
 	// 해야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에 있어야 한다.
 	// 그 단 안에서 카드는 **가로 2개씩**이고 영상 아래에 제목과 CTA 가 온다(2026-09-17, watch.css).
@@ -284,7 +303,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			) : (
 				<ul className="watch-clips">
 					{clips.map((clip) => (
-						<ClipCard key={clip.id} clip={clip} sourceId={sourceId} onJump={jump} />
+						<ClipCard key={clip.id} clip={clip} onOpen={setPlaying} />
 					))}
 				</ul>
 			)}
@@ -382,7 +401,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 						</p>
 						<ul className="watch-clips">
 							{suggested.map((clip) => (
-								<ClipCard key={clip.id} clip={clip} sourceId={sourceId} onJump={jump} />
+								<ClipCard key={clip.id} clip={clip} onOpen={setPlaying} />
 							))}
 						</ul>
 					</div>
@@ -398,7 +417,14 @@ function SourceView({ sourceId }: { sourceId: number }) {
 				) : (
 					<ul className="watch-questions">
 						{questions.map((question) => (
-							<QuestionRow key={question.id} question={question} onToggle={like} busy={busy} />
+							<QuestionRow
+								key={question.id}
+								question={question}
+								answer={question.cluster_id === null ? undefined : answerOf.get(question.cluster_id)}
+								onToggle={like}
+								onOpen={setPlaying}
+								busy={busy}
+							/>
 						))}
 					</ul>
 				)}
@@ -421,6 +447,14 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			{/* 넓은 화면의 오른쪽 단. 스크롤을 내려도 따라오게 sticky. */}
 			<aside className="watch-side">{shorts}</aside>
 			</div>
+
+			{/* 가운데에서 크게 트는 자리. 카드·질문 줄·추천이 모두 이 하나를 연다. */}
+			<ClipModal
+				clip={playing}
+				sourceId={sourceId}
+				onClose={() => setPlaying(null)}
+				onJump={jump}
+			/>
 		</article>
 	);
 }

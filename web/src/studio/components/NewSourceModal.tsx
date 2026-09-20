@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createSourceFromUrl, registerMedia } from "../api";
-import { Modal } from "./Modal";
+import { useAuth } from "../AuthContext";
+import { Modal } from "../../shared/Modal";
 import type { ShortsJob, ShortsMediaItem } from "../types";
 
 interface Props {
@@ -23,8 +24,16 @@ export function NewSourceModal({ open, onClose, unregistered, languages, onStart
 	const [language, setLanguage] = useState("ko");
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	// 🔴 거절은 **여기**다. 모달을 여는 것은 보기 전용도 되고(폼을 읽는 것은 행동이 아니다),
+	// 실제로 등록이 도는 이 자리에서만 막는다. 서버에도 같은 경계가 있어서(POST → 403) 여기를
+	// 빠뜨려도 뚫리지는 않지만, 헛걸음한 요청 없이 그 자리에서 이유를 말하는 편이 낫다.
+	const { canAct, refuse } = useAuth();
 
 	async function start(run: () => Promise<ShortsJob>) {
+		if (!canAct) {
+			refuse();
+			return;
+		}
 		setBusy(true);
 		setError(null);
 		try {

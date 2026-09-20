@@ -563,3 +563,154 @@
 .watch-suggest .watch-clips {
 	margin-top: 10px;
 }
+
+/* ── 숏폼을 가운데에서 크게 (2026-09-20) ──
+ * 🔴 카드 안에서 재생하던 것을 모달로 옮겼다. 한 줄에 둘이라 폭이 170px 남짓인데 거기서
+ * 9:16 을 틀면 **자막이 안 읽힌다** — 자막이 이 클립 내용의 절반이다. */
+.watch-clip__thumb {
+	position: relative;
+	display: block;
+	width: 100%;
+	padding: 0;
+	border: 0;
+	background: none;
+	cursor: pointer;
+	border-radius: var(--radius);
+}
+
+.watch-clip__thumb:hover .watch-clip__video {
+	border-color: var(--accent);
+}
+
+/* 재생 표시. 영상 위에 얹히므로 어두운 프레임에서도 보이게 그림자를 둔다. */
+.watch-clip__play {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 26px;
+	color: #fff;
+	text-shadow: 0 2px 10px rgb(0 0 0 / 70%);
+	pointer-events: none;
+	opacity: 0.9;
+}
+
+.watch-clip__thumb:hover .watch-clip__play {
+	opacity: 1;
+}
+
+/* 화면에는 안 보이고 낭독기만 읽는 글. 버튼 안에 무엇을 트는지 남긴다. */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	margin: -1px;
+	padding: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+	white-space: nowrap;
+}
+
+/* 질문 줄의 "답변 보기". 🔴 초록은 이 화면에서 **행동**의 색이다 — 좋아요(♥)와 구별된다. */
+.watch-question__body {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	flex: 1;
+}
+
+.watch-answer {
+	align-self: flex-start;
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--accent);
+	cursor: pointer;
+}
+
+.watch-answer::before {
+	content: "▶ ";
+	font-size: 10px;
+}
+
+.watch-answer:hover {
+	text-decoration: underline;
+}
+
+/* ── 모달 안의 플레이어 ── */
+.modal--clip {
+	width: min(880px, calc(100vw - 32px));
+	max-height: min(92vh, 920px);
+}
+
+.clipmodal {
+	display: grid;
+	grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+	gap: 20px;
+	align-items: start;
+}
+
+.clipmodal__video {
+	width: 100%;
+	aspect-ratio: 9 / 16;
+	max-height: 62vh;
+	border-radius: var(--radius);
+	background: #000;
+	display: block;
+}
+
+.clipmodal__side {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.clipmodal__q {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 700;
+	line-height: 1.5;
+}
+
+.clipmodal__qlabel {
+	display: block;
+	margin-bottom: 4px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.clipmodal__meta {
+	margin: 0;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.clipmodal__jump {
+	align-self: flex-start;
+	margin-top: 4px;
+}
+
+.clipmodal__hint {
+	margin: 0;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+/* 좁은 화면에서는 영상이 위, 설명이 아래. 영상 높이를 줄여 버튼이 접히지 않게 한다. */
+@media (max-width: 720px) {
+	.clipmodal {
+		grid-template-columns: 1fr;
+		gap: 14px;
+	}
+
+	.clipmodal__video {
+		max-height: 48vh;
+		margin: 0 auto;
+	}
+}

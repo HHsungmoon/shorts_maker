@@ -65,11 +65,22 @@ export function LandingPage() {
 			</div>
 
 			{readonlyHint && (
-				<p className="landing__key">
-					<strong>구경하러 오셨나요?</strong> 관리자 페이지 비밀번호에 <code>{readonlyHint}</code> 를
-					넣으면 화면을 전부 둘러볼 수 있습니다. 이 비밀번호로는 영상 추가·클립 생성·발행 같은
-					<strong> 실행만 막힙니다</strong> — 남의 데이터가 바뀌지 않으니 마음껏 눌러 보셔도 됩니다.
-				</p>
+				<section className="landing__key">
+					<p className="landing__key-head">{PRODUCT_NAME} 서비스에 관심을 가져주셔서 감사합니다.</p>
+					<p className="landing__key-line">
+						관리자 페이지 비밀번호에 <code>{readonlyHint}</code> 를 넣으면 관리자 화면을 모두
+						구경하실 수 있습니다. 이 비밀번호로는 영상 추가·클립 생성·발행 같은{" "}
+						<strong>실행만 막힙니다</strong> — 기존의 데이터가 바뀌지 않으니 마음껏 눌러 보셔도 됩니다.
+					</p>
+					<p className="landing__key-line">
+						{PRODUCT_NAME}에 궁금하거나 문의사항이 있으시다면 이메일로 편하게 연락 주시면
+						감사하겠습니다.
+					</p>
+					{/* 운영자가 직접 공개하기로 한 연락처다. mailto 로 걸어 두면 한 번에 쓸 수 있다. */}
+					<p className="landing__key-mail">
+						Email : <a href="mailto:sunmoonkr@gmail.com">sunmoonkr@gmail.com</a>
+					</p>
+				</section>
 			)}
 
 			<ThanksNote />

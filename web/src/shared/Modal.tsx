@@ -6,10 +6,17 @@ interface ModalProps {
 	title: string;
 	onClose: () => void;
 	children: ReactNode;
+	/** 모양을 바꿔야 하는 모달용(세로 영상 등). 기본 폭·여백을 덮어쓴다. */
+	variant?: string;
 }
 
-// 네이티브 <dialog> 를 쓴다 — ESC 닫기, 포커스 트랩, 배경 비활성화가 기본으로 따라온다.
-export function Modal({ open, title, onClose, children }: ModalProps) {
+/**
+ * 네이티브 <dialog> 를 쓴다 — ESC 닫기, 포커스 트랩, 배경 비활성화가 기본으로 따라온다.
+ *
+ * 🔴 `shared/` 에 둔다. 시청자 트리와 스튜디오 트리가 **둘 다** 쓰는데, 스튜디오 쪽에 두고
+ * 시청자가 가져다 쓰면 lazy 로 갈라놓은 스튜디오 코드가 시청자 번들로 딸려 온다.
+ */
+export function Modal({ open, title, onClose, children, variant }: ModalProps) {
 	const ref = useRef<HTMLDialogElement>(null);
 
 	useEffect(() => {
@@ -27,7 +34,7 @@ export function Modal({ open, title, onClose, children }: ModalProps) {
 	return (
 		<dialog
 			ref={ref}
-			className="modal"
+			className={`modal${variant ? ` ${variant}` : ""}`}
 			onClose={onClose}
 			onClick={(event) => {
 				// 바깥(backdrop)을 눌렀을 때만 닫는다. 내용 클릭은 dialog 자신이 target 이 아니다.
