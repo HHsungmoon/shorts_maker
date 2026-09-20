@@ -12,9 +12,9 @@ import type { WatchClip } from "./api";
  * 이 클립 내용의 절반이라 안 보이면 답을 못 들은 것과 같다. 목록의 카드는 이제 고르는
  * 자리이고, 보는 자리는 여기다.
  *
- * 🔴 **영상이 주인공이라 세로 한 단이다.** 처음엔 영상 옆에 설명을 두었는데, 세로 영상
- * 옆의 가로 공간은 채울 것이 없어 절반이 비고 그만큼 영상이 작아졌다. 곁다리(수요·원본
- * 이동)는 위에 한 줄로 눕히고 아래를 통째로 영상에 준다.
+ * 🔴 **본문은 통째로 영상 몫이다.** 곁다리(수요·원본 이동)는 본문이 아니라 **모달 머리**에
+ * 올린다(2026-09-20). 본문에 두었더니 영상이 그만큼 밀려 화면을 넘겼고, 숏폼을 보려고
+ * 스크롤을 내려야 했다 — 30초짜리를 한눈에 못 보면 이 화면은 실패한 것이다.
  *
  * 🔴 질문은 모달 머리에만 쓴다. 옆에도 적었더니 같은 문장이 두 번 보였다 — 제목이
  * 대표 문장으로 떨어지기 때문이다(watch.py 의 `coalesce(c.title, qc.canonical_text)`).
@@ -47,15 +47,14 @@ export function ClipModal({
 			variant="modal--clip"
 			title={clip.title ?? clip.question ?? "숏폼"}
 			onClose={onClose}
-		>
-			<div className="clipmodal">
-				<div className="clipmodal__bar">
+			subhead={
+				<>
 					{clip.liked_by > 0 && (
 						<span className="clipmodal__meta">{clip.liked_by}명이 궁금해했어요</span>
 					)}
 					{/* 🔴 **이 버튼이 이 제품의 결론이다**(tease §2-1 5단계). 숏폼은 답을 주고 끝나는
 					    물건이 아니라 원본으로 데려가는 입구다. 모달을 닫고 원본의 그 초로 보낸다.
-					    작게 둔다 — 지금 주인공은 영상이고, 이건 다 본 뒤에 찾을 것이다. */}
+					    작게, 제목 옆에 둔다 — 본문은 통째로 영상 몫이다. */}
 					<button
 						type="button"
 						className={`clipmodal__jump${ended ? " clipmodal__jump--ready" : ""}`}
@@ -66,24 +65,24 @@ export function ClipModal({
 					>
 						{ended ? "이어 보기" : "원본 보기"} · {time(clip.start_sec)}
 					</button>
-				</div>
-
-				{/* autoPlay — 모달을 연 클릭 자체가 사용자 제스처라 브라우저가 허용한다.
-				    막히더라도 controls 가 있으니 누르면 된다. */}
-				<video
-					key={clip.id}
-					className="clipmodal__video"
-					src={clipFileUrl(clip.id)}
-					controls
-					autoPlay
-					playsInline
-					onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
-					onEnded={() => {
-						setEnded(true);
-						recordEvent("short_complete", sourceId, { clipId: clip.id });
-					}}
-				/>
-			</div>
+				</>
+			}
+		>
+			{/* autoPlay — 모달을 연 클릭 자체가 사용자 제스처라 브라우저가 허용한다.
+			    막히더라도 controls 가 있으니 누르면 된다. */}
+			<video
+				key={clip.id}
+				className="clipmodal__video"
+				src={clipFileUrl(clip.id)}
+				controls
+				autoPlay
+				playsInline
+				onPlay={() => recordEvent("short_play", sourceId, { clipId: clip.id })}
+				onEnded={() => {
+					setEnded(true);
+					recordEvent("short_complete", sourceId, { clipId: clip.id });
+				}}
+			/>
 		</Modal>
 	);
 }
