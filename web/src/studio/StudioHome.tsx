@@ -124,11 +124,16 @@ export function StudioHome() {
 					프롬프트
 				</Link>
 				{/* 🔴 보기 전용이라고 비활성화하지 않는다. 눌리지 않는 버튼은 이유를 말할 기회가
-				    없어서 "고장난 화면" 으로 읽힌다 — 눌리게 두고 왜 안 되는지를 모달로 말한다. */}
+				    없어서 "고장난 화면" 으로 읽힌다.
+
+				    🔴 **여는 것까지는 보기 전용도 된다**(2026-09-20). 예전엔 누르는 순간 거절했는데,
+				    그러면 구경하러 온 사람은 이 도구가 무엇을 받는지(유튜브 URL? 파일?) 영영 못 본다.
+				    막아야 하는 것은 **등록이 실제로 도는 것**이지 폼을 읽는 것이 아니다 —
+				    거절은 모달 안의 실행 버튼이 한다. */}
 				<button
 					type="button"
 					className="button button--small sm-go"
-					onClick={() => (canAct ? setModalOpen(true) : refuse())}
+					onClick={() => setModalOpen(true)}
 				>
 					+ 새로 만들기
 				</button>
