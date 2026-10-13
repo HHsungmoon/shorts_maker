@@ -637,9 +637,7 @@ function CandidateCard({
 	return (
 		<article className={`sm-cand${candidate.chosen ? " sm-cand--chosen" : ""}`}>
 			<header className="sm-cand__head">
-				<span className="sm-cand__label">
-					{CANDIDATE_LABEL[candidate.label ?? ""] ?? candidate.label ?? "후보"}
-				</span>
+				<span className="sm-cand__label">{candidateLabel(candidate)}</span>
 				<span className="sm-meta">
 					{Math.round(candidate.totalSec)}초
 					{candidate.parts.length > 1 && ` · ${candidate.parts.length}조각을 이어붙임`}
@@ -689,3 +687,30 @@ const CANDIDATE_LABEL: Record<string, string> = {
 	combo: "조합",
 	tight: "짧은 컷",
 };
+
+/**
+ * 카드에 쓸 이름. 🔴 **만들어진 것**을 말한다 — 주문한 것이 아니라.
+ *
+ * `label` 은 후보를 받을 때 LLM 에게 준 **주문서의 이름**이다(ranking.ANSWER_PROMPT 의
+ * single · combo · tight). 그런데 `combo` 로 주문해도 답이 흩어져 있지 않으면 모델은 한
+ * 덩어리를 낸다 — 프롬프트가 "흩어져 있지 않으면 single 과 같은 범위를 다시 내도 된다" 고
+ * 허락하고 있다. 그때 주문서 이름을 그대로 쓰면 **화면이 거짓말을 한다.**
+ *
+ * 2026-10-13에 실제로 그렇게 읽혔다: 조각이 하나인 후보가 "조합" 으로 떠서, 이어붙인 클립을
+ * 기대하고 열었더니 한 덩어리였다. 브릿지 카드도 없다. 조각 수는 `judge` 기록(`parts`)에만
+ * 있었고 화면에는 없었다 — `parts.length > 1` 일 때만 "N조각을 이어붙임" 을 붙였기 때문에
+ * **1조각일 때는 아무 말도 하지 않았다.**
+ *
+ * 그래서 구조를 주장하는 이름은 구조가 있을 때만 쓴다. single 과 tight 는 구조가 아니라
+ * 의도(가장 직접적인 한 덩어리 / 핵심만 짧게)를 말하므로 그대로 둔다.
+ */
+function candidateLabel(candidate: ShortsCandidate): string {
+	if (candidate.parts.length > 1) {
+		return CANDIDATE_LABEL.combo;
+	}
+	if (candidate.label === "combo") {
+		// 흩어진 답을 찾아봤지만 한 자리에 있었다. 그건 조합이 아니라 단일 컷이다.
+		return CANDIDATE_LABEL.single;
+	}
+	return CANDIDATE_LABEL[candidate.label ?? ""] ?? candidate.label ?? "후보";
+}
