@@ -71,11 +71,33 @@ def _published_clips(conn, source_id: int, ids: list[int] | None = None) -> list
     return rows(
         conn,
         """select c.id, c.total_sec, c.published_at, c.question_cluster_id,
-                      -- 🔴 원본 유입의 목적지다. 조합 클립에서 이 값은 봉투의 시작(첫 조각
-                      -- 시작)이고, 그게 정확히 "이 이야기가 시작되는 곳" 이다.
-                      -- 소스 **절대 초**라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다
-                      -- (청크 오프셋은 stt.to_utterance_rows 에서 이미 더해졌다).
+                      -- 🔴 원본 유입의 **기본** 목적지다. 조합 클립에서 이 값은 봉투의 시작(첫
+                      -- 조각 시작)이다. 소스 **절대 초**라서 유튜브 플레이어 타임라인에 그대로
+                      -- 넣을 수 있다 (청크 오프셋은 stt.to_utterance_rows 에서 이미 더해졌다).
                       c.start_sec,
+                      -- 🔴 조합 클립의 조각들. **CTA 가 지금 보고 있는 조각을 가리키게** 하려고
+                      -- 내려준다(2026-10-13).
+                      --
+                      -- 원래는 `start_sec` 하나만 내려주고 "조합이어도 이야기의 시작은 하나" 라고
+                      -- 봤다. 같은 이야기가 두 번에 나뉜 클립(앞에서 말하고 뒤에서 이어 말함)에서는
+                      -- 그게 맞다 — 뒤 조각으로 보내면 이야기 중간에 떨어진다.
+                      -- 그런데 **비교형 답**에서는 전제가 깨진다: "교과전형과 논술전형의 수능 최저"
+                      -- 클립은 33:07(교과)과 50:06(논술)이 서로 다른 사실이라, 논술이 궁금해
+                      -- 그 대목을 보고 있는 사람을 33:07 로 보내면 17분을 스스로 찾아가야 한다.
+                      --
+                      -- 🔴 조각 사이 브릿지 카드의 길이는 **내려주지 않는다.** 화면이 영상 길이에서
+                      -- 역산한다 — 여기서 상수로 보내면 ffmpeg.render_parts 의 bridge_sec 과
+                      -- 두 곳이 되어 한쪽만 바뀌면 조용히 어긋난다.
+                      --
+                      -- 조각이 없는 클립(크리에이터가 기준으로 직접 뽑은 것)은 빈 배열이다.
+                      coalesce(
+                        (select jsonb_agg(
+                                  jsonb_build_object('ordinal', p.ordinal,
+                                                     'start_sec', p.start_sec,
+                                                     'end_sec', p.end_sec)
+                                  order by p.ordinal)
+                           from clip_parts p where p.clip_id = c.id),
+                        '[]'::jsonb) as parts,
                       -- 🔴 제목은 컬럼이다. 질문에서 나온 클립이든 크리에이터가 직접 뽑은 것이든
                       -- 같은 목록에 올라가고, 크리에이터가 고친 문장이 있으면 그게 우선이다.
                       coalesce(c.title, qc.canonical_text) as title,

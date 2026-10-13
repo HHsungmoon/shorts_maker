@@ -28,16 +28,30 @@ export interface WatchQuestion {
 	liked_by_me: boolean;
 }
 
+/** 조합 클립의 한 조각. 초는 전부 **원본 절대 초**다. */
+export interface WatchClipPart {
+	ordinal: number;
+	start_sec: number;
+	end_sec: number;
+}
+
 export interface WatchClip {
 	id: number;
 	total_sec: number | null;
 	/**
-	 * 원본에서 이 이야기가 시작되는 초. **원본 유입의 목적지다.**
+	 * 원본에서 이 이야기가 시작되는 초. **원본 유입의 기본 목적지다.**
 	 *
 	 * 소스 절대 초라서 유튜브 플레이어 타임라인에 그대로 넣을 수 있다. 조합 클립이면 첫
-	 * 조각의 시작이다 — 뒤 조각으로 보내면 시청자가 이야기 중간에 떨어진다.
+	 * 조각의 시작이다. 조각이 여럿이면 `parts` 로 **보고 있는 조각**을 가리킨다.
 	 */
 	start_sec: number;
+	/**
+	 * 조합 클립의 조각들(시간 순). 조각이 없는 클립은 빈 배열이다.
+	 *
+	 * 🔴 조각 사이 브릿지 카드의 길이는 서버가 안 준다. 화면이 영상 길이에서 역산한다 —
+	 * 상수로 받으면 ffmpeg 의 `bridge_sec` 과 두 곳이 되어 한쪽만 바뀌면 조용히 어긋난다.
+	 */
+	parts: WatchClipPart[];
 	published_at: string;
 	question_cluster_id: number | null;
 	/** 목록에 보이는 제목. 크리에이터가 고친 문장이 있으면 그것, 없으면 질문이 온다. */

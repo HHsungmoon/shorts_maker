@@ -222,12 +222,15 @@ function SourceView({ sourceId }: { sourceId: number }) {
 	 * 하나로 합치면 "눌렀는데 아무 일도 없었다" 가 성공으로 집계된다.
 	 */
 	const jump = useCallback(
-		(clip: WatchClip) => {
-			recordEvent("cta_click", sourceId, { clipId: clip.id });
-			if (playerRef.current?.jumpTo(clip.start_sec, clip.id)) {
+		(clip: WatchClip, atSec: number, part: number | null) => {
+			// 🔴 **어느 조각에서 눌렀는지를 남긴다**(2026-10-13). 조합 클립이 값을 하는지 재는
+			// 유일한 방법이다 — 사람들이 뒤 조각을 보러 가는 일이 없으면 이어붙일 이유가 없다.
+			// 조각이 하나인 클립은 null 이라 기존 집계와 섞이지 않는다.
+			recordEvent("cta_click", sourceId, { clipId: clip.id, payload: { part } });
+			if (playerRef.current?.jumpTo(atSec, clip.id)) {
 				recordEvent("origin_seek", sourceId, {
 					clipId: clip.id,
-					payload: { at: Math.round(clip.start_sec) },
+					payload: { at: Math.round(atSec), part },
 				});
 				return;
 			}
@@ -236,7 +239,7 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			// 없고, 관측할 수 없는 것을 퍼널에 넣으면 뒤 칸(origin_play)이 영원히 비어 보인다.
 			if (youtubeId) {
 				window.open(
-					`https://www.youtube.com/watch?v=${youtubeId}&t=${Math.floor(clip.start_sec)}s`,
+					`https://www.youtube.com/watch?v=${youtubeId}&t=${Math.floor(atSec)}s`,
 					"_blank",
 					"noreferrer",
 				);
