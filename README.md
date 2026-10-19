@@ -2,12 +2,10 @@
 
 긴 영상에서 단독으로 성립하는 숏폼 클립을 뽑아낸다. 1단계는 강연 영상.
 
-설계 문서: [`docs/tease.md`](docs/tease.md)(제품·아키텍처·스키마) · [`docs/make_shorts.md`](docs/make_shorts.md)(파이프라인 내부·규약)
-
 ```
 web/       React + Vite. 빌드 결과를 backend 가 같은 오리진에서 서빙한다
 backend/   FastAPI + CLI. 파이프라인 본체
-docs/      설계 문서
+data/      평가용 질문 세트(questions.json)
 ```
 
 ## 띄우기 — docker compose (기본)

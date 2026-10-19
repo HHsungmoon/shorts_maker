@@ -24,6 +24,15 @@ web/dist/
 
 .claude
 
-# 🔴 서버 구축 기록 — 공인 IP·도메인·계정 구성 등 운영 정보가 들어간다. 로컬 전용.
-docs/11-NCloud-setting.md
-docs/12-clipq-deploy.md
+# 설계 문서·기록·발표 자료는 로컬 전용이다. 레포에는 프로그램 코드와 README 만 올린다.
+# (서버 구축 기록에는 공인 IP·도메인·계정 구성 같은 운영 정보도 들어 있다)
+docs/
+
+# 평가·시드용 데이터(질문 세트, 전사 교정 SQL)도 로컬 전용이다.
+# 🔴 questions.json 만 예외 — `sm answers seed`·`eval-cluster` 의 기본 입력이고
+# tests/answers/test_demo.py 가 이 파일을 읽는다. 빼면 새로 클론한 곳에서 테스트가 깨진다.
+data/*
+!data/questions.json
+
+# 에이전트 작업 지침도 문서라 로컬 전용이다.
+CLAUDE.md

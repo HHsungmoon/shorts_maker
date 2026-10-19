@@ -308,7 +308,7 @@ def _cmd_tease_check(cfg: config.Config, args) -> int:
 
 
 def _cmd_tease_seed(cfg: config.Config, args) -> int:
-    path = Path(args.file) if args.file else Path(__file__).resolve().parents[3] / "eval" / "questions.json"
+    path = Path(args.file) if args.file else EVAL_PATH
     if not path.is_file():
         print(f"질문 파일이 없다: {path}", file=sys.stderr)
         return 2
@@ -458,7 +458,7 @@ def main(argv: list[str] | None = None) -> int:
     index_clips_p.add_argument("source_id", type=int, nargs="?", help="비우면 모든 영상")
     ev = answers_sub.add_parser(
         "eval-cluster",
-        help="eval/questions.json 을 넣고 집계를 돌려 θ 를 튜닝한다 (🔴 실제 API 호출이 나간다)",
+        help="data/questions.json 을 넣고 집계를 돌려 θ 를 튜닝한다 (🔴 실제 API 호출이 나간다)",
     )
     ev.add_argument("source_id", type=int)
     ev.add_argument("--theta", type=float, help="이번 실행에만 쓸 임계값 (기본: SHORTS_CLUSTER_THETA)")
@@ -475,7 +475,7 @@ def main(argv: list[str] | None = None) -> int:
 
     seed_p = tease_sub.add_parser("seed", help="질문을 좋아요와 함께 미리 넣는다 (집계는 하지 않는다)")
     seed_p.add_argument("source_id", type=int)
-    seed_p.add_argument("--file", default=None, help="질문 파일 (기본: eval/questions.json)")
+    seed_p.add_argument("--file", default=None, help="질문 파일 (기본: data/questions.json)")
     seed_p.add_argument("--limit", type=int, default=None, help="앞에서 이만큼만")
     seed_p.add_argument("--likes", type=int, default=3, help="그룹 첫 질문의 좋아요 수 (기본 3)")
 
@@ -517,7 +517,23 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-EVAL_PATH = Path(__file__).resolve().parents[3] / "eval" / "questions.json"
+def _data_file(name: str) -> Path:
+    """레포 최상위 `data/` 의 파일. 데이터는 코드(backend/) 밖에 둔다.
+
+    🔴 자리가 둘이다. 컨테이너에서는 이 파일이 /app/src/shorts_maker/cli/ 에 있고 Dockerfile 이
+    data 를 /app/data 로 복사한다(parents[3]). 호스트에서는 backend/src/... 라서 한 칸 더 올라가야
+    레포 최상위다(parents[4]). 컨테이너의 parents[4] 는 `/` 이고 `/data` 는 shorts-data 볼륨이라
+    그쪽을 먼저 보면 안 된다 — 그래서 parents[3] 이 먼저다.
+    """
+    here = Path(__file__).resolve()
+    for base in (here.parents[3], here.parents[4]):
+        candidate = base / "data" / name
+        if candidate.is_file():
+            return candidate
+    return here.parents[4] / "data" / name
+
+
+EVAL_PATH = _data_file("questions.json")
 
 
 def _cmd_answers_aggregate(cfg: config.Config, args) -> int:
@@ -569,7 +585,7 @@ def _cmd_answers_index_clips(cfg: config.Config, args) -> int:
 
 
 def _cmd_answers_eval(cfg: config.Config, args) -> int:
-    """θ 튜닝. eval/questions.json 을 넣고 집계한 뒤 "붙어야 할 것이 붙었나"를 표로 본다.
+    """θ 튜닝. data/questions.json 을 넣고 집계한 뒤 "붙어야 할 것이 붙었나"를 표로 본다.
 
     🔴 실제 API 호출이 나간다(LLM 1회 + 임베딩). 그리고 기본값은 **끝나고 지운다** — 평가용
     질문이 진짜 시청자 질문과 섞이면 수요 순위가 거짓이 된다.

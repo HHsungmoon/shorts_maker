@@ -187,7 +187,7 @@ class SeedTest(DemoTestCase):
         self.assertEqual(distinct, 3)
 
     def test_the_shipped_question_file_loads(self):
-        path = Path(__file__).resolve().parents[2] / "eval" / "questions.json"
+        path = Path(__file__).resolve().parents[3] / "data" / "questions.json"
         loaded = demo.load_questions(path)
         self.assertGreater(len(loaded), 10)
         self.assertTrue(all(q["text"].strip() for q in loaded))
