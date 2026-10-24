@@ -13,9 +13,18 @@
 	padding: 24px 20px 72px;
 }
 
+/* 선반 레이아웃은 넓게 쓴다 — 플레이어 아래 숏폼 3개가 플레이어 폭을 나눠 쓰므로, 폭이 곧 숏폼 크기다.
+   🔴 최대 폭(1440px)으로 가운데 묶었다가 좌우 여백 5% 로 바꿨다(2026-10-24 사용자 요청) — 넓은 모니터에서
+   양옆이 휑했다. 스튜디오 영상 화면의 기본 여백(--sm-gutter 5vw)과 같은 값이다. 좁은 화면은 아래
+   600px 규칙의 14px 가 이긴다(같은 우선순위에서 뒤에 오는 규칙). */
+.watch--wide {
+	max-width: none;
+	padding-inline: 5vw;
+}
+
 .watch-top {
 	display: flex;
-	align-items: baseline;
+	align-items: center;
 	gap: 12px;
 	flex-wrap: wrap;
 	padding-bottom: 16px;
@@ -23,12 +32,61 @@
 	margin-bottom: 24px;
 }
 
-.watch-wordmark {
-	font-size: 22px;
-	font-weight: 700;
-	letter-spacing: 0.04em;
-	color: var(--accent);
-	text-decoration: none;
+/* 로고. 스튜디오 상단바(.sm-bar__home)와 같은 크기다 — 두 화면이 같은 제품으로 읽혀야 한다. */
+.watch-home {
+	display: flex;
+	flex-shrink: 0;
+}
+
+.watch-home img {
+	display: block;
+	height: 36px;
+	width: auto;
+}
+
+.watch-home:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 6px;
+}
+
+.watch-top__prefs {
+	margin-left: auto;
+}
+
+/* 레이아웃 메뉴의 그림 — 틀 안에 두 칸. shelf 는 위(플레이어)·아래(선반) 왼쪽 단 + 오른쪽 긴 단,
+   classic 은 왼쪽 넓은 단 + 오른쪽 좁은 단. 글자만으로는 둘의 차이가 안 읽힌다. */
+.watch-layout-icon {
+	display: inline-grid;
+	gap: 2px;
+	width: 18px;
+	height: 12px;
+	padding: 1px;
+	border: 1px solid var(--text-muted);
+	border-radius: 2px;
+	flex-shrink: 0;
+	box-sizing: border-box;
+}
+
+.watch-layout-icon > span {
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+.watch-layout-icon--shelf {
+	grid-template-columns: 3fr 2fr;
+}
+
+.watch-layout-icon--shelf > span:last-child {
+	opacity: 0.45;
+}
+
+.watch-layout-icon--classic {
+	grid-template-columns: 3fr 1fr;
+}
+
+.watch-layout-icon--classic > span:last-child {
+	opacity: 0.45;
 }
 
 .watch-tagline {
@@ -698,4 +756,207 @@
 	aspect-ratio: 9 / 16;
 	border-radius: var(--radius);
 	background: #000;
+}
+
+/* ── 선반 레이아웃 (G3, 2026-10-24) ──
+ * 왼쪽: 플레이어 → 답이 나온 자리 → 숏폼 선반(가로 3개). 오른쪽: 제목 → 입력칸 → 질문 목록(길게).
+ * 🔴 숏폼을 오른쪽 단이 아니라 플레이어 아래에 둔 이유는 오른쪽을 질문 목록에 통째로 주기 위해서다
+ * (사용자 요청 — 다른 사람들의 질문이 길게 보여야 한다). */
+.watch-shelf {
+	display: grid;
+	/* 영상 60 : 질문 40(2026-10-24 사용자 요청). 오른쪽을 최대 500px 로 묶었더니 넓은 화면에서 영상이
+	   너무 커지고 질문 단이 좁았다. 비율로 두면 화면이 넓어질수록 질문 단도 같이 넓어진다.
+	   360px 아래로는 줄이지 않는다 — 질문 줄의 좋아요 버튼과 글이 비좁아진다. */
+	grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
+	gap: 32px;
+	align-items: start;
+}
+
+.watch-shelf__media {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+
+.watch-shelf__talk {
+	min-width: 0;
+}
+
+/* 제목이 오른쪽 단 맨 위에 온다 — 기존 레이아웃의 "플레이어 아래 18px" 여백이 필요 없다. */
+.watch-shelf__talk .watch-title {
+	margin-top: 0;
+}
+
+/* 🔴 열 수를 3 으로 못박는다. auto-fill 이면 폭이 넓어질 때 열이 늘어 카드가 오히려 작아진다
+   (.watch-side .watch-clips 의 2026-09-17 교훈과 같다). 3 이 플레이어 폭과 비율이 맞는 수다. */
+.watch-clips--shelf {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 18px 14px;
+}
+
+.watch-clips--shelf .watch-clip__question {
+	font-size: 14px;
+}
+
+.watch-clips--shelf .watch-clip__meta {
+	font-size: 12px;
+}
+
+.watch-clips--shelf .watch-jump {
+	font-size: 13px;
+}
+
+/* 숏폼 번호. "답이 나온 자리" 표시·질문 줄의 번호와 같은 모양이다 — 셋이 같은 숏폼을 가리킨다. */
+.watch-clip__mark,
+.watch-answer__mark,
+.watch-marks__mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	font-size: 12px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+}
+
+.watch-clip__mark {
+	position: absolute;
+	left: 8px;
+	top: 8px;
+	background: var(--surface);
+	color: var(--accent);
+	box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+	pointer-events: none;
+}
+
+.watch-answer__mark {
+	width: 18px;
+	height: 18px;
+	margin-right: 6px;
+	font-size: 11px;
+	background: var(--accent);
+	color: #fff;
+}
+
+/* 질문 줄에서는 번호가 ▶ 대신이다. 둘 다 있으면 같은 뜻이 두 번 보인다. */
+.watch-answer:has(.watch-answer__mark)::before {
+	content: none;
+}
+
+.watch-answer:has(.watch-answer__mark) {
+	display: inline-flex;
+	align-items: center;
+}
+
+/* 답이 나온 자리 — 원본 길이 막대 위의 번호. */
+.watch-marks__head {
+	display: flex;
+	justify-content: space-between;
+	margin-bottom: 12px;
+	font-size: 12px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.watch-marks__track {
+	position: relative;
+	height: 8px;
+	margin: 0 12px;
+	border-radius: 999px;
+	background: var(--border);
+}
+
+.watch-marks__mark {
+	position: absolute;
+	top: 50%;
+	transform: translate(-50%, -50%);
+	padding: 0;
+	border: 2px solid var(--surface);
+	background: var(--accent);
+	color: #fff;
+	cursor: pointer;
+	box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+}
+
+.watch-marks__mark:hover,
+.watch-marks__mark:focus-visible {
+	background: var(--accent-hover);
+	z-index: 1;
+	outline: none;
+	transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* 줄을 채우는 "+" 칸. 숏폼 썸네일과 같은 9:16 이라 선반의 줄이 맞는다. 누르면 입력칸으로 간다. */
+.watch-plus {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	width: 100%;
+	aspect-ratio: 9 / 16;
+	padding: 16px;
+	box-sizing: border-box;
+	border: 1.5px dashed var(--accent-line);
+	border-radius: var(--radius);
+	background: var(--accent-soft);
+	color: var(--accent);
+	font: inherit;
+	text-align: center;
+	cursor: pointer;
+}
+
+.watch-plus:hover {
+	border-color: var(--accent);
+}
+
+.watch-plus__sign {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 26px;
+	line-height: 1;
+}
+
+.watch-plus__title {
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.watch-plus__hint {
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+/* 좁으면 한 단 — 원본과 숏폼이 먼저, 그 아래 제목·입력칸·질문. 숏폼은 폰에서도 3개다(한 장 ~110px).
+   두 장으로 늘리면 9:16 이 화면 높이를 다 먹어 입력칸이 한참 아래로 밀린다. */
+@media (max-width: 900px) {
+	.watch-shelf {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 600px) {
+	.watch-clips--shelf {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 12px 8px;
+	}
+
+	.watch-clips--shelf .watch-clip__question {
+		font-size: 12px;
+	}
+
+	.watch-plus__hint {
+		display: none;
+	}
 }

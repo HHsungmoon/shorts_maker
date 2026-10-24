@@ -664,6 +664,7 @@ img {
 	font-size: 15px;
 	color: var(--text);
 	text-align: left;
+	white-space: nowrap;
 	cursor: pointer;
 }
 

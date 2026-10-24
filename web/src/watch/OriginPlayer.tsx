@@ -16,6 +16,12 @@ export interface OriginPlayerHandle {
 	 * 안 일어나는 것이 가장 나쁘다.
 	 */
 	jumpTo(seconds: number, clipId: number): boolean;
+	/**
+	 * 그 초로 옮기고 재생만 한다 — **퍼널을 세지 않는다.** "답이 나온 자리" 표시처럼 숏폼을 보지
+	 * 않고 누르는 길이 쓴다. 🔴 jumpTo 를 쓰면 30초 창이 열려 그 뒤 재생이 원본 유입으로 세어진다.
+	 * false 의 뜻은 jumpTo 와 같다.
+	 */
+	seek(seconds: number): boolean;
 }
 
 interface Props {
@@ -128,6 +134,15 @@ export const OriginPlayer = forwardRef<OriginPlayerHandle, Props>(function Origi
 				// 플레이어가 화면 밖일 수 있다 — 위치만 옮기고 보이지 않으면 아무 일도 안
 				// 일어난 것처럼 보인다. 좁은 화면에서 숏폼 목록이 플레이어 아래에 오면 늘 그렇다.
 				containerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+				return true;
+			},
+			seek(seconds: number) {
+				const player = playerRef.current;
+				if (!player) {
+					return false;
+				}
+				player.seekTo(Math.max(0, seconds), true);
+				player.playVideo();
 				return true;
 			},
 		}),

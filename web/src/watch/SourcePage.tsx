@@ -1,16 +1,27 @@
 import { useCallback, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { time } from "../shared/format";
 import { useAsync } from "../shared/useAsync";
 import { clipFileUrl, fetchWatchSource, postQuestion, recordEvent, toggleLike } from "./api";
 import type { WatchClip, WatchQuestion, WatchUnanswerable } from "./api";
 import { ClipModal } from "./ClipModal";
 import { OriginPlayer } from "./OriginPlayer";
 import type { OriginPlayerHandle } from "./OriginPlayer";
+import type { WatchLayout } from "./layout";
 
 const MAX_LENGTH = 200;
 
-function ClipCard({ clip, onOpen }: { clip: WatchClip; onOpen: (clip: WatchClip) => void }) {
+function ClipCard({
+	clip,
+	onOpen,
+	mark,
+}: {
+	clip: WatchClip;
+	onOpen: (clip: WatchClip) => void;
+	/** 선반 레이아웃의 숏폼 번호 — "답이 나온 자리" 표시와 같은 번호다. 기존 레이아웃에서는 없다. */
+	mark?: number;
+}) {
 	return (
 		<li className="watch-clip">
 			{/* 🔴 카드 안에서 재생하지 않는다(2026-09-20). 한 줄에 둘이라 폭이 170px 남짓인데
@@ -31,6 +42,11 @@ function ClipCard({ clip, onOpen }: { clip: WatchClip; onOpen: (clip: WatchClip)
 				<span className="watch-clip__play" aria-hidden="true">
 					▶
 				</span>
+				{mark !== undefined && (
+					<span className="watch-clip__mark" aria-hidden="true">
+						{mark}
+					</span>
+				)}
 				<span className="sr-only">재생: {clip.title ?? clip.question ?? "숏폼"}</span>
 			</button>
 			<div className="watch-clip__body">
@@ -90,6 +106,7 @@ function UnanswerableRow({ item }: { item: WatchUnanswerable }) {
 function QuestionRow({
 	question,
 	answer,
+	mark,
 	onToggle,
 	onOpen,
 	busy,
@@ -97,6 +114,8 @@ function QuestionRow({
 	question: WatchQuestion;
 	/** 이 질문이 속한 묶음에 이미 발행된 숏폼. 없으면 아직 답이 안 나온 질문이다. */
 	answer: WatchClip | undefined;
+	/** 그 답 숏폼의 번호(선반 레이아웃). 선반 카드와 같은 번호라 어느 숏폼인지 눈으로 이어진다. */
+	mark?: number;
 	onToggle: (id: number) => void;
 	onOpen: (clip: WatchClip) => void;
 	busy: boolean;
@@ -125,6 +144,7 @@ function QuestionRow({
 						className="watch-answer"
 						onClick={() => onOpen(answer)}
 					>
+						{mark !== undefined && <span className="watch-answer__mark">{mark}</span>}
 						답변 보기
 					</button>
 				)}
@@ -133,15 +153,15 @@ function QuestionRow({
 	);
 }
 
-export function SourcePage() {
+export function SourcePage({ layout }: { layout: WatchLayout }) {
 	const params = useParams();
 	const sourceId = Number(params.sourceId);
 	// 🔴 key 로 remount 시킨다. 영상을 옮기면 지역 상태(쓰던 글·방금 누른 좋아요)가 자동으로
 	// 비워진다 — 효과(useEffect)로 초기화하면 한 프레임 동안 옛 영상의 질문이 새 영상 밑에 보인다.
-	return <SourceView key={sourceId} sourceId={sourceId} />;
+	return <SourceView key={sourceId} sourceId={sourceId} layout={layout} />;
 }
 
-function SourceView({ sourceId }: { sourceId: number }) {
+function SourceView({ sourceId, layout }: { sourceId: number; layout: WatchLayout }) {
 	const detail = useAsync(() => fetchWatchSource(sourceId), [sourceId]);
 
 	// 서버 목록이 정본이고, 이번 방문에 내가 한 것만 위에 덧씌운다. 상태로 복사하지 않는 이유는
@@ -213,6 +233,8 @@ function SourceView({ sourceId }: { sourceId: number }) {
 	// youtube_id 도 여기서 옵셔널 체이닝으로 미리 꺼낸다.
 	const youtubeId = detail.data?.source.youtube_id ?? null;
 	const playerRef = useRef<OriginPlayerHandle | null>(null);
+	// 선반 끝의 "+" 칸이 여기로 데려온다.
+	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
 	/**
 	 * 숏폼 CTA — 원본의 그 초로 옮긴다. **이 함수가 이 제품의 주장을 실행한다.**
@@ -285,18 +307,234 @@ function SourceView({ sourceId }: { sourceId: number }) {
 		}
 	}
 
-	// 🔴 답변 숏폼을 **영상 오른쪽**에 둔다(유튜브의 관련 영상 자리). 본문 아래로 내리면 스크롤을
-	// 해야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에 있어야 한다.
+	// 숏폼 번호. 선반 레이아웃에서 선반 카드 · "답이 나온 자리" 표시 · 질문 줄이 같은 번호로 서로를 가리킨다.
+	// 목록 순서(수요 순) 그대로다 — 1번이 가장 많이 궁금해한 답이다.
+	const shelf = layout === "shelf";
+	const markOf = new Map<number, number>();
+	if (shelf) {
+		clips.forEach((clip, index) => markOf.set(clip.id, index + 1));
+	}
+
+	// 🔴 숏폼 목록에 "질문에 대한 답" 이라는 이름을 붙이지 않는다. 이 목록에는 크리에이터가 자기 기준으로
+	// 뽑은 숏폼도 함께 올라간다 — 질문에서 나온 것만 있는 자리가 아니다.
+	const shortsHeading = (
+		<h2 className="watch-section watch-section--tight">
+			이 영상의 숏폼
+			{clips.length > 0 && <span className="watch-count"> {clips.length}</span>}
+		</h2>
+	);
+
+	const player = source.youtube_id ? (
+		// 자체 <video> 가 아니라 임베드다 — 여기서의 시청이 실제 유튜브 시청 시간이 된다(tease §8-3).
+		// 🔴 평범한 <iframe> 이 아니라 IFrame Player API 다. 숏폼 CTA 가 이 플레이어를 그 초로
+		// 움직여야 하고, 그건 API 없이는 불가능하다(OriginPlayer 머리 주석).
+		<OriginPlayer ref={playerRef} youtubeId={source.youtube_id} title={source.title} onOriginPlay={originPlay} />
+	) : (
+		<p className="state">이 영상은 임베드 재생을 지원하지 않습니다.</p>
+	);
+
+	const heading = (
+		<>
+			<h1 className="watch-title">{source.title}</h1>
+			{source.channel && <p className="watch-channel">{source.channel}</p>}
+			{source.youtube_id && (
+				// 🔴 여기에는 `cta_click` 을 붙이지 않는다. 그 이벤트는 퍼널에서 "숏폼을 보고 원본으로
+				// 가려 했다" 를 뜻하는데, 이 링크는 숏폼을 한 번도 안 본 사람도 누른다 — 섞으면
+				// 재생·완주보다 CTA 가 많아지는 일이 생기고 퍼널이 거짓이 된다. 계측 없이 둔다.
+				<a
+					className="watch-origin"
+					href={`https://www.youtube.com/watch?v=${source.youtube_id}`}
+					target="_blank"
+					rel="noreferrer"
+				>
+					유튜브에서 보기
+				</a>
+			)}
+		</>
+	);
+
+	const ask = (
+		<section className="watch-ask">
+			<h2 className="watch-section">궁금한 걸 남겨 주세요</h2>
+			<p className="watch-hint">
+				비슷한 질문이 모이면 크리에이터가 그 답만 잘라 숏폼으로 만듭니다. 로그인은 없습니다.
+			</p>
+			<form onSubmit={submit} className="watch-form">
+				{/* 🔴 예시를 특정 주제로 적지 않는다. 채용 영상의 "연봉 협상" 예시가 입시 설명회에도 그대로
+				    붙어 있었다(2026-10-24) — 모든 영상이 이 한 줄을 같이 쓴다. */}
+				<textarea
+					ref={inputRef}
+					className="watch-input"
+					value={text}
+					onChange={(event) => setText(event.target.value.slice(0, MAX_LENGTH))}
+					placeholder="이 영상에서 궁금한 점을 적어 주세요"
+					rows={3}
+					maxLength={MAX_LENGTH}
+				/>
+				<div className="watch-form__foot">
+					<span className={`watch-counter${remaining < 20 ? " watch-counter--low" : ""}`}>
+						{remaining}자 남음
+					</span>
+					<button
+						type="submit"
+						className="button button--primary watch-submit"
+						disabled={busy || text.trim().length === 0}
+					>
+						{busy ? "보내는 중…" : "질문 남기기"}
+					</button>
+				</div>
+			</form>
+			{error && <p className="state state--error">{error}</p>}
+			{/* 🔴 "답입니다" 가 아니라 "비슷한 궁금증에 답한 숏폼" 이다. 유사도로 고른 것이라 틀릴 수 있고,
+			    단정했다가 틀리면 시청자는 속았다고 느낀다. 질문이 이미 남았다는 것도 같이 말한다 —
+			    추천을 보고 "내 질문은 버려졌나" 로 읽히면 질문을 남기는 이유가 사라진다. */}
+			{suggested.length > 0 && (
+				<div className="watch-suggest" role="status">
+					<div className="watch-suggest__head">
+						<p className="watch-suggest__title">비슷한 궁금증에 답한 숏폼이 있어요</p>
+						<button
+							type="button"
+							className="watch-suggest__close"
+							onClick={() => setSuggested([])}
+							aria-label="추천 닫기"
+						>
+							닫기
+						</button>
+					</div>
+					<p className="watch-hint">
+						질문은 그대로 남았어요. 찾던 답이 아니면 크리에이터가 비슷한 질문을 모아 따로 답합니다.
+					</p>
+					<ul className="watch-clips">
+						{suggested.map((clip) => (
+							<ClipCard key={clip.id} clip={clip} onOpen={setPlaying} mark={markOf.get(clip.id)} />
+						))}
+					</ul>
+				</div>
+			)}
+		</section>
+	);
+
+	const questionList = (
+		<section>
+			<h2 className="watch-section">
+				다른 사람들의 질문 <span className="watch-count">{questions.length}</span>
+			</h2>
+			{questions.length === 0 ? (
+				<p className="state">첫 질문을 남겨 보세요.</p>
+			) : (
+				<ul className="watch-questions">
+					{questions.map((question) => {
+						const answer = question.cluster_id === null ? undefined : answerOf.get(question.cluster_id);
+						return (
+							<QuestionRow
+								key={question.id}
+								question={question}
+								answer={answer}
+								mark={answer ? markOf.get(answer.id) : undefined}
+								onToggle={like}
+								onOpen={setPlaying}
+								busy={busy}
+							/>
+						);
+					})}
+				</ul>
+			)}
+		</section>
+	);
+
+	// 크리에이터가 "이 영상엔 답이 없다"고 판정한 질문. 실패 통보가 아니라 안내라서
+	// 조용히 둔다 — 질문 목록 아래, 흐린 글씨로.
+	const missing = unanswerable.length > 0 && (
+		<section>
+			<h2 className="watch-section">여기서는 답하지 못한 질문</h2>
+			<ul className="watch-missings">
+				{unanswerable.map((item) => (
+					<UnanswerableRow key={item.id} item={item} />
+				))}
+			</ul>
+		</section>
+	);
+
+	// 가운데에서 크게 트는 자리. 카드·질문 줄·추천이 모두 이 하나를 연다.
+	const modal = <ClipModal clip={playing} sourceId={sourceId} onClose={() => setPlaying(null)} onJump={jump} />;
+
+	if (shelf) {
+		// 🔴 선반 레이아웃(G3, 2026-10-24). 왼쪽은 원본과 그 원본에서 나온 숏폼, 오른쪽은 말(제목·질문)이다.
+		// 숏폼은 **가로 3개**로 플레이어 폭에 맞춘다 — 오른쪽 질문 목록이 길게 내려와야 해서 숏폼을 옆 단이
+		// 아니라 플레이어 아래로 보냈다(사용자 요청). 좁은 화면에서는 왼쪽 단이 먼저 오는 한 단이 된다.
+		// 끝의 "+" 칸은 줄을 채우는 자리이자 입력칸으로 가는 입구다. 줄이 꽉 차면 붙이지 않는다 —
+		// 셋째 줄에 "+" 하나만 덩그러니 남으면 빈 줄로 읽힌다.
+		const plus = clips.length % 3 !== 0 || clips.length === 0;
+		return (
+			<article className="watch-detail">
+				<div className="watch-shelf">
+					<div className="watch-shelf__media">
+						{player}
+						{source.duration_sec !== null && clips.length > 0 && (
+							<AnswerMarks
+								clips={clips}
+								duration={source.duration_sec}
+								markOf={markOf}
+								onSeek={(sec) => {
+									if (!playerRef.current?.seek(sec) && youtubeId) {
+										window.open(
+											`https://www.youtube.com/watch?v=${youtubeId}&t=${Math.floor(sec)}s`,
+											"_blank",
+											"noreferrer",
+										);
+									}
+								}}
+							/>
+						)}
+						<section className="watch-shelf__shorts">
+							{shortsHeading}
+							<ul className="watch-clips watch-clips--shelf">
+								{clips.map((clip) => (
+									<ClipCard key={clip.id} clip={clip} onOpen={setPlaying} mark={markOf.get(clip.id)} />
+								))}
+								{plus && (
+									<li className="watch-clip">
+										<button
+											type="button"
+											className="watch-plus"
+											onClick={() => {
+												inputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+												inputRef.current?.focus({ preventScroll: true });
+											}}
+										>
+											<span className="watch-plus__sign" aria-hidden="true">
+												+
+											</span>
+											<span className="watch-plus__title">다음 숏폼은 당신의 질문</span>
+											<span className="watch-plus__hint">궁금한 걸 남기면 그 답만 잘라 여기에 올립니다</span>
+										</button>
+									</li>
+								)}
+							</ul>
+						</section>
+					</div>
+					<div className="watch-shelf__talk">
+						<Link to="/watch" className="watch-back">
+							← 목록으로
+						</Link>
+						{heading}
+						{ask}
+						{questionList}
+						{missing}
+					</div>
+				</div>
+				{modal}
+			</article>
+		);
+	}
+
+	// 기존 레이아웃. 🔴 답변 숏폼을 **영상 오른쪽**에 둔다(유튜브의 관련 영상 자리). 본문 아래로 내리면
+	// 스크롤을 해야 보이는데, 이 제품의 값이 갚아지는 자리가 거기다 — 영상을 보는 내내 눈에 있어야 한다.
 	// 그 단 안에서 카드는 **가로 2개씩**이고 영상 아래에 제목과 CTA 가 온다(2026-09-17, watch.css).
 	// 좁은 화면에서는 한 단으로 접히고 숏폼이 질문 폼보다 위로 온다.
 	const shorts = (
 		<section className="watch-shorts">
-			{/* 🔴 "질문에 대한 답" 이라고 부르지 않는다. 이 목록에는 크리에이터가 자기 기준으로
-			    뽑은 숏폼도 함께 올라간다 — 질문에서 나온 것만 있는 자리가 아니다. */}
-			<h2 className="watch-section watch-section--tight">
-				이 영상의 숏폼
-				{clips.length > 0 && <span className="watch-count">{clips.length}</span>}
-			</h2>
+			{shortsHeading}
 			{clips.length === 0 ? (
 				// 🔴 빈 칸으로 두지 않는다. 2단 레이아웃에서 오른쪽이 비면 깨져 보이고, 무엇보다
 				// 이 한 줄이 이 서비스가 무엇인지 설명한다 — 처음 온 사람이 질문을 남길 이유가 된다.
@@ -320,144 +558,71 @@ function SourceView({ sourceId }: { sourceId: number }) {
 			</Link>
 
 			<div className="watch-columns">
-			<div className="watch-main">
+				<div className="watch-main">
+					{player}
+					{heading}
 
-			{source.youtube_id ? (
-				// 자체 <video> 가 아니라 임베드다 — 여기서의 시청이 실제 유튜브 시청 시간이 된다(tease §8-3).
-				// 🔴 평범한 <iframe> 이 아니라 IFrame Player API 다. 숏폼 CTA 가 이 플레이어를 그 초로
-				// 움직여야 하고, 그건 API 없이는 불가능하다(OriginPlayer 머리 주석).
-				<OriginPlayer
-					ref={playerRef}
-					youtubeId={source.youtube_id}
-					title={source.title}
-					onOriginPlay={originPlay}
-				/>
-			) : (
-				<p className="state">이 영상은 임베드 재생을 지원하지 않습니다.</p>
-			)}
+					{/* 좁은 화면에서만 여기 나온다 — 넓으면 오른쪽 단이 가져간다(watch.css). */}
+					<div className="watch-shorts--inline">{shorts}</div>
 
-			<h1 className="watch-title">{source.title}</h1>
-			{source.channel && <p className="watch-channel">{source.channel}</p>}
-			{source.youtube_id && (
-				// 🔴 여기에는 `cta_click` 을 붙이지 않는다. 그 이벤트는 퍼널에서 "숏폼을 보고 원본으로
-				// 가려 했다" 를 뜻하는데, 이 링크는 숏폼을 한 번도 안 본 사람도 누른다 — 섞으면
-				// 재생·완주보다 CTA 가 많아지는 일이 생기고 퍼널이 거짓이 된다. 계측 없이 둔다.
-				<a
-					className="watch-origin"
-					href={`https://www.youtube.com/watch?v=${source.youtube_id}`}
-					target="_blank"
-					rel="noreferrer"
-				>
-					유튜브에서 보기
-				</a>
-			)}
+					{ask}
+					{questionList}
+					{missing}
+				</div>
 
-			{/* 좁은 화면에서만 여기 나온다 — 넓으면 오른쪽 단이 가져간다(watch.css). */}
-			<div className="watch-shorts--inline">{shorts}</div>
-
-			<section className="watch-ask">
-				<h2 className="watch-section">궁금한 걸 남겨 주세요</h2>
-				<p className="watch-hint">
-					비슷한 질문이 모이면 크리에이터가 그 답만 잘라 숏폼으로 만듭니다. 로그인은 없습니다.
-				</p>
-				<form onSubmit={submit} className="watch-form">
-					<textarea
-						className="watch-input"
-						value={text}
-						onChange={(event) => setText(event.target.value.slice(0, MAX_LENGTH))}
-						placeholder="예) 연봉 협상은 언제 꺼내는 게 좋나요?"
-						rows={3}
-						maxLength={MAX_LENGTH}
-					/>
-					<div className="watch-form__foot">
-						<span className={`watch-counter${remaining < 20 ? " watch-counter--low" : ""}`}>
-							{remaining}자 남음
-						</span>
-						<button
-							type="submit"
-							className="button button--primary watch-submit"
-							disabled={busy || text.trim().length === 0}
-						>
-							{busy ? "보내는 중…" : "질문 남기기"}
-						</button>
-					</div>
-				</form>
-				{error && <p className="state state--error">{error}</p>}
-				{/* 🔴 "답입니다" 가 아니라 "비슷한 궁금증에 답한 숏폼" 이다. 유사도로 고른 것이라 틀릴 수 있고,
-				    단정했다가 틀리면 시청자는 속았다고 느낀다. 질문이 이미 남았다는 것도 같이 말한다 —
-				    추천을 보고 "내 질문은 버려졌나" 로 읽히면 질문을 남기는 이유가 사라진다. */}
-				{suggested.length > 0 && (
-					<div className="watch-suggest" role="status">
-						<div className="watch-suggest__head">
-							<p className="watch-suggest__title">비슷한 궁금증에 답한 숏폼이 있어요</p>
-							<button
-								type="button"
-								className="watch-suggest__close"
-								onClick={() => setSuggested([])}
-								aria-label="추천 닫기"
-							>
-								닫기
-							</button>
-						</div>
-						<p className="watch-hint">
-							질문은 그대로 남았어요. 찾던 답이 아니면 크리에이터가 비슷한 질문을 모아 따로 답합니다.
-						</p>
-						<ul className="watch-clips">
-							{suggested.map((clip) => (
-								<ClipCard key={clip.id} clip={clip} onOpen={setPlaying} />
-							))}
-						</ul>
-					</div>
-				)}
-			</section>
-
-			<section>
-				<h2 className="watch-section">
-					다른 사람들의 질문 <span className="watch-count">{questions.length}</span>
-				</h2>
-				{questions.length === 0 ? (
-					<p className="state">첫 질문을 남겨 보세요.</p>
-				) : (
-					<ul className="watch-questions">
-						{questions.map((question) => (
-							<QuestionRow
-								key={question.id}
-								question={question}
-								answer={question.cluster_id === null ? undefined : answerOf.get(question.cluster_id)}
-								onToggle={like}
-								onOpen={setPlaying}
-								busy={busy}
-							/>
-						))}
-					</ul>
-				)}
-			</section>
-
-			{/* 크리에이터가 "이 영상엔 답이 없다"고 판정한 질문. 실패 통보가 아니라 안내라서
-			    조용히 둔다 — 질문 목록 아래, 흐린 글씨로. */}
-			{unanswerable.length > 0 && (
-				<section>
-					<h2 className="watch-section">여기서는 답하지 못한 질문</h2>
-					<ul className="watch-missings">
-						{unanswerable.map((item) => (
-							<UnanswerableRow key={item.id} item={item} />
-						))}
-					</ul>
-				</section>
-			)}
+				{/* 넓은 화면의 오른쪽 단. 스크롤을 내려도 따라오게 sticky. */}
+				<aside className="watch-side">{shorts}</aside>
 			</div>
 
-			{/* 넓은 화면의 오른쪽 단. 스크롤을 내려도 따라오게 sticky. */}
-			<aside className="watch-side">{shorts}</aside>
-			</div>
-
-			{/* 가운데에서 크게 트는 자리. 카드·질문 줄·추천이 모두 이 하나를 연다. */}
-			<ClipModal
-				clip={playing}
-				sourceId={sourceId}
-				onClose={() => setPlaying(null)}
-				onJump={jump}
-			/>
+			{modal}
 		</article>
+	);
+}
+
+/**
+ * "답이 나온 자리" — 원본 길이 위에 숏폼이 시작하는 초를 번호로 찍는다(유튜브 챕터 표시처럼).
+ *
+ * 숏폼이 원본 **어디서** 왔는지가 보이면, 숏폼을 보기 전에도 원본의 어느 대목이 질문을 받았는지 읽힌다.
+ * 번호는 아래 선반 카드의 번호와 같다. 누르면 원본을 그 초로 옮긴다 — 🔴 퍼널은 세지 않는다
+ * (OriginPlayer.seek). 숏폼을 보고 간 것이 아니라 표시를 보고 간 것이다.
+ */
+function AnswerMarks({
+	clips,
+	duration,
+	markOf,
+	onSeek,
+}: {
+	clips: WatchClip[];
+	duration: number;
+	markOf: Map<number, number>;
+	onSeek: (sec: number) => void;
+}) {
+	return (
+		<div className="watch-marks">
+			<div className="watch-marks__head">
+				<span>답이 나온 자리</span>
+				<span>{time(duration)}</span>
+			</div>
+			<div className="watch-marks__track">
+				{clips.map((clip) => {
+					const mark = markOf.get(clip.id);
+					const left = Math.min(100, Math.max(0, (clip.start_sec / duration) * 100));
+					const label = `${mark}번 숏폼 · ${time(clip.start_sec)} · ${clip.title ?? clip.question ?? "숏폼"}`;
+					return (
+						<button
+							key={clip.id}
+							type="button"
+							className="watch-marks__mark"
+							style={{ left: `${left}%` }}
+							title={label}
+							aria-label={`${label} — 원본을 이 지점으로`}
+							onClick={() => onSeek(clip.start_sec)}
+						>
+							{mark}
+						</button>
+					);
+				})}
+			</div>
+		</div>
 	);
 }
