@@ -385,6 +385,21 @@ class SpaRoutingTest(ApiAuthTestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 404)
 
+    def test_a_missing_build_asset_is_404_not_the_index(self):
+        # 🔴 재배포 뒤 옛 탭이 옛 해시의 조각을 부른다. index.html 이 200 으로 오면 브라우저가
+        # 그걸 JS 로 읽다 실패하고 화면이 하얗게 남는다(2026-10-24). 화면 경로는 그대로 index 다.
+        with tempfile.TemporaryDirectory() as tmp:
+            web = Path(tmp)
+            (web / "index.html").write_text("<!doctype html>")
+            (web / "assets").mkdir()
+            (web / "assets" / "app-new.js").write_text("export {}")
+            deps.cfg = dataclasses.replace(deps.cfg, web_dir=web)
+            self.assertEqual(self.client.get("/assets/app-new.js").status_code, 200)
+            self.assertEqual(self.client.get("/assets/app-old.js").status_code, 404)
+            page = self.client.get("/watch/6")
+            self.assertEqual(page.status_code, 200)
+            self.assertEqual(page.headers["cache-control"], "no-cache")
+
 
 
 class ClipOriginTest(ApiAuthTestCase):

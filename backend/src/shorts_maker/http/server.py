@@ -169,8 +169,18 @@ def spa(full_path: str) -> Any:
     if full_path.startswith(("api/", "auth/", "health")):
         raise HTTPException(404, "not found")
     found = _spa_file(full_path) if full_path else None
+    if found:
+        return FileResponse(found)
+    # 🔴 빌드 산출물(assets/)이 없으면 index.html 이 아니라 404 다(2026-10-24). 재배포 전에 열어 둔 탭은
+    # 옛 해시의 조각(`assets/WatchApp-옛해시.js`)을 부르는데, 여기에 index.html 을 200 으로 주면
+    # 브라우저가 HTML 을 JS 로 읽다 실패하고 화면이 하얗게 남았다 — 새로고침해야만 나왔다.
+    # 404 여야 프론트가 "조각을 못 받았다" 로 알아듣고 새로 불러온다(web/src/App.tsx lazyPage).
+    if full_path.startswith("assets/"):
+        raise HTTPException(404, "not found")
     # 클라이언트 라우팅(/login 등)은 파일이 없다 — index.html 을 주고 브라우저가 처리한다.
-    return FileResponse(found or index)
+    # 🔴 index.html 은 캐시하지 않는다. 옛 index.html 이 남으면 옛 조각 이름을 계속 부른다.
+    # 조각 파일은 이름에 해시가 있어 캐시해도 안전하다.
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 def check_binding() -> None:
