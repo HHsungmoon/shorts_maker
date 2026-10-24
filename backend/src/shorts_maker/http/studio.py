@@ -217,7 +217,7 @@ class StandardIn(BaseModel):
 
 
 class SourcePatchIn(BaseModel):
-    """사람이 고치는 원본 값 — 제목 · 영상 개요 · 유튜브 id.
+    """사람이 고치는 원본 값 — 제목 · 영상 개요 · 유튜브 id · 음성 인식 용어 힌트.
 
     🔴 개요는 500자 상한. 이 글은 구간 분할·순위·자르기·후보 생성 **모든 호출에 붙는다.** 영상이
     무엇인지 한두 문장이면 되고, 길게 쓰면 대사보다 개요가 프롬프트를 더 차지한다.
@@ -229,6 +229,9 @@ class SourcePatchIn(BaseModel):
     title: str | None = Field(default=None, max_length=300)
     context: str | None = Field(default=None, max_length=500)
     youtubeId: str | None = Field(default=None, max_length=200)
+    # 음성 인식 용어 힌트. 목록 전체를 보낸다(넣기·빼기 모두). 정확한 상한은 stt.normalize_terms 가 본다 —
+    # 여기 상한은 터무니없는 입력만 막는다.
+    sttTerms: list[str] | None = Field(default=None, max_length=200)
 
 
 class ClusterPatchIn(BaseModel):
@@ -777,7 +780,7 @@ def patch_source(source_id: int, body: SourcePatchIn) -> dict:
     예전에는 그걸 채울 길이 psql 밖에 없었다. URL 을 통째로 붙여넣어도 id 만 뽑아 저장한다.
     """
     # 보낸 것만 담는다 — null 을 보내 지우는 것과, 아예 안 보낸 것은 뜻이 다르다.
-    updates: dict[str, str | None] = {}
+    updates: dict[str, object] = {}
     if "title" in body.model_fields_set:
         title = (body.title or "").strip()
         if not title:
@@ -795,6 +798,12 @@ def patch_source(source_id: int, body: SourcePatchIn) -> dict:
                 raise HTTPException(400, str(exc)) from exc
         else:
             updates["youtube_id"] = None
+    if "sttTerms" in body.model_fields_set:
+        # 🔴 이미 끝난 전사에는 반영되지 않는다. 다음 음성 인식부터 힌트로 붙는다.
+        try:
+            updates["stt_terms"] = stt.normalize_terms(body.sttTerms or [])
+        except stt.SttError as exc:
+            raise HTTPException(400, str(exc)) from exc
     if not updates:
         raise HTTPException(400, "고칠 값이 없습니다")
 
@@ -803,7 +812,7 @@ def patch_source(source_id: int, body: SourcePatchIn) -> dict:
     with connect() as conn:
         row = conn.execute(
             f"update sources set {assignments}, updated_at = now() where id = %s"
-            " returning id, title, context, youtube_id",
+            " returning id, title, context, youtube_id, stt_terms",
             (*updates.values(), source_id),
         ).fetchone()
         if row is None:

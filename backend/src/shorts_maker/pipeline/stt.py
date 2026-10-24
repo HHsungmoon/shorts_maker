@@ -26,6 +26,42 @@ class SttError(RuntimeError):
     pass
 
 
+# 용어 힌트(initial_prompt) 상한. 🔴 whisper 는 힌트의 **마지막 223 토큰만** 쓰고 앞은 말없이 버린다
+# (faster-whisper: max_length // 2 - 1). 실측(2026-10-24, whisper small 토크나이저): 서강대 용어 14개
+# 101자 = 96 토큰, 한글은 글자당 약 0.95 토큰이다. 쉼표·공백까지 200자면 190 토큰 안팎이라 잘리지 않는다.
+# 넘치면 거절한다 — 받아 두고 앞쪽 용어를 조용히 버리면 "넣었는데 왜 안 먹지" 가 된다.
+TERMS_MAX_CHARS = 200
+# 용어 하나의 상한. 고유명사 하나가 이보다 길면 문장을 넣은 것이다.
+TERM_MAX_CHARS = 40
+
+
+def normalize_terms(raw: list[str]) -> list[str]:
+    """화면에서 온 용어 목록을 정리한다 — 앞뒤 공백 · 빈 칸 · 중복을 걷고 순서는 지킨다.
+
+    🔴 쉼표를 넣을 수 없다. 힌트는 용어를 쉼표로 이어 붙인 한 줄이라 용어 안의 쉼표는 용어를 둘로 쪼갠다.
+    """
+    terms: list[str] = []
+    for item in raw:
+        term = " ".join(str(item).split())
+        if not term or term in terms:
+            continue
+        if "," in term:
+            raise SttError(f"용어에 쉼표를 넣을 수 없습니다: {term}")
+        if len(term) > TERM_MAX_CHARS:
+            raise SttError(f"용어 하나는 {TERM_MAX_CHARS}자까지입니다: {term[:20]}…")
+        terms.append(term)
+    if len(terms_prompt(terms) or "") > TERMS_MAX_CHARS:
+        raise SttError(
+            f"용어 힌트는 모두 합쳐 {TERMS_MAX_CHARS}자까지입니다 — 넘치면 음성 인식이 앞쪽 용어를 버립니다"
+        )
+    return terms
+
+
+def terms_prompt(terms: list[str]) -> str | None:
+    """용어 목록 → initial_prompt. 비어 있으면 None(힌트 없음)."""
+    return ", ".join(terms) or None
+
+
 def check_language(code: str | None) -> str | None:
     """None 은 자동 감지다. 🔴 자동은 앞 30초로 판단해서 가끔 틀리고, 틀리면 결과가 통째로
     쓸모없어진다 — 아는 언어면 지정하는 쪽이 낫다."""
@@ -161,6 +197,10 @@ def run_for_source(
     ).fetchall()
     if not chunks:
         raise SttError(f"source {source_id} 에 청크가 없다 — 먼저 구간을 추출한다")
+    # 힌트를 따로 주지 않으면 원본에 저장된 용어 목록을 쓴다(화면의 "용어 힌트"). CLI `--prompt` 는 덮어쓴다.
+    if initial_prompt is None:
+        row = conn.execute("select stt_terms from sources where id = %s", (source_id,)).fetchone()
+        initial_prompt = terms_prompt(list(row["stt_terms"])) if row else None
     # 🔴 도는 동안 재분할이 들어오면 청크가 사라져 외래키 위반으로 죽는다(store.source_lock).
     with store.source_lock(conn, source_id, "전사"):
         return _transcribe_chunks(conn, cfg, chunks, model_name, force, initial_prompt, language)
@@ -239,7 +279,14 @@ def run_for_chunk(
             chunk["source_id"],
             f"faster-whisper:{result.model}",
             result.transcribe_ms,
-            Jsonb({"initial_prompt": initial_prompt, "vad_filter": True, "language": chosen or "auto"}),
+            # chunk_id: 어느 조각을 이 설정으로 돌렸나. 없으면 일부 조각만 다시 인식했을 때 화면이
+            # "마지막 설정" 을 전 조각의 설정처럼 보여주게 된다(2026-10-24).
+            Jsonb({
+                "initial_prompt": initial_prompt,
+                "vad_filter": True,
+                "language": chosen or "auto",
+                "chunk_id": chunk_id,
+            }),
         ),
     )
     conn.commit()

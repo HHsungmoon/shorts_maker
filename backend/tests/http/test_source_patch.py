@@ -96,6 +96,27 @@ class SourcePatchTest(unittest.TestCase):
         self.client.patch(f"/api/sources/{self.source_id}", json={"youtubeId": ""})
         self.assertIsNone(self.stored()["youtube_id"])
 
+    def test_stt_terms_are_saved_tidied_without_touching_the_rest(self):
+        response = self.client.patch(
+            f"/api/sources/{self.source_id}", json={"sttTerms": [" 숭문고 ", "광성고", "숭문고", ""]}
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(["숭문고", "광성고"], response.json()["stt_terms"])
+        self.assertEqual("입학설명회", self.stored()["context"])
+
+    def test_stt_terms_over_the_hint_limit_are_refused_and_nothing_changes(self):
+        """🔴 받아 두면 whisper 가 앞쪽 용어를 조용히 버린다. 넣은 사람이 알 수 있게 거절한다."""
+        self.client.patch(f"/api/sources/{self.source_id}", json={"sttTerms": ["숭문고"]})
+        response = self.client.patch(
+            f"/api/sources/{self.source_id}", json={"sttTerms": [f"고등학교{i:02d}" for i in range(40)]}
+        )
+        self.assertEqual(400, response.status_code)
+        with store.connect(self.url) as conn:
+            terms = conn.execute(
+                "select stt_terms from sources where id = %s", (self.source_id,)
+            ).fetchone()["stt_terms"]
+        self.assertEqual(["숭문고"], terms)
+
     def test_a_request_that_changes_nothing_is_refused(self):
         """빈 요청을 200 으로 받아 주면 화면이 저장됐다고 말하고 아무 일도 안 일어난다."""
         response = self.client.patch(f"/api/sources/{self.source_id}", json={})

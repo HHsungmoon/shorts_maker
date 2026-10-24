@@ -106,6 +106,30 @@ class CheckLanguageTest(unittest.TestCase):
                     stt.check_language(code)
 
 
+class NormalizeTermsTest(unittest.TestCase):
+    """화면에서 온 용어 힌트를 정리한다. 🔴 넘치는 목록은 받아 두지 않고 거절한다 — whisper 가 앞쪽을 조용히 버린다."""
+
+    def test_trims_drops_blanks_and_duplicates_keeping_order(self):
+        self.assertEqual(
+            stt.normalize_terms(["  서강대학교 ", "", "다전공", "서강대학교", "로욜라  국제대학"]),
+            ["서강대학교", "다전공", "로욜라 국제대학"],
+        )
+
+    def test_a_comma_inside_a_term_is_refused(self):
+        # 힌트는 용어를 쉼표로 이은 한 줄이라 용어 안의 쉼표는 용어를 둘로 쪼갠다.
+        with self.assertRaises(stt.SttError):
+            stt.normalize_terms(["숭문고, 광성고"])
+
+    def test_a_list_longer_than_the_hint_limit_is_refused(self):
+        terms = [f"고등학교{i:02d}" for i in range(40)]  # 6자 × 40 + 구분자 = 200자를 넘는다
+        with self.assertRaises(stt.SttError):
+            stt.normalize_terms(terms)
+
+    def test_the_prompt_joins_terms_and_is_none_when_empty(self):
+        self.assertEqual(stt.terms_prompt(["서강대학교", "다전공"]), "서강대학교, 다전공")
+        self.assertIsNone(stt.terms_prompt([]))
+
+
 class RunForChunkTest(DbTestCase):
     """전사 결과가 실제로 utterances 에 들어가는가. whisper 는 부르지 않는다."""
 
@@ -161,6 +185,27 @@ class RunForChunkTest(DbTestCase):
         self.assertEqual(call["model"], "faster-whisper:small")
         self.assertEqual(call["params"]["language"], "ko")
         self.assertEqual(call["latency_ms"], 12)
+
+    def test_the_call_records_which_chunk_it_ran(self):
+        """조각 일부만 다시 인식했을 때 어느 조각이 어떤 힌트로 돌았는지 가를 수 있어야 한다."""
+        self.run_stt([segment(0.0, 1.0, "말")])
+        call = self.conn.execute("select params from stage_calls where stage = 'stt'").fetchone()
+        self.assertEqual(call["params"]["chunk_id"], self.chunk_id)
+
+    def test_the_source_terms_become_the_hint_unless_one_is_given(self):
+        self.conn.execute("update sources set stt_terms = %s", (["서강대학교", "다전공"],))
+        self.conn.commit()
+        source_id = self.conn.execute("select id from sources").fetchone()["id"]
+        result = stt.Transcription(
+            rows=[], skipped=0, load_ms=0, transcribe_ms=1, language="ko", language_probability=1.0, model="small",
+        )
+        with mock.patch.object(stt, "transcribe", return_value=result) as fake:
+            stt.run_for_source(self.conn, self.cfg, source_id, None, True)
+        self.assertEqual(fake.call_args.args[3], "서강대학교, 다전공")
+        # CLI --prompt 처럼 직접 준 힌트가 이긴다.
+        with mock.patch.object(stt, "transcribe", return_value=result) as fake:
+            stt.run_for_source(self.conn, self.cfg, source_id, None, True, "광성고")
+        self.assertEqual(fake.call_args.args[3], "광성고")
 
     def test_a_second_run_needs_force_and_then_replaces(self):
         self.run_stt([segment(0.0, 1.0, "처음")])
