@@ -10,3 +10,7 @@
 // 거기도 바꾼다.
 export const PRODUCT_NAME = "CLIPQ";
 export const REPO_NAME = "shorts_maker";
+
+// 로고. web/public/brand/ 에 있어서 빌드 결과(dist)의 같은 경로로 나간다. 원본(1774×887)은 여백이 커서
+// 화면에는 여백을 잘라 줄인 판(480×170)을 쓴다.
+export const LOGO_SRC = "/brand/clipq-logo-sm.png";
