@@ -48,6 +48,11 @@ export interface ShortsSource {
 	 * 🔴 이미 나눈 구간에는 반영되지 않는다 — 구간은 캐시된 자산이다.
 	 */
 	context: string | null;
+	/**
+	 * 음성 인식 용어 힌트(고유명사). 다음 음성 인식부터 whisper 의 initial_prompt 로 붙는다.
+	 * 🔴 이미 끝난 전사에는 반영되지 않는다 — 다시 인식해야 한다.
+	 */
+	stt_terms: string[];
 }
 
 /**
@@ -70,9 +75,14 @@ export interface ShortsSourceListItem extends ShortsSource {
 
 export interface ShortsSegment {
 	id: number;
+	/** 이 구간이 들어 있는 처리 조각. 전사(발화)는 조각 단위로 읽는다. */
+	chunk_id: number;
 	idx: number;
 	start_sec: number;
 	end_sec: number;
+	/** 조각 안 발화 번호 범위(양끝 포함). 구간의 전사 문장을 고를 때 쓴다. */
+	start_utterance_idx: number;
+	end_utterance_idx: number;
 	description: string | null;
 	excluded_by: string | null;
 	excluded_reason: string | null;
@@ -91,6 +101,14 @@ export interface ShortsRun {
 	id: number;
 	status: string;
 	criteria_prompt: string | null;
+	/**
+	 * 실제로 보낸 프롬프트 전문. 🔴 **새 클립 탭의 선정(pipeline/ranking)만 채운다** — 질문 답하기의
+	 * run(answers/answer)은 비어 있다. 그래서 "이 run 이 선정인가" 를 이 값으로 가른다(SourcePage).
+	 */
+	prompt: string | null;
+	/** 질문 답하기가 고른 길('retrieval' | 'rank'). 선정 run 은 null. */
+	route: string | null;
+	created_at: string;
 	error: string | null;
 	ranked: {
 		ranked?: { idx: number; score: number; reason: string }[];
@@ -145,6 +163,9 @@ export interface ShortsStageCall {
 	thinking_tokens: number | null;
 	latency_ms: number | null;
 	error: string | null;
+	/** 그 단계를 무엇으로 돌렸나. stt 면 언어·무음 거르기·용어 힌트(initial_prompt), LLM 이면 시도 횟수 같은 것. */
+	params: Record<string, unknown> | null;
+	created_at: string;
 	/**
 	 * 프롬프트나 원본 응답이 저장돼 있는가.
 	 *

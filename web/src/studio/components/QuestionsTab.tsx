@@ -8,7 +8,7 @@ import type { SourceView } from "../SourcePage";
  * 안 된다.
  */
 export function QuestionsTab({ view }: { view: SourceView }) {
-	const { data, clusters, prepDone, jobBusy, submit, reload } = view;
+	const { data, clusters, prepDone, jobBusy, submit, reload, duration, playAt } = view;
 	return (
 		<>
 			{/* 준비가 안 끝났으면 [답하기] 가 만들 구간 자체가 없다. 질문은 그대로 쌓이므로
@@ -28,6 +28,8 @@ export function QuestionsTab({ view }: { view: SourceView }) {
 					list={clusters}
 					onJob={submit}
 					onChanged={reload}
+					duration={duration}
+					onPlay={playAt}
 				/>
 			)}
 		</>

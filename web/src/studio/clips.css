@@ -1,27 +1,30 @@
-/* 공개 탭 — 완성 클립 선반. PublishTab 이 import 한다.
+/* 공개 탭 — 세로 숏폼 선반(개선안 E1, 2026-10-24). PublishTab 이 import 한다.
  *
  * 토큰(--surface, --border, --accent …)과 공통 클래스(.button, .sm-meta, .sm-chip)는
  * shared/styles.css 것을 그대로 쓴다 — 여기서 다시 정의하면 두 곳이 서로 다르게 늙는다.
+ *
+ * 🔴 클래스 이름은 `sm-short*` 다. 예전 이름 `sm-card` 는 새 클립 탭의 결과 카드와 겹친다 —
+ * 탭 CSS 도 한 번 읽히면 페이지 전체에 걸려서, 같은 이름이면 서로의 모양을 덮어쓴다.
  */
 
-.sm-shelf__head {
+.sm-shorts__head {
 	display: flex;
 	align-items: center;
 	gap: 10px;
 	flex-wrap: wrap;
-	margin: 4px 0 14px;
+	margin: 4px 0 16px;
 }
 
-.sm-shelf__title {
+.sm-shorts__title {
 	margin: 0;
-	font-size: 16px;
+	font-size: 22px;
 }
 
-.sm-shelf__empty {
+.sm-shorts__empty {
 	margin: 0;
 	padding: 40px 16px;
 	text-align: center;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.7;
 	color: var(--text-muted);
 	background: var(--surface);
@@ -29,80 +32,108 @@
 	border-radius: var(--radius);
 }
 
-/* 🔴 한 줄에 둘. 세로로 하나씩 쌓았더니 9:16 영상 옆 오른쪽이 텅 비었다(2026-09-14).
- * 셋은 안 된다 — 페이지 폭(1100px)에서 한 칸이 340px 남짓이라 가로 카드가 안 들어가고,
- * 세로 카드로 바꾸면 영상만으로 600px 을 넘는다. 440px 은 영상 168px + 본문 250px 이 서는 최소 폭이다.
- * 행 안의 카드는 높이를 맞춘다(stretch) — 아래 버튼 줄이 옆 카드와 같은 선에 서야 훑기 쉽다. */
-.sm-shelf {
+/* 선반. 카드 하나 = 왼쪽 숏폼(250px) · 오른쪽 내용. 🔴 영상 아래에 글을 쌓았더니(2026-10-24 첫 판)
+   카드가 세로로 너무 길어 한 화면에 한 줄도 다 안 들어왔다. 옆으로 빼면 카드 높이가 영상 높이로 끝난다.
+   1440 화면에서 두 개가 선다. 행 안의 카드는 높이를 맞춰 버튼 줄이 같은 선에 선다. */
+.sm-shorts {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr));
-	gap: 14px;
+	grid-template-columns: repeat(auto-fill, minmax(min(580px, 100%), 1fr));
+	gap: 18px;
+	align-items: stretch;
 }
 
-/* 카드 ------------------------------------------------------------------ */
-
-.sm-card {
+.sm-short {
 	display: flex;
-	gap: 14px;
-	padding: 14px;
+	min-width: 0;
 	background: var(--surface);
 	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	min-width: 0;
+	border-radius: 14px;
+	overflow: hidden;
 }
 
-/* 시청자에게 나가 있는 것. 배지만으로는 격자를 훑을 때 안 걸려서 테두리도 옅게 물들인다. */
-.sm-card--live {
-	border-color: #b7d6c5;
+/* 시청자에게 나가 있는 것. 배지만으로는 격자를 훑을 때 안 걸려서 테두리도 물들인다. */
+.sm-short--live {
+	border-color: var(--accent-line);
+	box-shadow: 0 0 0 1px var(--accent-line);
 }
 
-.sm-card__media {
-	flex: 0 0 168px;
+/* 숏폼. 첫 판(220px)보다 조금 키웠다. 세로는 비율이 정한다(250 × 16/9 ≈ 444px). */
+.sm-short__media {
+	position: relative;
+	flex: 0 0 250px;
+	aspect-ratio: 9 / 16;
+	align-self: flex-start;
+	background: #000;
 }
 
-/* 🔴 비율을 미리 잡는다. 메타데이터가 오기 전엔 <video> 높이가 0 이라, 카드가 한 번 납작하게
-   그려졌다가 영상이 뜨면서 격자 전체가 아래로 밀린다. */
-.sm-card__media video {
+.sm-short__media video {
 	display: block;
-	aspect-ratio: 9 / 16;
+	width: 100%;
+	height: 100%;
 	object-fit: contain;
+	background: #000;
 }
 
-.sm-card__pending {
-	aspect-ratio: 9 / 16;
+.sm-short__pending {
+	height: 100%;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
 	gap: 10px;
-	padding: 8px;
 	background: var(--bg);
-	border: 1px dashed var(--border);
-	border-radius: var(--radius);
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--text-muted);
-	text-align: center;
 }
 
-.sm-card__body {
+/* 영상 위 배지. 재생 막대를 가리지 않게 위쪽에만 둔다. */
+.sm-short__live,
+.sm-short__score {
+	position: absolute;
+	top: 8px;
+	padding: 2px 9px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 700;
+	pointer-events: none;
+}
+
+.sm-short__live {
+	left: 8px;
+	background: rgb(0 0 0 / 55%);
+	color: #fff;
+}
+
+.sm-short__live--on {
+	background: var(--accent);
+}
+
+.sm-short__score {
+	right: 8px;
+	background: rgb(255 255 255 / 92%);
+	color: var(--text);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-short__body {
 	flex: 1;
-	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 7px;
+	gap: 8px;
+	padding: 16px 18px;
+	min-width: 0;
 }
 
-.sm-card__origin {
+.sm-short__origin {
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	min-width: 0;
-	font-size: 12px;
+	font-size: 13px;
 	color: var(--text-muted);
 }
 
-/* 기준 문장은 길 수 있다. 한 줄에서 자르고 전문은 마우스를 올리면 보인다. */
-.sm-card__criteria {
+.sm-short__criteria {
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -115,7 +146,7 @@
 	border-radius: 999px;
 	background: var(--accent);
 	color: #fff;
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 600;
 }
 
@@ -123,111 +154,207 @@
 	background: var(--text-muted);
 }
 
-.sm-live {
-	flex: 0 0 auto;
-	margin-left: auto;
-	padding: 1px 8px;
-	border: 1px solid var(--border);
-	border-radius: 999px;
-	font-size: 11px;
-	color: var(--text-muted);
-	white-space: nowrap;
-}
-
-.sm-live--on {
-	background: var(--accent);
-	border-color: var(--accent);
-	color: #fff;
-	font-weight: 600;
-}
-
-.sm-card__titlerow {
-	display: flex;
-	align-items: flex-start;
-	gap: 6px;
-}
-
-.sm-card__title {
-	flex: 1;
-	min-width: 0;
+/* 두 줄에서 자른다 — 칸마다 제목 길이가 달라도 아래 버튼 줄이 같은 높이에 선다. 전문은 title 로. */
+.sm-short__title {
 	margin: 0;
-	font-size: 15px;
+	font-size: 18px;
 	line-height: 1.45;
 	font-weight: 700;
-	overflow-wrap: anywhere;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
 }
 
-/* 버튼 테두리를 두르면 제목 옆에서 제목만큼 무게를 먹는다. 자주 안 누르는 것이라 글자 링크로 둔다. */
-.sm-card__edit {
-	flex: 0 0 auto;
-	margin-top: 2px;
-	padding: 0 2px;
-	border: none;
-	background: none;
-	font: inherit;
-	font-size: 12px;
-	color: var(--text-muted);
-	text-decoration: underline;
-	text-underline-offset: 2px;
-	cursor: pointer;
-}
-
-.sm-card__edit:hover {
-	color: var(--text);
-}
-
-.sm-card__titleedit {
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-}
-
-.sm-card__question {
+.sm-short__question {
 	margin: 0;
-	font-size: 12px;
+	font-size: 13px;
 	line-height: 1.5;
 	color: var(--text-muted);
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
 }
 
-.sm-card__meta {
-	font-size: 12px;
+.sm-short__meta {
+	font-size: 13px;
 	color: var(--text-muted);
 	font-variant-numeric: tabular-nums;
 }
 
-.sm-card__reason {
-	margin: 0;
-	font-size: 13px;
-	line-height: 1.6;
-	overflow-wrap: anywhere;
+.sm-short__stats {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
+	margin: 2px 0 0;
+	padding: 8px 4px;
+	background: var(--bg);
+	border-radius: var(--radius);
+	text-align: center;
 }
 
-/* 버튼 줄은 카드 바닥에 붙인다. 본문 길이가 달라도 옆 카드와 같은 높이에 선다. */
-.sm-card__foot {
+.sm-short__stats dt {
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.sm-short__stats dd {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+/* 버튼 줄은 카드 바닥에 붙인다. */
+.sm-short__foot {
 	margin-top: auto;
-	padding-top: 10px;
-	border-top: 1px solid var(--border);
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+	padding-top: 8px;
 }
 
-.sm-card__review {
+.sm-short__publish {
+	align-self: flex-start;
+	padding: 8px 18px;
+	font-size: 15px;
+}
+
+.sm-short__tools {
 	display: flex;
 	align-items: center;
-	flex-wrap: wrap;
-	gap: 6px;
+	gap: 4px;
 }
 
-/* 지금 내 평가. 채운 색(sm-go)을 쓰면 [시청자에게 공개] 와 같은 무게로 읽혀서 테두리만 굵힌다. */
-.sm-card__review .button[aria-pressed="true"] {
+/* 자주 누르지 않는 것이라 글자 버튼으로 둔다. 테두리를 두르면 [공개] 와 같은 무게로 읽힌다. */
+.sm-short__tool {
+	padding: 4px 6px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.sm-short__tool:hover {
 	background: var(--bg);
-	border-color: currentColor;
-	font-weight: 600;
+	color: var(--text);
 }
 
-@media (max-width: 520px) {
-	.sm-card__media {
-		flex-basis: 120px;
+.sm-short__tool[aria-pressed="true"] {
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.sm-short__tool--ng[aria-pressed="true"] {
+	background: var(--danger-soft);
+	color: var(--danger-ink);
+}
+
+.sm-short__tool--end {
+	margin-left: auto;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+/* 아직 고르지 않은 답 — 한 칸에 모은다. 위에 + 하나, 아래에 "질문 — 추가하러 가기" 줄. */
+.sm-short--waiting {
+	flex-direction: column;
+	align-items: stretch;
+	justify-content: center;
+	gap: 16px;
+	padding: 24px;
+	border: 2px dashed var(--accent-line);
+	background: var(--surface);
+	box-shadow: none;
+}
+
+.sm-short__plus {
+	align-self: center;
+	display: grid;
+	place-items: center;
+	width: 52px;
+	height: 52px;
+	border-radius: 50%;
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.sm-short__waitlist {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* 질문 한 줄 = 한 링크. 질문은 왼쪽에서 한 줄로 자르고, 오른쪽 끝에 "추가하러 가기". 줄 전체가 누르는 자리다. */
+.sm-short__waititem {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	color: var(--text);
+	text-decoration: none;
+}
+
+.sm-short__waititem:hover,
+.sm-short__waititem:focus-visible {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	outline: none;
+}
+
+.sm-short__waitq {
+	flex: 1;
+	min-width: 0;
+	font-size: 15px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sm-short__waitgo {
+	flex-shrink: 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--accent);
+	white-space: nowrap;
+}
+
+.sm-short__waitmore {
+	align-self: center;
+	font-size: 14px;
+}
+
+.sm-shorts__titleform {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: min(480px, 80vw);
+}
+
+.sm-shorts__titlefoot {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+/* 좁은 화면 — 옆으로 둘 폭이 없으면 다시 영상 아래로 쌓는다. */
+@media (max-width: 640px) {
+	.sm-short {
+		flex-direction: column;
+	}
+
+	.sm-short__media {
+		flex-basis: auto;
+		align-self: stretch;
 	}
 }

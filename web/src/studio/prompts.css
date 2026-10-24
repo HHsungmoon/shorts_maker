@@ -13,7 +13,7 @@
 	margin: 8px 0;
 	padding: 10px 12px;
 	font: inherit;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.6;
 	color: var(--text);
 	background: var(--surface);
@@ -37,12 +37,12 @@
 
 .pr-stage__name {
 	font-weight: 600;
-	font-size: 14px;
+	font-size: 16px;
 }
 
 /* 관리자 기준이 들어가는지. 들어가는 곳만 색을 준다 — 안 들어가는 곳이 더 많아 보이면 안 된다. */
 .pr-badge {
-	font-size: 12px;
+	font-size: 14px;
 	padding: 1px 8px;
 	border-radius: 999px;
 	color: var(--text-muted);
@@ -92,29 +92,3 @@
 	font-style: italic;
 }
 
-/* 영상 준비 탭의 개요 칸. */
-.sm-context {
-	margin: 8px 0 14px 34px;
-}
-
-/* 값 셋을 세로로 쌓는다 — 제목은 한 줄, 유튜브 id 와 개요는 설명을 위에 달고 내려온다. */
-.sm-context__field {
-	display: block;
-	margin-top: 10px;
-}
-
-.sm-context__line,
-.sm-context textarea {
-	width: 100%;
-	box-sizing: border-box;
-	margin: 6px 0;
-	padding: 8px 10px;
-	font: inherit;
-	font-size: 13px;
-	line-height: 1.5;
-	color: var(--text);
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	resize: vertical;
-}

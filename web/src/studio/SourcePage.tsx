@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { fetchClusters, fetchShortsSource, fetchStatus } from "./api";
 import { LogTab } from "./components/LogTab";
 import { NewClipTab } from "./components/NewClipTab";
@@ -8,7 +8,9 @@ import { PublishTab } from "./components/PublishTab";
 import { ReportTab } from "./components/ReportTab";
 import { PrepareTab } from "./components/PrepareTab";
 import { QuestionsTab } from "./components/QuestionsTab";
-import { StudioBanners, StudioHead } from "./components/StudioChrome";
+import { MiniPlayerDock, SourceBar } from "./components/SourceBar";
+import type { MiniPlayer } from "./components/SourceBar";
+import { StudioBanners } from "./components/StudioChrome";
 import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type {
@@ -59,6 +61,8 @@ export interface SourceView {
 	submit: (start: () => Promise<ShortsJob>) => void;
 	act: (run: () => Promise<unknown>) => void;
 	reload: () => void;
+	/** 오른쪽 아래 미니 플레이어로 원본을 이 초부터 튼다. 후보가 원본 어디서 왔는지 확인하는 길이다. */
+	playAt: (sec: number) => void;
 
 	chunks: ShortsChunk[];
 	hasChunks: boolean;
@@ -69,6 +73,9 @@ export interface SourceView {
 	chunkStart: number;
 	chunkEnd: number;
 	segments: ShortsSegment[];
+	/** 새 클립 탭의 선정 run 만, 최근 것이 앞. 지난 기준을 다시 꺼내 쓰는 데 쓴다. */
+	criteriaRuns: ShortsRun[];
+	/** 가장 최근 선정 run. 질문 답하기의 run 은 들어오지 않는다. */
 	latestRun: ShortsRun | null;
 	ranked: RankedEntry[];
 	excluded: ExcludedEntry[];
@@ -99,8 +106,6 @@ export interface SourceView {
 	transcript: ShortsUtterance[] | null;
 	setTranscript: Dispatch<SetStateAction<ShortsUtterance[] | null>>;
 }
-
-const tabClass = ({ isActive }: { isActive: boolean }) => `sm-tab${isActive ? " sm-tab--on" : ""}`;
 
 /**
  * 영상 하나의 작업 화면.
@@ -133,6 +138,9 @@ export function SourcePage() {
 	const [range, setRange] = useState<{ start: number; end: number } | null>(null);
 	// 조각이 이미 있는데도 범위를 다시 고르는 중인가("다시 추출" 을 누른 뒤).
 	const [rangeOpen, setRangeOpen] = useState(false);
+	// 미니 플레이어. 어느 영상의 것인지도 함께 든다 — 다른 영상으로 옮기면 앞 영상에서 고른 초로
+	// 새 영상을 틀지 않게 한다.
+	const [player, setPlayer] = useState<(MiniPlayer & { sourceId: number }) | null>(null);
 
 	// 🔴 셋 다 `keepPrevious` 다. 잡이 도는 동안 `reloadToken` 이 올라가며 통째로 다시 읽는데,
 	// 유지하지 않으면 그때마다 화면이 비어 작업이 사라진 것처럼 보인다. `subject` 를 주는 이유는
@@ -187,7 +195,10 @@ export function SourcePage() {
 	const rangeValid = rangeStart < rangeEnd && (duration === 0 || rangeEnd <= duration);
 	// 구간 번호(idx)는 소스 안에서 연속이라(segmentation) 조각을 넘어서도 idx 순이 곧 시간 순이다.
 	const segments: ShortsSegment[] = chunks.flatMap((c) => c.segments).sort((a, b) => a.idx - b.idx);
-	const latestRun = data?.runs[0] ?? null;
+	// 🔴 runs 에는 질문 답하기의 run 도 섞여 온다(최근 것이 앞). 그대로 runs[0] 을 쓰면 질문에 한 번
+	// 답한 순간 새 클립 탭의 선정 결과가 통째로 사라졌다(2026-10-24 발견). 선정 run 만 고른다.
+	const criteriaRuns = data?.runs.filter((run) => run.prompt !== null) ?? [];
+	const latestRun = criteriaRuns[0] ?? null;
 	const ranked = latestRun?.ranked?.ranked ?? [];
 	const excluded = latestRun?.ranked?.excluded ?? [];
 	const clipBySegment = new Map<number, ShortsClip>();
@@ -208,6 +219,14 @@ export function SourcePage() {
 	const missingCount =
 		clusters.data?.clusters.filter((c) => c.status === "UNANSWERABLE").length ?? 0;
 
+	function playAt(sec: number) {
+		if (sourceId === null) {
+			return;
+		}
+		const id = sourceId;
+		setPlayer((prev) => ({ sourceId: id, start: Math.max(0, Math.floor(sec)), nonce: (prev?.nonce ?? 0) + 1 }));
+	}
+
 	const view: SourceView = {
 		sourceId,
 		data,
@@ -220,6 +239,7 @@ export function SourcePage() {
 		submit,
 		act,
 		reload,
+		playAt,
 		chunks,
 		hasChunks,
 		utterances,
@@ -229,6 +249,7 @@ export function SourcePage() {
 		chunkStart,
 		chunkEnd,
 		segments,
+		criteriaRuns,
 		latestRun,
 		ranked,
 		excluded,
@@ -258,112 +279,67 @@ export function SourcePage() {
 	};
 
 	return (
-		<div className="page">
-			{/* 브라우저 뒤로가기로도 돌아가지만, 링크로 열린 화면에는 그 길이 없다. */}
-			<Link to="/studio" className="sm-back">
-				← 영상 목록
-			</Link>
-
-			<StudioHead
-				title={data ? data.source.title : "불러오는 중…"}
-				count={
-					data && `발화 ${utterances} · 구간 ${segments.length} · 클립 ${data.clips.length}`
-				}
+		<div className="sm-shell">
+			<SourceBar
+				sourceId={sourceId}
+				data={data}
+				utterances={utterances}
+				segments={segments.length}
+				prepDone={prepDone}
+				openCount={openCount}
+				missingCount={missingCount}
+				onPlay={playAt}
 			/>
 
-			{/* 배너는 탭 위에 둔다 — 한 탭에서 띄운 잡은 탭을 옮겨도 계속 돌고 있다. */}
-			<StudioBanners status={status} studio={studio} />
+			<main className="sm-shell__main">
+					{/* 배너는 탭 내용 위에 둔다 — 한 탭에서 띄운 잡은 탭을 옮겨도 계속 돌고 있다.
+				    보기 전용 표시는 상단바가 늘 보여주므로 여기서는 뺀다. */}
+				<StudioBanners status={status} studio={studio} readonlyNotice={false} />
 
-			{/* 🔴 오류를 둘로 나눈다. 이전 데이터를 들고 있게 되면서(useAsync keepPrevious) 잡이 도는
-			    동안의 일시적인 실패와 "정말 없는 영상" 이 같은 문구로 나올 수 있게 됐다 —
-			    내용이 멀쩡히 보이는데 "영상을 찾을 수 없습니다" 가 뜨면 그게 거짓말이다. */}
-			{detail.error && !data && (
-				<>
-					<p className="state state--error">
-						이 영상을 찾을 수 없습니다. ({detail.error.message})
-					</p>
+				{/* 🔴 오류를 둘로 나눈다. 이전 데이터를 들고 있게 되면서(useAsync keepPrevious) 잡이 도는
+				    동안의 일시적인 실패와 "정말 없는 영상" 이 같은 문구로 나올 수 있게 됐다 —
+				    내용이 멀쩡히 보이는데 "영상을 찾을 수 없습니다" 가 뜨면 그게 거짓말이다. */}
+				{detail.error && !data && (
+					<>
+						<p className="state state--error">
+							이 영상을 찾을 수 없습니다. ({detail.error.message})
+						</p>
+						<p className="sm-meta" style={{ textAlign: "center" }}>
+							<Link to="/studio">영상 목록으로 돌아가기</Link>
+						</p>
+					</>
+				)}
+				{detail.error && data && (
+					// 화면은 그대로 두고 알리기만 한다. 다음 폴링이 성공하면 조용히 사라진다.
 					<p className="sm-meta" style={{ textAlign: "center" }}>
-						<Link to="/studio">영상 목록으로 돌아가기</Link>
+						잠시 갱신하지 못했습니다. 화면은 마지막으로 읽은 내용입니다. ({detail.error.message})
 					</p>
-				</>
+				)}
+
+				<Routes>
+					{/* 탭이 없는 /sources/3 은 예전 링크와 북마크다. 매일 쓰는 질문 탭으로 보낸다. */}
+					<Route index element={<Navigate to="questions" replace />} />
+					<Route path="questions" element={<QuestionsTab view={view} />} />
+					<Route path="prepare" element={<PrepareTab view={view} />} />
+					<Route path="make" element={<NewClipTab view={view} />} />
+					<Route path="clips" element={<PublishTab view={view} />} />
+					<Route path="report" element={<ReportTab view={view} />} />
+					<Route path="log" element={<LogTab view={view} />} />
+					{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.
+					    🔴 여기서 상대경로를 쓰면 /sources/3/bogus/questions 로 가고 그 주소가 다시
+					    이 라우트에 걸려 무한 리다이렉트가 된다. */}
+					<Route path="*" element={<Navigate to={`/studio/sources/${sourceId}/questions`} replace />} />
+				</Routes>
+			</main>
+
+			{player?.sourceId === sourceId && data?.source.youtube_id && (
+				<MiniPlayerDock
+					youtubeId={data.source.youtube_id}
+					title={data.source.title}
+					player={player}
+					onClose={() => setPlayer(null)}
+				/>
 			)}
-			{detail.error && data && (
-				// 화면은 그대로 두고 알리기만 한다. 다음 폴링이 성공하면 조용히 사라진다.
-				<p className="sm-meta" style={{ textAlign: "center" }}>
-					잠시 갱신하지 못했습니다. 화면은 마지막으로 읽은 내용입니다. ({detail.error.message})
-				</p>
-			)}
-
-			{/* 무엇을 뽑을지 정하려면 원본을 봐야 한다. 자체 <video> 가 아니라 유튜브 임베드다 —
-			    여기서의 시청도 실제 유튜브 시청 시간이 된다(tease §8-3).
-
-			    🔴 접을 수 있어야 한다. 95분짜리 영상의 플레이어가 세로를 크게 먹는데, 답을 쓰는
-			    동안 "영상이 실제로 뭐라고 하는지" 를 확인해야 해서 없앨 수도 없다. 기본은 펼침. */}
-			{data &&
-				(data.source.youtube_id ? (
-					<details className="sm-fold sm-playerfold" open>
-						<summary>{data.source.title}</summary>
-						<div className="sm-player">
-							<iframe
-								src={`https://www.youtube.com/embed/${data.source.youtube_id}`}
-								title={data.source.title}
-								allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-								allowFullScreen
-							/>
-						</div>
-					</details>
-				) : (
-					<p className="sm-meta">임베드할 수 없는 영상입니다</p>
-				))}
-			{data?.source.channel && <p className="sm-meta">{data.source.channel}</p>}
-
-			{/* 🔴 to 는 절대경로다. 이 화면 자체가 splat 라우트(`sources/:sourceId/*`) 안이라
-			    상대경로는 splat 구간까지 붙는다 — /sources/3/clips 에서 to="questions" 는
-			    /sources/3/clips/questions 가 된다(react-router 7 의 v7_relativeSplatPath 기본값). */}
-			{/* 🔴 순서가 곧 일하는 순서다 — 질문을 보고, 영상을 준비하고, 새로 뽑고, 내보낸다(2026-09-14).
-			    예전 "클립" 탭은 내보내기(완성 클립)와 새로 뽑기(직접 골라 만들기)를 한 화면에 쌓아서
-			    뽑기가 접힌 채 맨 아래에 묻혔다. 하는 일이 달라 둘로 갈랐다.
-			    공개 탭의 주소는 예전 클립 탭의 `clips` 를 그대로 쓴다 — 완성 클립이 있던 자리라
-			    옛 링크가 같은 내용을 연다. */}
-			<nav className="sm-tabs">
-				<NavLink to={`/studio/sources/${sourceId}/questions`} className={tabClass}>
-					질문
-					{openCount > 0 && <span className="sm-tab__badge">{openCount}</span>}
-				</NavLink>
-				<NavLink to={`/studio/sources/${sourceId}/prepare`} className={tabClass}>
-					영상 준비
-					{!prepDone && <span className="sm-tab__need">준비 필요</span>}
-				</NavLink>
-				<NavLink to={`/studio/sources/${sourceId}/make`} className={tabClass}>
-					새 클립
-				</NavLink>
-				<NavLink to={`/studio/sources/${sourceId}/clips`} className={tabClass}>
-					공개
-				</NavLink>
-				{/* 🔴 리포트는 **가져가는 것**이고 기록은 내부용이다. 앞에 둔다. */}
-				<NavLink to={`/studio/sources/${sourceId}/report`} className={tabClass}>
-					리포트
-					{missingCount > 0 && <span className="sm-tab__badge">{missingCount}</span>}
-				</NavLink>
-				<NavLink to={`/studio/sources/${sourceId}/log`} className={tabClass}>
-					기록
-				</NavLink>
-			</nav>
-
-			<Routes>
-				{/* 탭이 없는 /sources/3 은 예전 링크와 북마크다. 매일 쓰는 질문 탭으로 보낸다. */}
-				<Route index element={<Navigate to="questions" replace />} />
-				<Route path="questions" element={<QuestionsTab view={view} />} />
-				<Route path="prepare" element={<PrepareTab view={view} />} />
-				<Route path="make" element={<NewClipTab view={view} />} />
-				<Route path="clips" element={<PublishTab view={view} />} />
-				<Route path="report" element={<ReportTab view={view} />} />
-				<Route path="log" element={<LogTab view={view} />} />
-				{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.
-				    🔴 여기서 상대경로를 쓰면 /sources/3/bogus/questions 로 가고 그 주소가 다시
-				    이 라우트에 걸려 무한 리다이렉트가 된다. */}
-				<Route path="*" element={<Navigate to={`/studio/sources/${sourceId}/questions`} replace />} />
-			</Routes>
 		</div>
 	);
 }

@@ -5,17 +5,98 @@
  * 원본에 있던 `.sm-*` 블록은 그대로 유지한다(이 화면 전용으로 이미 분리돼 있었다).
  */
 :root {
-	--bg: #f6f7f9;
+	/* 🔴 색은 여기서만 정한다. 화면 CSS 는 이 이름만 쓰고 hex 를 직접 적지 않는다 — 적으면 톤을 바꿀 때
+	   그 자리만 옛 색으로 남는다(2026-10-24 초록 → CLIPQ 블루로 바꾸며 스무 곳을 찾아 고쳤다).
+	   값은 로고(web/public/brand/clipq-logo.png)에서 땄다: 일렉트릭 블루 · 바이올렛 · 시안, 재생 버튼의 남색.
+	   대비(WCAG): accent 위 흰 글자 5.2:1 · accent-soft 위 accent 글자 4.7:1 · bg 위 text-muted 5.3:1.
+	   🔴 처음 고른 #2a55e6 은 너무 진해 부담스럽다는 피드백을 받아(2026-10-24) 채도를 낮췄다.
+	   테마는 아래 `[data-theme]` 블록이 이 값들을 덮어쓴다(고르는 곳: shared/theme.ts · ThemePicker).
+	   기본(이 블록)이 곧 "블루" 테마다. */
+	--bg: #f4f6fb;
 	--surface: #ffffff;
+	--border: #e2e6f0;
+	--text: #141a2e;
+	--text-muted: #5f6680;
+	--accent: #4466cc;
+	--accent-hover: #3854b0;
+	/* 연한 바탕(선택된 줄·켜진 칩)과 그 테두리. */
+	--accent-soft: #eef2fe;
+	--accent-line: #c9d4f5;
+	/* 이어붙인 조각의 두 번째 칸처럼 accent 와 나란히 놓여 구분돼야 하는 자리. */
+	--accent-2: #8a76e0;
+	/* 로고의 그라데이션. 면을 칠하지 않고 선(켜진 탭 밑줄·머리 띠)에만 쓴다 — 넓게 칠하면 글자가 안 읽힌다. */
+	--brand-gradient: linear-gradient(90deg, #b07ce8 0%, #6f86e6 50%, #5cc3e0 100%);
+	--danger: #b42318;
+	--danger-ink: #a02620;
+	--danger-soft: #fdf3f2;
+	--danger-line: #f0cfcd;
+	/* 고장이 아니라 아직 안 한 일(보기 전용, 준비 필요, 알림 배너). */
+	--warn-bg: #fff8e6;
+	--warn-line: #f0dca8;
+	--warn-ink: #6b5518;
+	--radius: 8px;
+	/* 영상 화면 본문의 좌우 여백(로고 줄 제외). 기본 5%. 고르는 곳: shared/theme.ts · GutterPicker. */
+	--sm-gutter: 5vw;
+	font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+		"Segoe UI", sans-serif;
+	color: var(--text);
+}
+
+/* 테마 — 기본 블루 위에 덮어쓰는 값만 적는다. 새 테마는 여기 블록 하나와 shared/theme.ts 의 목록 한 줄이다.
+   accent 위 흰 글자 대비가 4.5:1 을 넘는 값만 쓴다. */
+
+/* 좌우 여백 — 기본 5% 위에 덮어쓴다. */
+:root[data-gutter="0"] {
+	--sm-gutter: 0px;
+}
+
+:root[data-gutter="10"] {
+	--sm-gutter: 10vw;
+}
+
+/* 폰에서는 여백 설정을 쓰지 않는다 — 5% 도 글자 칸을 깎아 먹는다. */
+@media (max-width: 640px) {
+	:root,
+	:root[data-gutter] {
+		--sm-gutter: 0px;
+	}
+}
+
+/* 그린 — CLIPQ 블루 전의 원래 색(2026-09 ~ 10-23). 흰 글자 6.3:1. */
+:root[data-theme="green"] {
+	--bg: #f6f7f9;
 	--border: #e3e6ea;
 	--text: #1a1d21;
 	--text-muted: #6b7280;
 	--accent: #1f6f4a;
-	--danger: #b42318;
-	--radius: 8px;
-	font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
-		"Segoe UI", sans-serif;
-	color: var(--text);
+	--accent-hover: #185a3c;
+	--accent-soft: #e6f2ec;
+	--accent-line: #b7d6c5;
+	--accent-2: #6fa88a;
+	--brand-gradient: linear-gradient(90deg, #1f6f4a 0%, #3f9a6e 50%, #8cc7a6 100%);
+}
+
+/* 스카이 — 밝게 빛나는 하늘색(2026-10-24 요청). 🔴 밝은 하늘색(#0ea5e9) 위 흰 글자는 2.8:1 이라 버튼에
+   못 쓴다. 글자가 올라가는 accent 는 한 단계 깊게(흰 글자 5.3:1 · 연한 바탕 위 5.0:1), 글자 없는 선·막대(accent-2 · 그라데이션)에
+   밝은 하늘색을 써서 빛나는 느낌을 낸다. */
+:root[data-theme="sky"] {
+	--bg: #f3f9fd;
+	--border: #dcebf5;
+	--accent: #0b6fb5;
+	--accent-hover: #085a94;
+	--accent-soft: #f0f9ff;
+	--accent-line: #a8dcf7;
+	--accent-2: #38bdf8;
+	--brand-gradient: linear-gradient(90deg, #7dd3fc 0%, #38bdf8 50%, #22d3ee 100%);
+}
+
+/* 바이올렛 — 로고의 보라 쪽. 흰 글자 6.0:1. */
+:root[data-theme="violet"] {
+	--accent: #6a4cc9;
+	--accent-hover: #573aae;
+	--accent-soft: #f2effc;
+	--accent-line: #d6ccf5;
+	--accent-2: #4f8fd9;
 }
 
 * {
@@ -83,17 +164,17 @@ img {
 }
 
 .page-title {
-	font-size: 22px;
+	font-size: 24px;
 	margin: 0;
 }
 
 .page-count {
 	color: var(--text-muted);
-	font-size: 13px;
+	font-size: 15px;
 }
 
 .section-title {
-	font-size: 16px;
+	font-size: 18px;
 	margin: 28px 0 12px;
 }
 
@@ -128,7 +209,7 @@ img {
 }
 
 .login__title {
-	font-size: 18px;
+	font-size: 20px;
 	margin: 0 0 4px;
 	text-align: center;
 }
@@ -136,7 +217,7 @@ img {
 .login__error {
 	margin: 0;
 	color: var(--danger);
-	font-size: 13px;
+	font-size: 15px;
 }
 
 .field {
@@ -146,7 +227,7 @@ img {
 }
 
 .field__label {
-	font-size: 13px;
+	font-size: 15px;
 	color: var(--text-muted);
 }
 
@@ -154,7 +235,7 @@ img {
 	padding: 9px 11px;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	font-size: 14px;
+	font-size: 16px;
 	background: var(--surface);
 	color: var(--text);
 }
@@ -169,12 +250,12 @@ img {
 .notice {
 	margin: 0 0 16px;
 	padding: 11px 14px;
-	background: #fff8e6;
-	border: 1px solid #f0dca8;
+	background: var(--warn-bg);
+	border: 1px solid var(--warn-line);
 	border-radius: var(--radius);
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.6;
-	color: #6b5518;
+	color: var(--warn-ink);
 }
 
 /* 거절 토스트 — 화면 맨 위에 띠로 뜬다(2026-09-17, components/DeniedToast).
@@ -189,10 +270,10 @@ img {
 	justify-content: center;
 	gap: 14px;
 	padding: 11px 16px;
-	background: #fff8e6;
-	border-bottom: 1px solid #f0dca8;
+	background: var(--warn-bg);
+	border-bottom: 1px solid var(--warn-line);
 	box-shadow: 0 2px 10px rgb(20 24 28 / 10%);
-	color: #6b5518;
+	color: var(--warn-ink);
 	font-size: 13px;
 	line-height: 1.6;
 	animation: toast-in 160ms ease-out;
@@ -203,7 +284,7 @@ img {
 	background: none;
 	font-size: 18px;
 	line-height: 1;
-	color: #6b5518;
+	color: var(--warn-ink);
 	opacity: 0.7;
 	cursor: pointer;
 	padding: 0 2px;
@@ -238,12 +319,12 @@ img {
 .table {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: 14px;
+	font-size: 16px;
 }
 
 .table th {
 	text-align: left;
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 	color: var(--text-muted);
 	padding: 10px 16px;
@@ -269,23 +350,23 @@ img {
 	display: inline-block;
 	padding: 2px 8px;
 	border-radius: 999px;
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 }
 
 .tag--rejected {
-	background: #fbeaea;
-	color: #a02620;
+	background: var(--danger-soft);
+	color: var(--danger-ink);
 }
 
 .button--small {
 	padding: 4px 10px;
-	font-size: 13px;
+	font-size: 15px;
 }
 
 .button--danger {
 	color: var(--danger);
-	border-color: #f0cfcd;
+	border-color: var(--danger-line);
 }
 
 .button--danger:hover:not(:disabled) {
@@ -392,46 +473,10 @@ img {
 	font-weight: 600;
 }
 
+/* 밝게 하지 않고 어둡게 한다 — 블루를 밝히면 흰 글자 대비가 4.5:1 아래로 내려간다. */
 .sm-go:hover:not(:disabled) {
-	filter: brightness(1.08);
-}
-
-/* 랭킹 한 줄. 제목·근거·액션이 한눈에 들어오도록 세로 여백을 줄인다. */
-.sm-item {
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	padding: 12px 14px;
-	margin-bottom: 8px;
-}
-
-.sm-item__head {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	flex-wrap: wrap;
-}
-
-.sm-item__rank {
-	font-weight: 700;
-	font-size: 15px;
-	min-width: 28px;
-}
-
-/* 한 줄이 1200px 를 가로지르면 눈이 다음 줄 첫머리를 못 찾는다. 읽기 폭을 제한한다. */
-.sm-item__title {
-	margin: 8px 0 2px;
-	font-size: 14px;
-	line-height: 1.5;
-	max-width: 76ch;
-}
-
-.sm-item__reason {
-	margin: 0;
-	color: var(--text-muted);
-	font-size: 13px;
-	line-height: 1.5;
-	max-width: 76ch;
+	background: var(--accent-hover);
+	border-color: var(--accent-hover);
 }
 
 .sm-score {
@@ -439,7 +484,7 @@ img {
 	color: #fff;
 	border-radius: 999px;
 	padding: 1px 9px;
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 }
 
@@ -447,13 +492,13 @@ img {
 	border: 1px solid var(--border);
 	border-radius: 999px;
 	padding: 1px 9px;
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--text-muted);
 }
 
 .sm-meta {
 	color: var(--text-muted);
-	font-size: 13px;
+	font-size: 15px;
 }
 
 /* 거르개 칩 — 질문 목록과 공개 탭이 같이 쓴다. 한쪽만 고치면 두 화면의 거르개가 달라 보인다. */
@@ -470,7 +515,7 @@ img {
 	color: var(--text-muted);
 	padding: 4px 11px;
 	font: inherit;
-	font-size: 13px;
+	font-size: 15px;
 	cursor: pointer;
 	white-space: nowrap;
 }
@@ -495,7 +540,7 @@ img {
 /* 누르면 다른 탭으로 가는 배지. 글자만 바뀌면 누를 수 있는 줄 모른다. */
 .sm-badge--link {
 	color: var(--accent);
-	border-color: #b7d6c5;
+	border-color: var(--accent-line);
 	text-decoration: none;
 }
 
@@ -516,7 +561,7 @@ img {
 .sm-fold > summary {
 	cursor: pointer;
 	font-weight: 600;
-	font-size: 14px;
+	font-size: 16px;
 	user-select: none;
 }
 
@@ -528,61 +573,6 @@ img {
 	margin-bottom: 12px;
 	padding-bottom: 10px;
 	border-bottom: 1px solid var(--border);
-}
-
-/* 단계 — 번호를 붙여 순서를 드러낸다. 앞 단계가 안 끝나면 다음 버튼이 비활성화되므로
-   "지금 뭘 눌러야 하나"가 화면만 보고 정해진다. */
-.sm-step {
-	display: flex;
-	gap: 12px;
-	align-items: flex-start;
-	padding: 12px 14px;
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	margin-bottom: 6px;
-}
-
-.sm-step--done {
-	border-color: var(--accent);
-}
-
-.sm-step--next {
-	box-shadow: 0 0 0 2px var(--accent) inset;
-}
-
-.sm-step__no {
-	flex: 0 0 26px;
-	height: 26px;
-	border-radius: 50%;
-	display: grid;
-	place-items: center;
-	font-size: 13px;
-	font-weight: 700;
-	background: var(--bg);
-	color: var(--text-muted);
-	border: 1px solid var(--border);
-}
-
-.sm-step--done .sm-step__no {
-	background: var(--accent);
-	border-color: var(--accent);
-	color: #fff;
-}
-
-.sm-step__body {
-	flex: 1;
-	min-width: 0;
-}
-
-.sm-step__title {
-	font-weight: 600;
-	font-size: 14px;
-}
-
-/* 제목 줄 아래의 넓은 내용(여러 줄 입력칸 등). */
-.sm-step__extra {
-	margin-top: 10px;
 }
 
 /* 프롬프트·원본 응답 본문.
@@ -601,9 +591,90 @@ img {
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	font-size: 12px;
+	font-size: 14px;
 	line-height: 1.5;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 	tab-size: 2;
+}
+
+/* 색상 고르기 — 로그아웃 왼쪽. 테마가 늘어나도 자리를 더 먹지 않게 눌러야 펼쳐진다. */
+.sm-theme {
+	position: relative;
+}
+
+.sm-theme__toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.sm-theme__dot {
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+}
+
+/* 여백 메뉴의 그림 — 바깥 틀 안의 막대가 여백만큼 좁아진다. */
+.sm-theme__gutter {
+	display: inline-flex;
+	align-items: center;
+	width: 18px;
+	height: 12px;
+	border: 1px solid var(--text-muted);
+	border-radius: 2px;
+	flex-shrink: 0;
+}
+
+.sm-theme__gutter > span {
+	flex: 1;
+	height: 6px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+.sm-theme__menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	z-index: 40;
+	min-width: 180px;
+	margin: 0;
+	padding: 6px;
+	list-style: none;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	box-shadow: 0 10px 28px rgb(20 24 28 / 14%);
+}
+
+.sm-theme__item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 9px 10px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	font: inherit;
+	font-size: 15px;
+	color: var(--text);
+	text-align: left;
+	cursor: pointer;
+}
+
+.sm-theme__item:hover,
+.sm-theme__item:focus-visible {
+	background: var(--bg);
+	outline: none;
+}
+
+.sm-theme__check {
+	margin-left: auto;
+	color: var(--accent);
+	font-weight: 700;
 }

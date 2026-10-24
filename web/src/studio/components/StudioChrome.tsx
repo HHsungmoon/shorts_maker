@@ -1,20 +1,19 @@
 import type { ReactNode } from "react";
 import { useAuth } from "../AuthContext";
+import { ThemePicker } from "./ThemePicker";
 import { REPO_NAME } from "../../shared/brand";
 import { STAGE_LABEL } from "../useStudioJob";
 import type { StudioJob } from "../useStudioJob";
 import type { ShortsStatus } from "../types";
 
-// 두 화면(홈 · 영상)이 함께 쓰는 머리와 배너. 잡 상태 자체는 useStudioJob 이 들고 있다.
+// 화면들이 함께 쓰는 머리와 배너. 잡 상태 자체는 useStudioJob 이 들고 있다.
+// 영상 화면은 머리 대신 상단바(SourceBar)를 쓰고 배너만 가져간다.
 
 function elapsed(since: string): string {
 	return `${Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 1000))}초`;
 }
 
-/**
- * 페이지 머리. 제목 왼쪽에 무엇을 두느냐만 화면마다 다르고(홈은 없음, 영상은 목록으로 돌아가기)
- * 오른쪽 로그아웃은 같다.
- */
+/** 페이지 머리(홈 · 프롬프트). 제목 옆 버튼만 화면마다 다르고 오른쪽 로그아웃은 같다. */
 export function StudioHead({
 	title,
 	count,
@@ -31,6 +30,7 @@ export function StudioHead({
 			{count && <span className="page-count">{count}</span>}
 			<span className="sm-actions sm-actions--end">
 				{children}
+				<ThemePicker />
 				{authRequired && (
 					<button type="button" className="button button--small" onClick={signOut}>
 						로그아웃
@@ -45,9 +45,12 @@ export function StudioHead({
 export function StudioBanners({
 	status,
 	studio,
+	readonlyNotice = true,
 }: {
 	status: { data: ShortsStatus | null; error: Error | null };
 	studio: StudioJob;
+	/** 보기 전용 안내를 여기서 띄울까. 영상 화면은 상단바가 늘 보여주므로 끈다. */
+	readonlyNotice?: boolean;
 }) {
 	const { job, jobBusy, foreignJob, error, notice } = studio;
 	const { canAct } = useAuth();
@@ -55,7 +58,7 @@ export function StudioBanners({
 		<>
 			{/* 🔴 늘 보이게 둔다. 접어 두면 "왜 버튼이 안 먹지" 가 되고, 그게 심사 중에 일어나면
 			    제품이 고장 난 것으로 보인다. */}
-			{!canAct && (
+			{readonlyNotice && !canAct && (
 				<div className="notice">
 					보기 전용으로 로그인했습니다. 화면은 전부 볼 수 있고 실행·발행·수정만 막혀 있습니다.
 				</div>

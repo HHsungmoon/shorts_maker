@@ -308,7 +308,7 @@ export function saveStandard(body: string): Promise<PromptStandard> {
  */
 export function patchSource(
 	sourceId: number,
-	patch: { title?: string; context?: string; youtubeId?: string },
-): Promise<{ id: number; title: string; context: string | null; youtube_id: string | null }> {
+	patch: { title?: string; context?: string; youtubeId?: string; sttTerms?: string[] },
+): Promise<{ id: number; title: string; context: string | null; youtube_id: string | null; stt_terms: string[] }> {
 	return request(`/api/sources/${sourceId}`, { method: "PATCH", body: patch });
 }

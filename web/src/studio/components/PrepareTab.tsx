@@ -1,12 +1,32 @@
-import { useEffect, useState } from "react";
-import { createChunk, draftOverview, patchSource, publishSource, runSegment, runStt } from "../api";
-import { Step } from "./Step";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import {
+	createChunk,
+	draftOverview,
+	fetchUtterances,
+	patchSource,
+	publishSource,
+	runSegment,
+	runStt,
+} from "../api";
 import { time } from "../../shared/format";
+import { Modal } from "../../shared/Modal";
 import type { SourceView } from "../SourcePage";
+import type { ShortsUtterance } from "../types";
+
+/** 위 단계 표시가 데려가는 자리. 단계마다 아래에 같은 id 의 칸이 있다. */
+const STEP_IDS = ["prep-source", "prep-range", "prep-stt", "prep-segments"] as const;
 
 /**
  * 영상 준비 탭 — 1~4단계. 영상당 한 번 하고 다시 볼 일이 없어서 매일 쓰는 질문 탭과
  * 자리를 나눴다.
+ *
+ * 🔴 **한 페이지에 위에서 아래로** 놓는다(개선안 C1·C2·C3 종합, 2026-10-24). 맨 위 단계 표시를
+ * 누르면 그 단계 칸으로 **내려간다** — 눌러서 내용이 바뀌는 탭으로 만들면 "다른 단계는 어떻게
+ * 됐지" 를 보려고 계속 눌러 봐야 하고, 끝난 영상은 결국 아래 구간 타임라인만 본다.
+ *   - 단계 표시(C1): 넷이 한 줄. 끝난 것·지금 할 것이 한눈에 보인다
+ *   - 원본(C2): 왼쪽 이름 · 오른쪽 값의 설정 줄. 시청자 공개는 켜고 끄는 스위치다
+ *   - 주제 분할(C3): 원본 전체 길이 위에 구간을 그리고, 고른 구간의 설명과 전사를 아래에 펼친다
  */
 export function PrepareTab({ view }: { view: SourceView }) {
 	const {
@@ -22,11 +42,11 @@ export function PrepareTab({ view }: { view: SourceView }) {
 		hasChunks,
 		utterances,
 		sttDone,
-		coveredSec,
 		duration,
 		chunkStart,
 		chunkEnd,
 		segments,
+		clipBySegment,
 		nextStep,
 		editingRange,
 		rangeStart,
@@ -46,83 +66,152 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			? ((job.result as { context?: string } | null)?.context ?? null)
 			: null;
 
+	const done = [data !== null, hasChunks, sttDone, segments.length > 0];
+	const doneCount = done.filter(Boolean).length;
+	const steps = [
+		{ title: "원본", detail: data ? time(data.source.duration_sec ?? 0) : "불러오는 중…" },
+		{ title: "구간 추출", detail: hasChunks ? `${chunks.length}조각` : "범위를 정합니다" },
+		{ title: "음성 인식", detail: utterances > 0 ? `발화 ${utterances.toLocaleString()}` : "몇 분 걸립니다" },
+		{ title: "주제 분할", detail: segments.length > 0 ? `구간 ${segments.length}` : "전사를 주제로 나눕니다" },
+	];
+
+	// 마지막으로 성공한 음성 인식 호출. 무엇으로 돌렸는지(모델·언어·용어 힌트)가 여기 남아 있다.
+	// stageCalls 는 최근 것이 앞이다.
+	const lastStt = data?.stageCalls.find((c) => c.stage === "stt" && c.error === null) ?? null;
+	const maxPerMin = Math.max(
+		0,
+		...chunks.map((c) => c.utteranceCount / Math.max(1, (c.end_sec - c.start_sec) / 60)),
+	);
+
+	function goTo(index: number) {
+		document.getElementById(STEP_IDS[index])?.scrollIntoView({ behavior: "smooth", block: "start" });
+	}
+
 	return (
-		<>
-			<h2 className="section-title">
-				영상 준비 <span className="page-count">— 영상당 한 번만 하면 됩니다</span>
-			</h2>
+		<div className="sm-prep">
+			<div className="sm-prep__head">
+				<h2 className="sm-prep__title">영상 준비</h2>
+				<span className="sm-meta">
+					영상당 한 번 · 4단계 중 {doneCount}단계 끝남
+					{doneCount === 4 && " — 질문에 답할 수 있습니다"}
+				</span>
+			</div>
 
-			<Step
-				no={1}
-				title="원본"
-				done={data !== null}
-				next={nextStep === 1}
-				detail={
-					data ? `${data.source.title} · ${time(data.source.duration_sec ?? 0)}` : "불러오는 중…"
-				}
-				actions={
-					data && (
-						<>
-							{/* 🔴 임베드 id 가 없으면 시청자가 영상을 못 본다. 발행 자체는 막지 않는다 —
-							    질문만 받는 영상이 있을 수 있어서, 경고만 하고 판단은 사람에게 맡긴다. */}
-							{!data.source.youtube_id && (
-								<span className="sm-meta">임베드 불가 (유튜브 id 없음)</span>
-							)}
-							<span className="sm-meta">
-								{data.source.published ? "시청자에게 공개됨" : "비공개"}
+			{/* 단계 표시(C1). 누르면 아래 그 단계 칸으로 내려간다. */}
+			<nav className="sm-steps" aria-label="준비 단계">
+				{steps.map((step, index) => {
+					const isDone = done[index];
+					const isNext = nextStep === index + 1;
+					return (
+						<button
+							key={step.title}
+							type="button"
+							className={`sm-steps__item${isDone ? " sm-steps__item--done" : ""}${isNext ? " sm-steps__item--next" : ""}`}
+							onClick={() => goTo(index)}
+						>
+							<span className="sm-steps__no" aria-hidden="true">
+								{isDone ? "✓" : index + 1}
 							</span>
-							<button
-								type="button"
-								className="button button--small"
-								disabled={jobBusy || data.source.status !== "DONE"}
-								onClick={() =>
-									act(async () => {
-										await publishSource(data.source.id, !data.source.published);
-										reload();
-									})
-								}
-							>
-								{data.source.published ? "공개 내리기" : "시청자에게 공개"}
-							</button>
-							{data.source.published && (
-								<a
-									className="button button--small"
-									href={`/watch/${data.source.id}`}
-									target="_blank"
-									rel="noreferrer"
+							<span className="sm-steps__text">
+								<span className="sm-steps__title">{step.title}</span>
+								<span className="sm-steps__detail">{isNext ? "지금 할 차례" : step.detail}</span>
+							</span>
+						</button>
+					);
+				})}
+			</nav>
+
+			{/* 원본 | 구간 추출·음성 인식 — 두 칸이 나란히, 주제 분할은 그 아래 폭 전체(2026-10-24).
+			    구간 추출과 음성 인식은 한 번 돌고 나면 볼 것이 적어서 한 칸에 모았다. 주제 분할이 이 탭의 본체다. */}
+			<div className="sm-prep__top">
+			{/* 1 · 원본 (C2) ------------------------------------------------------------ */}
+			<section id={STEP_IDS[0]} className="sm-prep__card">
+				<StepHead no={1} title="원본" done={done[0]} next={nextStep === 1}>
+					{data && `${time(data.source.duration_sec ?? 0)} · ${data.source.channel ?? "채널 모름"}`}
+				</StepHead>
+				{data && (
+					<>
+						<div className="sm-prep__row">
+							<div className="sm-prep__label">
+								시청자 공개
+								<span className="sm-meta">끄면 시청자 화면에서 사라집니다</span>
+							</div>
+							<div className="sm-prep__value sm-actions">
+								<button
+									type="button"
+									role="switch"
+									aria-checked={data.source.published}
+									aria-label="시청자 공개"
+									className={`sm-switch${data.source.published ? " sm-switch--on" : ""}`}
+									disabled={jobBusy || data.source.status !== "DONE"}
+									onClick={() =>
+										act(async () => {
+											await publishSource(data.source.id, !data.source.published);
+											reload();
+										})
+									}
 								>
-									시청자 화면 열기
-								</a>
-							)}
-						</>
-					)
-				}
-			/>
+									<span className="sm-switch__knob" />
+								</button>
+								<span>{data.source.published ? "공개 중" : "비공개"}</span>
+								{/* 🔴 임베드 id 가 없으면 시청자가 영상을 못 본다. 발행 자체는 막지 않는다 —
+								    질문만 받는 영상이 있을 수 있어서, 경고만 하고 판단은 사람에게 맡긴다. */}
+								{!data.source.youtube_id && (
+									<span className="sm-prep__warn">유튜브 id 가 없어 시청자가 원본을 못 봅니다</span>
+								)}
+								{data.source.published && (
+									<a
+										className="sm-actions--end"
+										href={`/watch/${data.source.id}`}
+										target="_blank"
+										rel="noreferrer"
+									>
+										시청자 화면 열기 ↗
+									</a>
+								)}
+							</div>
+						</div>
+						<SourceInfoEditor
+							key={data.source.id}
+							sourceId={data.source.id}
+							savedTitle={data.source.title}
+							savedYoutubeId={data.source.youtube_id}
+							savedContext={data.source.context}
+							disabled={jobBusy}
+							onSaved={reload}
+							// 구간 요약이 있어야 개요를 쓸 재료가 있다(pipeline/overview.py 머리 주석).
+							canDraft={segments.length > 0}
+							onDraft={() => submit(() => draftOverview(data.source.id))}
+							draftedContext={overviewDraft}
+						/>
+					</>
+				)}
+			</section>
 
-			{/* 원본 정보(제목·유튜브 id·개요). 단계가 아니라서 번호를 주지 않는다 — 비어 있어도 다음으로 갈 수 있다. */}
-			{data && (
-				<SourceInfoEditor
-					key={data.source.id}
-					sourceId={data.source.id}
-					savedTitle={data.source.title}
-					savedYoutubeId={data.source.youtube_id}
-					savedContext={data.source.context}
-					disabled={jobBusy}
-					onSaved={reload}
-					// 구간 요약이 있어야 개요를 쓸 재료가 있다(pipeline/overview.py 머리 주석).
-					canDraft={segments.length > 0}
-					onDraft={() => submit(() => draftOverview(data.source.id))}
-					draftedContext={overviewDraft}
-				/>
-			)}
-
-			<Step
-				no={2}
-				title="구간 추출"
-				done={hasChunks}
-				next={nextStep === 2}
-				detail={
-					editingRange ? (
+			{/* 2·3 · 구간 추출 · 음성 인식 --------------------------------------------- */}
+			<section id={STEP_IDS[1]} className="sm-prep__card">
+				<StepHead no={2} title="구간 추출" done={done[1]} next={nextStep === 2}>
+					{hasChunks && !editingRange
+						? `${time(chunkStart)} ~ ${time(chunkEnd)} · ${chunks.length}조각`
+						: "분석할 범위를 정합니다"}
+					{data && hasChunks && !editingRange && (
+						/* 누르면 바로 다시 뽑지 않는다. 범위를 먼저 펼쳐 사람이 확인하게 한다 —
+						   이 버튼 하나로 전사·구간·클립이 통째로 날아가기 때문이다. */
+						<button
+							type="button"
+							className="button button--small sm-actions--end"
+							disabled={jobBusy || sourceBusy}
+							onClick={() => {
+								setRange({ start: chunkStart, end: chunkEnd });
+								setRangeOpen(true);
+							}}
+						>
+							다시 추출
+						</button>
+					)}
+				</StepHead>
+				{data && editingRange && (
+					<div className="sm-prep__body sm-actions">
 						<span className={`sm-range${rangeValid ? "" : " sm-range--invalid"}`}>
 							<TimeField
 								label="시작"
@@ -139,161 +228,625 @@ export function PrepareTab({ view }: { view: SourceView }) {
 								{duration > 0 ? `영상 전체 ${time(duration)}` : "길이를 아직 모릅니다"}
 							</span>
 						</span>
-					) : (
-						`${time(chunkStart)} ~ ${time(chunkEnd)} · 총 ${Math.round(coveredSec / 60)}분 · 분석 준비됨`
-					)
-				}
-				actions={
-					data && (
-						<>
+						{!rangeValid && (
+							<span className="sm-meta">시작이 끝보다 앞서고, 끝이 영상 길이 안이어야 합니다</span>
+						)}
+						<span className="sm-actions sm-actions--end">
 							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
-							{editingRange && !rangeValid && (
-								<span className="sm-meta">시작이 끝보다 앞서고, 끝이 영상 길이 안이어야 합니다</span>
-							)}
-							{editingRange ? (
-								<>
-									<button
-										type="button"
-										className={`button button--small${nextStep === 2 ? " sm-go" : ""}`}
-										disabled={jobBusy || sourceBusy || !rangeValid}
-										onClick={() => {
-											setRangeOpen(false);
-											// 영상 전체면 범위를 아예 빼고 보낸다 — 화면의 끝값은 초 단위로 반올림한
-											// 값이라 실으면 마지막 1초 미만이 잘린다. 비우면 서버가 실제 길이를 쓴다.
-											const whole = rangeStart === 0 && rangeEnd === duration;
-											submit(() =>
-												createChunk(data.source.id, {
-													...(whole ? {} : { startSec: rangeStart, endSec: rangeEnd }),
-													replace: hasChunks,
-												}),
-											);
-										}}
-									>
-										추출
-									</button>
-									{hasChunks && (
-										<button
-											type="button"
-											className="button button--small"
-											onClick={() => {
-												setRangeOpen(false);
-												setRange(null);
-											}}
-										>
-											취소
-										</button>
-									)}
-								</>
-							) : (
-								/* 누르면 바로 다시 뽑지 않는다. 범위를 먼저 펼쳐 사람이 확인하게 한다 —
-								   이 버튼 하나로 전사·구간·클립이 통째로 날아가기 때문이다. */
+							{hasChunks && (
 								<button
 									type="button"
 									className="button button--small"
-									disabled={jobBusy || sourceBusy}
 									onClick={() => {
-										setRange({ start: chunkStart, end: chunkEnd });
-										setRangeOpen(true);
+										setRangeOpen(false);
+										setRange(null);
 									}}
 								>
-									다시 추출
+									취소
 								</button>
 							)}
-						</>
-					)
-				}
-			/>
-
-			{/* 조각 수는 고를 수 있는 값이 아니라 처리 방식이다(메모리 상한). 평소엔 접어 두고,
-			    전사가 한 조각에서 멈췄을 때 어디서 멈췄는지 여기서 확인한다. */}
-			{hasChunks && (
-				<details className="sm-fold sm-chunks">
-					<summary>{chunks.length}조각으로 나눠 처리 · 상세</summary>
-					<ul>
-						{chunks.map((chunk) => (
-							<li key={chunk.id}>
-								<span className="sm-chunks__idx">#{chunk.idx + 1}</span>
-								<span>
-									{time(chunk.start_sec)} ~ {time(chunk.end_sec)}
-								</span>
-								<span className="sm-meta">
-									{Math.round((chunk.end_sec - chunk.start_sec) / 60)}분 · 발화 {chunk.utteranceCount}개
-								</span>
-							</li>
-						))}
-					</ul>
-				</details>
-			)}
-
-			<Step
-				no={3}
-				title="음성 인식"
-				done={sttDone}
-				next={nextStep === 3}
-				detail={utterances > 0 ? `발화 ${utterances}개` : "몇 분 걸립니다"}
-				actions={
-					data &&
-					hasChunks && (
-						<>
-							<select
-								className="field__input"
-								style={{ width: 110 }}
-								value={language ?? data?.source.language ?? ""}
-								onChange={(e) => setLanguage(e.target.value)}
-								aria-label="음성 언어"
-							>
-								{Object.entries(status.data?.languages ?? { ko: "한국어", en: "영어" }).map(
-									([code, label]) => (
-										<option key={code} value={code}>
-											{label}
-										</option>
-									),
-								)}
-								<option value="">자동 감지</option>
-							</select>
-							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
-							{/* 전사가 중간에 끊겼으면 force 를 끄고 부른다 — 서버가 끝난 데를 건너뛰고 이어서 간다.
-							    여기서 force 를 켜면 이미 몇 분씩 걸려 끝낸 전사를 통째로 다시 돌린다. */}
 							<button
 								type="button"
-								className={`button button--small${nextStep === 3 ? " sm-go" : ""}`}
-								disabled={jobBusy || sourceBusy}
-								onClick={() =>
+								className={`button button--small${nextStep === 2 ? " sm-go" : ""}`}
+								disabled={jobBusy || sourceBusy || !rangeValid}
+								onClick={() => {
+									setRangeOpen(false);
+									// 영상 전체면 범위를 아예 빼고 보낸다 — 화면의 끝값은 초 단위로 반올림한
+									// 값이라 실으면 마지막 1초 미만이 잘린다. 비우면 서버가 실제 길이를 쓴다.
+									const whole = rangeStart === 0 && rangeEnd === duration;
 									submit(() =>
-										runStt(data.source.id, language ?? data.source.language ?? null, sttDone),
-									)
-								}
+										createChunk(data.source.id, {
+											...(whole ? {} : { startSec: rangeStart, endSec: rangeEnd }),
+											replace: hasChunks,
+										}),
+									);
+								}}
 							>
-								{sttDone ? "다시" : utterances > 0 ? "이어서" : "실행"}
+								추출
 							</button>
-						</>
-					)
-				}
-			/>
+						</span>
+					</div>
+				)}
 
-			<Step
-				no={4}
-				title="주제 분할"
-				done={segments.length > 0}
-				next={nextStep === 4}
-				detail={segments.length > 0 ? `구간 ${segments.length}개` : "전사를 주제 단위로 나눕니다"}
-				actions={
-					data && (
-						<>
-							{sourceBusy && <span className="sm-meta">처리 중 — 끝나면 다시 누를 수 있습니다</span>}
+				{hasChunks && !editingRange && (
+					<RangeOverview
+						chunks={chunks}
+						duration={duration > 0 ? duration : chunkEnd}
+						calls={data?.stageCalls ?? []}
+					/>
+				)}
+
+				<div id={STEP_IDS[2]} className="sm-prep__sub">
+					<StepHead no={3} title="음성 인식" done={done[2]} next={nextStep === 3}>
+						{utterances > 0 ? `발화 ${utterances.toLocaleString()}` : "조각마다 몇 분씩 걸립니다"}
+						{data && hasChunks && (
+							<span className="sm-actions sm-actions--end">
+								<select
+									className="field__input sm-prep__lang"
+									value={language ?? data.source.language ?? ""}
+									onChange={(e) => setLanguage(e.target.value)}
+									aria-label="음성 언어"
+								>
+									{Object.entries(status.data?.languages ?? { ko: "한국어", en: "영어" }).map(
+										([code, label]) => (
+											<option key={code} value={code}>
+												{label}
+											</option>
+										),
+									)}
+									<option value="">자동 감지</option>
+								</select>
+								{/* 전사가 중간에 끊겼으면 force 를 끄고 부른다 — 서버가 끝난 데를 건너뛰고 이어서 간다.
+								    여기서 force 를 켜면 이미 몇 분씩 걸려 끝낸 전사를 통째로 다시 돌린다. */}
+								<button
+									type="button"
+									className={`button button--small${nextStep === 3 ? " sm-go" : ""}`}
+									disabled={jobBusy || sourceBusy}
+									onClick={() =>
+										submit(() => runStt(data.source.id, language ?? data.source.language ?? null, sttDone))
+									}
+								>
+									{sttDone ? "다시 인식" : utterances > 0 ? "이어서" : "실행"}
+								</button>
+							</span>
+						)}
+					</StepHead>
+				</div>
+
+				{data && (
+					<SttSettings
+						call={lastStt}
+						languages={status.data?.languages ?? {}}
+						terms={data.source.stt_terms ?? []}
+						transcribed={utterances > 0}
+						onSave={(terms) =>
+							act(async () => {
+								await patchSource(data.source.id, { sttTerms: terms });
+								reload();
+							})
+						}
+					/>
+				)}
+
+				{/* 조각별 말의 밀도. 처리 조각은 메모리 상한 때문에 나눈 것이지만, 나눠 놓고 보면 어느 시간대에
+				    말이 몰렸는지(분당 발화)가 보인다 — 질의응답처럼 짧은 말이 오가는 시간대가 튄다. 전사가 한
+				    조각에서 멈췄으면 그 조각만 "대기" 로 남아 어디서 멈췄는지도 여기서 보인다. */}
+				{hasChunks && (
+					<ul className="sm-prep__chunks" aria-label="조각별 발화">
+						{chunks.map((chunk) => {
+							const minutes = Math.max(1, (chunk.end_sec - chunk.start_sec) / 60);
+							const perMin = chunk.utteranceCount / minutes;
+							return (
+								<li key={chunk.id}>
+									<span className="sm-prep__chunktime">
+										{time(chunk.start_sec)}–{time(chunk.end_sec)}
+									</span>
+									<span className="sm-prep__chunkbar">
+										<span style={{ width: maxPerMin > 0 ? `${(perMin / maxPerMin) * 100}%` : 0 }} />
+									</span>
+									<span className="sm-prep__chunkstate">
+										{chunk.utteranceCount > 0
+											? `${chunk.utteranceCount.toLocaleString()} · 분당 ${perMin.toFixed(0)}`
+											: "대기"}
+									</span>
+								</li>
+							);
+						})}
+					</ul>
+				)}
+			</section>
+			</div>
+
+			{/* 4 · 주제 분할 (C3) ------------------------------------------------------- */}
+			<section id={STEP_IDS[3]} className="sm-prep__card">
+				<StepHead no={4} title="주제 분할" done={done[3]} next={nextStep === 4}>
+					{segments.length > 0 ? `구간 ${segments.length}개` : "전사를 주제 단위로 나눕니다"}
+					{data && (
+						<span className="sm-actions sm-actions--end">
+							{sourceBusy && <span className="sm-meta">처리 중</span>}
 							<button
 								type="button"
 								className={`button button--small${nextStep === 4 ? " sm-go" : ""}`}
 								disabled={jobBusy || sourceBusy || utterances === 0 || !geminiReady}
 								onClick={() => submit(() => runSegment(data.source.id))}
 							>
-								{segments.length > 0 ? "다시" : "실행"}
+								{segments.length > 0 ? "다시 분할" : "실행"}
 							</button>
-						</>
-					)
-				}
-			/>
-		</>
+						</span>
+					)}
+				</StepHead>
+				{segments.length > 0 && (
+					<SegmentTimeline
+						segments={segments}
+						chunks={chunks}
+						duration={duration > 0 ? duration : chunkEnd}
+						clipSegments={new Set(clipBySegment.keys())}
+					/>
+				)}
+			</section>
+		</div>
+	);
+}
+
+/** 단계 칸의 머리. 번호(또는 ✓) · 이름 · 한 줄 요약 · 오른쪽 끝 동작. */
+function StepHead({
+	no,
+	title,
+	done,
+	next,
+	children,
+}: {
+	no: number;
+	title: string;
+	done: boolean;
+	next: boolean;
+	children?: ReactNode;
+}) {
+	return (
+		<div className={`sm-prep__stephead${next ? " sm-prep__stephead--next" : ""}`}>
+			<span className={`sm-steps__no${done ? " sm-steps__no--done" : ""}`} aria-hidden="true">
+				{done ? "✓" : no}
+			</span>
+			<h3 className="sm-prep__steptitle">{title}</h3>
+			<span className="sm-prep__stepdetail">{children}</span>
+		</div>
+	);
+}
+
+type StageCall = NonNullable<SourceView["data"]>["stageCalls"][number];
+
+/**
+ * 구간 추출이 한 일 — 원본을 어떻게 나눴고, 경계를 어디로 당겼나.
+ *
+ * 조각 수는 메모리 상한이 정하고(ingest.plan_chunks) 경계는 **균등 지점 근처의 무음 한가운데**로
+ * 당긴다. 고정 길이로 자르면 문장 한복판에서 끊겨 그 발화가 양쪽 조각에서 반토막 난다. 당긴 거리가
+ * 곧 "문장을 안 자르려고 얼마나 움직였나" 다 — 근처에 무음이 없으면 0 이고 균등 지점에서 그대로 잘린다.
+ * 균등 지점은 화면이 같은 규칙(범위 ÷ 조각 수)으로 되짚어 낸다 — 저장된 값이 아니다.
+ */
+function RangeOverview({
+	chunks,
+	duration,
+	calls,
+}: {
+	chunks: SourceView["chunks"];
+	duration: number;
+	calls: StageCall[];
+}) {
+	const start = chunks[0].start_sec;
+	const end = chunks[chunks.length - 1].end_sec;
+	const step = (end - start) / chunks.length;
+	const at = (sec: number) => `${Math.min(100, Math.max(0, (sec / duration) * 100))}%`;
+	// stageCalls 는 최근 것이 앞이다.
+	const latency = (stage: string) => calls.find((c) => c.stage === stage && c.error === null)?.latency_ms ?? null;
+	const download = latency("download");
+	const extract = latency("chunk");
+	const seconds = (ms: number) => (ms < 10_000 ? `${(ms / 1000).toFixed(1)}초` : time(ms / 1000));
+
+	return (
+		<div className="sm-range-ov">
+			<div className="sm-range-ov__bar" aria-hidden="true">
+				{chunks.map((chunk, index) => (
+					<span
+						key={chunk.id}
+						className="sm-range-ov__chunk"
+						style={{ left: at(chunk.start_sec), width: at(chunk.end_sec - chunk.start_sec) }}
+					>
+						{index + 1}
+					</span>
+				))}
+			</div>
+			<ul className="sm-range-ov__cuts" aria-label="조각 경계">
+				{chunks.slice(1).map((chunk, index) => {
+					const shift = chunk.start_sec - (start + step * (index + 1));
+					const moved = Math.abs(shift) >= 0.5;
+					return (
+						<li key={chunk.id}>
+							<span className="sm-range-ov__cutat">{time(chunk.start_sec)}</span>
+							{moved ? (
+								<span>
+									무음으로 {shift > 0 ? "+" : "−"}
+									{Math.abs(shift).toFixed(0)}초 당김
+								</span>
+							) : (
+								<span className="sm-meta">근처에 무음이 없어 균등 지점에서 자름</span>
+							)}
+						</li>
+					);
+				})}
+			</ul>
+			{(download !== null || extract !== null) && (
+				<p className="sm-meta sm-range-ov__took">
+					{download !== null && `원본 받기 ${seconds(download)}`}
+					{download !== null && extract !== null && " · "}
+					{extract !== null && `오디오 추출·분할 ${seconds(extract)}`}
+				</p>
+			)}
+		</div>
+	);
+}
+
+/** 서버 상한(stt.TERMS_MAX_CHARS)과 같은 값. whisper 는 힌트의 마지막 223 토큰만 쓴다 — 한글 글자당 약 0.95 토큰. */
+const TERMS_LIMIT = 200;
+
+/**
+ * 음성 인식 설정 — 마지막으로 무엇으로 돌렸나(모델 · 언어 · 무음 거르기) + 용어 힌트.
+ *
+ * 🔴 용어 힌트(whisper 의 initial_prompt)는 학교 이름·전형 이름·고등학교 이름 같은 고유명사를 미리
+ * 알려 줘서 잘못 알아듣는 일을 줄인다. 전사 품질을 가장 크게 가르는 값인데 예전에는 CLI 로만 넣을 수
+ * 있었다(2026-10-24 화면으로 옮김). 목록은 원본에 저장되고 **다음 음성 인식부터** 붙는다.
+ *
+ * 칸에는 한 줄만 보이고, 넣고 빼는 일은 [용어 힌트] 버튼의 모달에서 한다(2026-10-24 사용자 피드백) —
+ * 칩마다 × 를 달았더니 훑어보다 잘못 눌러 빠지는 자리가 되었고, 용어가 늘면 칸이 길어져 아래 조각
+ * 목록을 밀어냈다.
+ */
+function SttSettings({
+	call,
+	languages,
+	terms,
+	transcribed,
+	onSave,
+}: {
+	call: StageCall | null;
+	languages: Record<string, string>;
+	terms: string[];
+	/** 전사가 한 번이라도 돌았나. 그래야 "바꾼 힌트는 다시 인식해야 붙는다" 가 말이 된다. */
+	transcribed: boolean;
+	onSave: (terms: string[]) => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const params = call?.params ?? {};
+	const language = typeof params.language === "string" ? params.language : null;
+	const usedHint = typeof params.initial_prompt === "string" ? params.initial_prompt : "";
+	const model = call?.model?.replace(/^faster-whisper:/, "whisper ") ?? "—";
+	const changed = transcribed && terms.join(", ") !== usedHint;
+
+	// 한 줄에 다 못 들어간 칩 수. 줄이 넘친 칩을 세어 "외 N개" 로 적는다 — 폭은 화면마다 달라 미리 알 수 없다.
+	const line = useRef<HTMLUListElement>(null);
+	const [hidden, setHidden] = useState(0);
+	useLayoutEffect(() => {
+		const list = line.current;
+		if (!list) {
+			setHidden(0);
+			return;
+		}
+		const count = () => {
+			const items = Array.from(list.children) as HTMLElement[];
+			const top = items[0]?.offsetTop ?? 0;
+			setHidden(items.filter((item) => item.offsetTop > top).length);
+		};
+		count();
+		const observer = new ResizeObserver(count);
+		observer.observe(list);
+		return () => observer.disconnect();
+	}, [terms]);
+
+	return (
+		<div className="sm-stt">
+			<dl className="sm-stt__facts">
+				<div>
+					<dt>모델</dt>
+					<dd>{model}</dd>
+				</div>
+				<div>
+					<dt>언어</dt>
+					<dd>
+						{call === null
+							? "—"
+							: language === null || language === "auto"
+								? "자동 감지"
+								: (languages[language] ?? language)}
+					</dd>
+				</div>
+				<div>
+					<dt>무음 거르기</dt>
+					<dd>{call === null ? "—" : params.vad_filter === true ? "켬" : "끔"}</dd>
+				</div>
+				<div>
+					<dt>마지막 인식</dt>
+					<dd>{call === null ? "아직 없음" : new Date(call.created_at).toLocaleDateString("ko-KR")}</dd>
+				</div>
+			</dl>
+
+			<div className="sm-stt__hint">
+				<button type="button" className="sm-stt__open" onClick={() => setEditing(true)}>
+					용어 힌트
+					<span className="sm-stt__opencount">{terms.length}</span>
+				</button>
+				{terms.length > 0 ? (
+					<div className="sm-stt__line">
+						<ul className="sm-stt__terms" ref={line}>
+							{terms.map((term) => (
+								<li key={term}>{term}</li>
+							))}
+						</ul>
+						{hidden > 0 && (
+							<button type="button" className="sm-linkbtn sm-stt__more" onClick={() => setEditing(true)}>
+								외 {hidden}개
+							</button>
+						)}
+					</div>
+				) : (
+					<p className="sm-meta sm-stt__empty">
+						없이 인식합니다. 학교·전형·고등학교 이름처럼 잘못 알아듣기 쉬운 고유명사를 넣어 두세요.
+					</p>
+				)}
+			</div>
+			{changed && (
+				<p className="sm-stt__changed">
+					지난 인식과 힌트가 다릅니다. 바꾼 힌트는 <b>다시 인식</b>해야 전사에 반영됩니다.
+				</p>
+			)}
+
+			{editing && (
+				<TermsModal
+					terms={terms}
+					onClose={() => setEditing(false)}
+					onSave={(next) => {
+						onSave(next);
+						setEditing(false);
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+/**
+ * 용어 힌트 넣고 빼기. 모달 안에서 고친 목록은 [저장] 을 눌러야 한 번에 나간다 — 넣고 뺄 때마다
+ * 저장하면 열 개를 정리하는 동안 요청이 열 번 나가고, 중간에 상한에 걸리면 절반만 저장된다.
+ */
+function TermsModal({
+	terms,
+	onClose,
+	onSave,
+}: {
+	terms: string[];
+	onClose: () => void;
+	onSave: (terms: string[]) => void;
+}) {
+	const [list, setList] = useState(terms);
+	const [draft, setDraft] = useState("");
+	const length = list.join(", ").length;
+	const over = length > TERMS_LIMIT;
+	const dirty = list.join("\n") !== terms.join("\n");
+
+	// 붙여넣은 "숭문고, 광성고" 는 둘로 넣는다. 이미 있는 것은 건너뛴다.
+	function add() {
+		const fresh: string[] = [];
+		for (const raw of draft.split(/[,，、\n]/)) {
+			const term = raw.replace(/\s+/g, " ").trim();
+			if (term && !list.includes(term) && !fresh.includes(term)) {
+				fresh.push(term);
+			}
+		}
+		setList([...list, ...fresh]);
+		setDraft("");
+	}
+
+	return (
+		<Modal
+			open
+			title="용어 힌트"
+			onClose={onClose}
+			subhead="학교·전형·고등학교 이름처럼 잘못 알아듣기 쉬운 고유명사를 음성 인식에 미리 알려 줍니다. 다음 음성 인식부터 붙습니다."
+		>
+			<div className="sm-terms">
+				<form
+					className="sm-terms__add"
+					onSubmit={(event) => {
+						event.preventDefault();
+						add();
+					}}
+				>
+					<input
+						className="sm-prep__input"
+						type="text"
+						value={draft}
+						maxLength={200}
+						placeholder="예) 숭문고, 광성고 — 쉼표로 여러 개를 한 번에"
+						aria-label="추가할 용어"
+						autoFocus
+						onChange={(event) => setDraft(event.target.value)}
+					/>
+					<button type="submit" className="button sm-go" disabled={draft.trim() === ""}>
+						추가
+					</button>
+				</form>
+
+				<div className="sm-terms__head">
+					<b>{list.length}개</b>
+					<span className={`sm-stt__count${over ? " sm-stt__count--over" : ""}`}>
+						{length} / {TERMS_LIMIT}자
+					</span>
+				</div>
+				{list.length === 0 ? (
+					<p className="sm-meta">아직 없습니다.</p>
+				) : (
+					<ul className="sm-terms__list">
+						{list.map((term) => (
+							<li key={term}>
+								<span>{term}</span>
+								<button
+									type="button"
+									className="button button--small"
+									onClick={() => setList(list.filter((t) => t !== term))}
+								>
+									빼기
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				{over && (
+					<p className="sm-prep__warn">
+						{TERMS_LIMIT}자를 넘었습니다. 넘치면 음성 인식이 앞쪽 용어를 말없이 버리므로 저장할 수 없습니다.
+					</p>
+				)}
+
+				<div className="sm-terms__foot">
+					<button type="button" className="button" onClick={onClose}>
+						취소
+					</button>
+					<button
+						type="button"
+						className="button sm-go"
+						disabled={!dirty || over}
+						onClick={() => onSave(list)}
+					>
+						저장
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
+/**
+ * 구간 타임라인(C3) — 원본 전체 길이 위에 구간을 길이대로 늘어놓는다. 하나를 누르면 아래에
+ * 설명과 전사가 펼쳐진다.
+ *
+ * 구간 66개를 막대로만 두면 2초짜리는 2px 라 누를 수가 없다. 그래서 막대 아래에 **목록**도 둔다 —
+ * 막대는 "어디쯤 · 얼마나 긴가" 를 보는 자리, 목록은 고르는 자리다. 둘이 같은 선택을 나눠 쓴다.
+ */
+function SegmentTimeline({
+	segments,
+	chunks,
+	duration,
+	clipSegments,
+}: {
+	segments: SourceView["segments"];
+	chunks: SourceView["chunks"];
+	duration: number;
+	/** 클립이 만들어진 구간 번호. 막대와 목록에 표시한다. */
+	clipSegments: Set<number>;
+}) {
+	const [selected, setSelected] = useState<number>(() => segments[0]?.idx ?? 0);
+	// 조각별 전사. 구간을 고를 때 그 조각만 한 번 읽고 들고 있는다 — 3천 줄을 처음부터 다 받지 않는다.
+	const [lines, setLines] = useState<Record<number, ShortsUtterance[]>>({});
+	const [loadError, setLoadError] = useState<string | null>(null);
+
+	const segment = segments.find((s) => s.idx === selected) ?? segments[0];
+	const chunkId = segment?.chunk_id;
+
+	useEffect(() => {
+		if (chunkId === undefined || lines[chunkId]) {
+			return;
+		}
+		let alive = true;
+		fetchUtterances(chunkId)
+			.then((rows) => alive && setLines((prev) => ({ ...prev, [chunkId]: rows })))
+			.catch((e: unknown) => alive && setLoadError(e instanceof Error ? e.message : String(e)));
+		return () => {
+			alive = false;
+		};
+	}, [chunkId, lines]);
+
+	if (!segment) {
+		return null;
+	}
+	const at = (sec: number) => `${Math.min(100, Math.max(0, (sec / duration) * 100))}%`;
+	const transcript = (lines[segment.chunk_id] ?? []).filter(
+		(u) => u.idx >= segment.start_utterance_idx && u.idx <= segment.end_utterance_idx,
+	);
+
+	return (
+		<div className="sm-segs">
+			<div className="sm-segs__bar" role="group" aria-label="구간 타임라인">
+				{segments.map((s) => (
+					<button
+						key={s.id}
+						type="button"
+						tabIndex={-1}
+						className={`sm-segs__seg${s.idx === segment.idx ? " sm-segs__seg--on" : ""}${clipSegments.has(s.idx) ? " sm-segs__seg--clip" : ""}${s.excluded_by ? " sm-segs__seg--out" : ""}`}
+						style={{ left: at(s.start_sec), width: at(s.end_sec - s.start_sec) }}
+						title={`#${s.idx + 1} ${time(s.start_sec)} · ${s.description ?? ""}`}
+						onClick={() => setSelected(s.idx)}
+					/>
+				))}
+				{/* 처리 조각 경계. 전사가 조각마다 따로 돌아서, 경계에서 문장이 어긋나면 여기서 보인다. */}
+				{chunks.slice(1).map((c) => (
+					<span key={c.id} className="sm-segs__cut" style={{ left: at(c.start_sec) }} aria-hidden="true" />
+				))}
+			</div>
+			<div className="sm-segs__ticks" aria-hidden="true">
+				<span>0:00</span>
+				<span>{time(duration / 2)}</span>
+				<span>{time(duration)}</span>
+			</div>
+			<p className="sm-segs__legend">
+				<span className="sm-segs__key sm-segs__key--clip" /> 클립이 나온 구간
+				<span className="sm-segs__key sm-segs__key--cut" /> 처리 조각 경계
+			</p>
+
+			<div className="sm-segs__split">
+				<ol className="sm-segs__list" aria-label="구간 목록">
+					{segments.map((s) => (
+						<li key={s.id}>
+							<button
+								type="button"
+								className={`sm-segs__row${s.idx === segment.idx ? " sm-segs__row--on" : ""}`}
+								aria-current={s.idx === segment.idx ? "true" : undefined}
+								onClick={() => setSelected(s.idx)}
+							>
+								<span className="sm-segs__time">{time(s.start_sec)}</span>
+								<span className="sm-segs__desc">{s.description ?? "설명 없음"}</span>
+								{clipSegments.has(s.idx) && <span className="sm-segs__dot" aria-label="클립 있음" />}
+							</button>
+						</li>
+					))}
+				</ol>
+
+				<article className="sm-segs__detail" aria-live="polite">
+					<header className="sm-segs__dhead">
+						<b>
+							#{segment.idx + 1} · {time(segment.start_sec)}–{time(segment.end_sec)}
+						</b>
+						<span className="sm-meta">{Math.round(segment.end_sec - segment.start_sec)}초</span>
+						{clipSegments.has(segment.idx) && <span className="sm-bar__chip sm-bar__chip--ok">클립 있음</span>}
+						{segment.excluded_by && (
+							<span className="tag tag--rejected" title={segment.excluded_reason ?? undefined}>
+								제외됨
+							</span>
+						)}
+					</header>
+					{segment.description && <p className="sm-segs__ddesc">{segment.description}</p>}
+					<div className="sm-segs__text">
+						{loadError ? (
+							<p className="state state--error">전사를 읽지 못했습니다 ({loadError})</p>
+						) : transcript.length === 0 ? (
+							<p className="sm-meta">전사를 불러오는 중…</p>
+						) : (
+							transcript.map((u) => (
+								<p key={u.idx}>
+									<span className="sm-segs__ut">{time(u.start_sec)}</span>
+									{u.text}
+								</p>
+							))
+						)}
+					</div>
+				</article>
+			</div>
+		</div>
 	);
 }
 
@@ -424,74 +977,89 @@ function SourceInfoEditor({
 	};
 
 	return (
-		<section className="sm-context">
-			<span className="sm-step__title">원본 정보</span>{" "}
-			<span className="sm-meta">제목은 시청자 화면에 그대로 보입니다.</span>
-			<input
-				className="sm-context__line"
-				type="text"
-				value={title}
-				maxLength={300}
-				placeholder="영상 제목"
-				onChange={(event) => setTitleDraft(event.target.value)}
-			/>
-			<label className="sm-context__field">
-				<span className="sm-meta">
-					유튜브 id — 시청자 화면의 플레이어가 이 값으로 원본을 엽니다. 주소를 통째로 붙여넣어도 됩니다.
+		<>
+			<label className="sm-prep__row">
+				<span className="sm-prep__label">
+					제목
+					<span className="sm-meta">시청자 화면에 그대로 보입니다</span>
 				</span>
-				<input
-					className="sm-context__line"
-					type="text"
-					value={youtubeId}
-					maxLength={200}
-					placeholder="예) MVqTWMg4n0o 또는 https://youtu.be/MVqTWMg4n0o"
-					onChange={(event) => setYoutubeDraft(event.target.value)}
-				/>
+				<span className="sm-prep__value">
+					<input
+						className="sm-prep__input"
+						type="text"
+						value={title}
+						maxLength={300}
+						placeholder="영상 제목"
+						onChange={(event) => setTitleDraft(event.target.value)}
+					/>
+					{emptyTitle && <span className="sm-prep__warn">제목은 비울 수 없습니다</span>}
+				</span>
 			</label>
-			<label className="sm-context__field">
-				<span className="sm-meta">
-					영상 개요 — 이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 반영되고, 이미 나눈
-					구간에는 반영되지 않습니다.{" "}
-					{/* 🔴 눌리지 않는 버튼을 두지 않는다 — 이유를 말할 기회가 없어 "고장난 화면" 으로 읽힌다.
-					    재료가 없을 때는 버튼 대신 무엇이 필요한지를 적는다. */}
-					{canDraft ? (
-						<button
-							type="button"
-							className="button button--small"
-							onClick={onDraft}
-							disabled={disabled || busy}
-						>
-							AI로 초안 쓰기
-						</button>
-					) : (
-						<span className="sm-meta">— 주제 분할을 끝내면 AI가 초안을 써 줍니다</span>
-					)}
+			<label className="sm-prep__row">
+				<span className="sm-prep__label">
+					유튜브 id
+					<span className="sm-meta">시청자 화면의 플레이어가 이 값으로 원본을 엽니다. 주소를 붙여넣어도 됩니다</span>
 				</span>
-				<textarea
-					rows={2}
-					value={context}
-					maxLength={600}
-					placeholder="예) 쏘카 개발·프로덕트·데이터 직군 채용설명회. CTO 발표와 본부장 패널 토크."
-					onChange={(event) => setContextDraft(event.target.value)}
-				/>
+				<span className="sm-prep__value">
+					<input
+						className="sm-prep__input"
+						type="text"
+						value={youtubeId}
+						maxLength={200}
+						placeholder="예) MVqTWMg4n0o 또는 https://youtu.be/MVqTWMg4n0o"
+						onChange={(event) => setYoutubeDraft(event.target.value)}
+					/>
+				</span>
 			</label>
-			<div className="sm-actions">
-				<span className={`sm-meta${over ? " pr-counter--over" : ""}`}>
-					개요 {context.trim().length} / 500자
-				</span>
-				<span className="sm-actions sm-actions--end">
-					{emptyTitle && <span className="sm-meta">제목은 비울 수 없습니다</span>}
-					<button
-						type="button"
-						className="button button--small"
-						onClick={save}
-						disabled={disabled || busy || over || emptyTitle || !dirty}
-					>
-						{busy ? "저장 중…" : "원본 정보 저장"}
-					</button>
+			<div className="sm-prep__row">
+				<label className="sm-prep__label" htmlFor={`overview-${sourceId}`}>
+					영상 개요
+					<span className="sm-meta">
+						이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 붙고, 이미 나눈 구간에는 반영되지 않습니다
+					</span>
+				</label>
+				<span className="sm-prep__value">
+					<textarea
+						id={`overview-${sourceId}`}
+						className="sm-prep__input"
+						rows={3}
+						value={context}
+						maxLength={600}
+						placeholder="예) 2027학년도 입학전형 설명회. 수시·정시 전형별 기준과 학사제도를 안내한다."
+						onChange={(event) => setContextDraft(event.target.value)}
+					/>
+					<span className="sm-actions">
+						<span className={`sm-meta${over ? " pr-counter--over" : ""}`}>
+							{context.trim().length} / 500자
+						</span>
+						{/* 🔴 눌리지 않는 버튼을 두지 않는다 — 이유를 말할 기회가 없어 "고장난 화면" 으로 읽힌다.
+						    재료가 없을 때는 버튼 대신 무엇이 필요한지를 적는다. */}
+						{canDraft ? (
+							<button
+								type="button"
+								className="button button--small"
+								onClick={onDraft}
+								disabled={disabled || busy}
+							>
+								AI로 초안 쓰기
+							</button>
+						) : (
+							<span className="sm-meta">주제 분할을 끝내면 AI가 초안을 써 줍니다</span>
+						)}
+					</span>
 				</span>
 			</div>
-			{error && <p className="state state--error">{error}</p>}
-		</section>
+			<div className="sm-prep__save">
+				{error && <p className="state state--error">{error}</p>}
+				<button
+					type="button"
+					className={`button button--small${dirty ? " sm-go" : ""}`}
+					onClick={save}
+					disabled={disabled || busy || over || emptyTitle || !dirty}
+				>
+					{busy ? "저장 중…" : dirty ? "원본 정보 저장" : "고친 내용 없음"}
+				</button>
+			</div>
+		</>
 	);
 }

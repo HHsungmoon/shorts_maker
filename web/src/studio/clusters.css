@@ -22,7 +22,7 @@
 
 .sm-clusters__title {
 	margin: 0;
-	font-size: 15px;
+	font-size: 17px;
 }
 
 .sm-qempty {
@@ -30,7 +30,7 @@
 	padding: 32px 0;
 	text-align: center;
 	color: var(--text-muted);
-	font-size: 14px;
+	font-size: 16px;
 }
 
 /* 왼쪽 목록 · 오른쪽 상세 --------------------------------------------------
@@ -38,11 +38,14 @@
  * 🔴 예전에는 질문마다 후보·클립을 통째로 펼쳐 세로로 쌓아서 질문 하나가 화면 몇 개 길이였다.
  * 목록은 상태를 훑는 자리, 상세는 한 질문을 끝내는 자리로 가른다(2026-09-14).
  *
- * 목록이 5, 상세가 7 이다. 반반으로 두면 상세의 대사 전문이 페이지 폭(1100px)의 절반에서
- * 한 줄 30자 안팎으로 접혀 후보 셋을 비교해 읽기 어렵다. 질문 문장은 두 줄이면 끝난다. */
+ * 목록은 300~400px 로 묶는다. 질문 문장은 두 줄이면 끝나고, 남는 폭은 상세가 다시 둘로 갈라
+ * 질문과 후보 대사를 나란히 놓는 데 쓴다(개선안 B1, 2026-10-24). 예전 5:7 비율로는 상세가
+ * 1440 화면에서 630px 라 둘로 가를 수 없었다. */
 .sm-qsplit {
 	display: grid;
-	grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+	/* 화면 전체 폭을 쓰게 되면서(2026-10-24) 목록도 넓은 화면에서 조금 넓어진다. 400 을 넘기면 질문
+	   문장이 한 줄로 늘어나 줄끼리 높이가 들쭉날쭉해진다. */
+	grid-template-columns: clamp(300px, 24%, 400px) minmax(0, 1fr);
 	align-items: start;
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
@@ -57,8 +60,9 @@
 	/* 🔴 상세가 길어도(후보 셋의 대사 전문) 목록은 따라 올라가지 않는다 — 다음 질문으로
 	   넘어가려고 맨 위까지 되감는 일을 없앤다. */
 	position: sticky;
-	top: 0;
-	max-height: 100vh;
+	/* 🔴 영상 화면은 상단바가 화면에 붙어 있다. 0 에 붙이면 목록 머리가 그 밑으로 숨는다. */
+	top: var(--sm-bar-h, 0px);
+	max-height: calc(100vh - var(--sm-bar-h, 0px));
 	overflow-y: auto;
 	background: var(--bg);
 }
@@ -78,7 +82,7 @@
 .sm-qlist__empty {
 	margin: 0;
 	padding: 24px 16px;
-	font-size: 13px;
+	font-size: 15px;
 	color: var(--text-muted);
 	text-align: center;
 }
@@ -122,12 +126,12 @@
 
 .sm-qitem--on,
 .sm-qitem--on:hover {
-	background: var(--surface);
+	background: var(--accent-soft);
 	border-left-color: var(--accent);
 }
 
 .sm-qitem__text {
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.5;
 	/* 두 줄에서 자른다. 목록은 훑는 자리라 줄마다 높이가 들쭉날쭉하면 눈이 줄을 놓친다.
 	   전문은 오른쪽 제목에 있다. */
@@ -141,11 +145,40 @@
 	font-weight: 600;
 }
 
+/* 좋아요 막대. 숫자는 옆에 그대로 있고 이건 줄끼리 견주는 용도라 짧고 옅게 둔다. */
+.sm-qitem__bar {
+	flex: 0 0 56px;
+	height: 5px;
+	border-radius: 3px;
+	background: var(--border);
+	overflow: hidden;
+}
+
+.sm-qitem__bar > span {
+	display: block;
+	height: 100%;
+	background: var(--accent);
+}
+
+/* 고를 후보가 기다리고 있다 — 이 줄이 지금 손댈 일이라는 표시다. */
+.sm-qitem__cands {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.sm-qlist__keys {
+	margin: 0;
+	padding: 10px 16px;
+	border-top: 1px solid var(--border);
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
 .sm-qitem__meta {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--text-muted);
 }
 
@@ -153,7 +186,7 @@
 	margin: 0;
 	padding: 12px 16px;
 	border-top: 1px solid var(--border);
-	font-size: 13px;
+	font-size: 15px;
 }
 
 .sm-qlist__loose > summary {
@@ -167,7 +200,7 @@
 
 .sm-qlist__loose .sm-meta {
 	margin: 6px 0 0;
-	font-size: 12px;
+	font-size: 14px;
 }
 
 .sm-qdetail {
@@ -179,16 +212,19 @@
 	align-self: stretch;
 	min-height: 360px;
 	scroll-margin-top: 12px;
+	/* 상세 안의 질문 · 답 두 단은 화면 폭이 아니라 **이 칸의 폭**으로 정한다 — 목록과 여백이
+	   폭을 먼저 가져가서 화면 폭으로는 상세가 얼마나 남는지 알 수 없다. */
+	container-type: inline-size;
 }
 
 .sm-qdetail__error {
 	margin: 0 0 14px;
 	padding: 9px 12px;
-	border: 1px solid #f0cfcd;
+	border: 1px solid var(--danger-line);
 	border-radius: var(--radius);
-	background: #fdf3f2;
+	background: var(--danger-soft);
 	color: var(--danger);
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.5;
 }
 
@@ -197,7 +233,7 @@
 	margin: 0;
 	padding: 28px 0;
 	text-align: center;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.6;
 	color: var(--text-muted);
 }
@@ -223,10 +259,120 @@
 
 /* 상세 — 질문 하나 -------------------------------------------------------- */
 
-.sm-qd {
+.sm-qd,
+.sm-qd__info,
+.sm-qd__work {
 	display: flex;
 	flex-direction: column;
 	gap: 16px;
+	min-width: 0;
+}
+
+/* 넓으면 질문(왼쪽)과 답 후보(오른쪽)를 나란히. 질문 쪽은 붙어 있다 — 후보 셋의 대사를 내려 읽는
+   동안 시청자가 실제로 뭐라고 물었는지가 옆에 남아야 "이게 그 답인가" 를 판단한다. */
+/* 640: 질문 쪽(240)을 빼고 후보 쪽이 400px 는 있어야 대사가 한 줄 25자 넘게 읽힌다.
+   1440 화면이면 상세 안쪽이 840px 안팎이라 넉넉하고, 1100 아래로 내려가면 위아래로 쌓인다. */
+@container (min-width: 640px) {
+	.sm-qd {
+		display: grid;
+		/* 질문 칸을 32% → 40% 로 넓혔다(2026-10-24 사용자 피드백) — 시청자 원문이 줄마다 접혀 읽기 어려웠다.
+		   후보 쪽은 그만큼 줄지만 1440 화면에서 500px 안팎은 남는다. */
+		grid-template-columns: clamp(280px, 40%, 480px) minmax(0, 1fr);
+		align-items: start;
+		gap: 0;
+	}
+
+	.sm-qd__info {
+		position: sticky;
+		top: calc(var(--sm-bar-h, 0px) + 16px);
+		padding-right: 20px;
+	}
+
+	.sm-qd__work {
+		padding-left: 20px;
+		border-left: 1px solid var(--border);
+		min-height: 100%;
+	}
+}
+
+/* 원본 어디서 왔나 — 전체 길이 위의 조각 자리(개선안 B3). */
+.sm-tl {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px 14px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+
+.sm-tl__head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.sm-tl__bar {
+	position: relative;
+	height: 18px;
+	border-radius: 4px;
+	background: var(--border);
+}
+
+/* 20초짜리 조각은 2시간 막대에서 0.3% 다. 최소 폭이 없으면 안 보인다. */
+.sm-tl__mark {
+	position: absolute;
+	top: 0;
+	height: 100%;
+	min-width: 4px;
+	border-radius: 2px;
+	background: var(--accent);
+}
+
+.sm-tl__ticks {
+	display: flex;
+	justify-content: space-between;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-tl__parts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.sm-tl__part {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface);
+	font: inherit;
+	font-size: 14px;
+	font-variant-numeric: tabular-nums;
+	color: var(--text);
+	cursor: pointer;
+}
+
+.sm-tl__part:hover {
+	border-color: var(--accent);
+}
+
+.sm-tl__no {
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 12px;
+	font-weight: 700;
 }
 
 .sm-qd__head {
@@ -246,7 +392,7 @@
 
 .sm-qd__title {
 	margin: 0;
-	font-size: 18px;
+	font-size: 20px;
 	line-height: 1.45;
 	font-weight: 700;
 	overflow-wrap: anywhere;
@@ -259,7 +405,7 @@
 	border-left: 3px solid var(--border);
 	background: var(--bg);
 	border-radius: 0 var(--radius) var(--radius) 0;
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.65;
 	color: var(--text-muted);
 }
@@ -271,7 +417,7 @@
 
 .sm-qd__asked > summary {
 	cursor: pointer;
-	font-size: 13px;
+	font-size: 15px;
 	color: var(--text-muted);
 	user-select: none;
 }
@@ -288,7 +434,7 @@
 
 .sm-qd__label {
 	margin: 0;
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 	letter-spacing: 0.02em;
 	color: var(--text-muted);
@@ -300,7 +446,7 @@
 	margin: 8px 0 0;
 	padding-left: 22px;
 	color: var(--text-muted);
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.7;
 }
 
@@ -328,7 +474,7 @@
 	border: 1px solid var(--border);
 	border-radius: 999px;
 	padding: 1px 9px;
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--text-muted);
 	white-space: nowrap;
 }
@@ -348,7 +494,7 @@
 
 .sm-status--declined,
 .sm-status--unanswerable {
-	border-color: #f0cfcd;
+	border-color: var(--danger-line);
 	color: var(--danger);
 }
 
@@ -383,7 +529,7 @@
 	border: 1px solid var(--accent);
 	border-radius: 999px;
 	padding: 1px 9px;
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 	color: var(--accent);
 	white-space: nowrap;
@@ -401,13 +547,13 @@
 	margin: 0;
 	padding-left: 22px;
 	color: var(--text-muted);
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.7;
 }
 
 .sm-cluster__note {
 	margin: 0;
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.6;
 	max-width: 76ch;
 	color: var(--text-muted);
@@ -420,7 +566,7 @@
 /* rank 가 왜 이렇게 잘랐는지. judge 소견보다 한 단계 옅게 — 판단 근거가 아니라 참고다. */
 .sm-cluster__reason {
 	margin: 0;
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.6;
 	color: var(--text-muted);
 	opacity: 0.85;
@@ -447,7 +593,7 @@
 	border-radius: 999px;
 	border: 1px solid var(--accent);
 	color: var(--accent);
-	font-size: 12px;
+	font-size: 14px;
 	font-weight: 600;
 }
 
@@ -459,7 +605,7 @@
 /* 점수는 머리글 오른쪽 끝. 관문 통과 여부(태그)보다 뒤에 읽혀야 한다. */
 .sm-cand__score {
 	margin-left: auto;
-	font-size: 13px;
+	font-size: 15px;
 	font-weight: 600;
 	font-variant-numeric: tabular-nums;
 	color: var(--text-muted);
@@ -467,7 +613,7 @@
 
 .sm-cands__lead {
 	margin: 0;
-	font-size: 13px;
+	font-size: 15px;
 	color: var(--text-muted);
 }
 
@@ -483,6 +629,28 @@
 	border-color: var(--accent);
 }
 
+/* 위 원본 막대가 지금 그리는 후보. 고른 것(테두리)과 섞이지 않게 바깥 고리로 표시한다. */
+.sm-cand--focused {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* 조각 길이의 비. 이어붙인 후보면 칸이 여럿이다. */
+.sm-cand__parts {
+	display: flex;
+	gap: 3px;
+	height: 5px;
+	margin-bottom: 8px;
+}
+
+.sm-cand__parts > span {
+	border-radius: 2px;
+	background: var(--accent);
+}
+
+.sm-cand__parts > span + span {
+	background: var(--accent-2);
+}
+
 .sm-cand__head {
 	display: flex;
 	align-items: center;
@@ -493,7 +661,7 @@
 
 .sm-cand__label {
 	font-weight: 600;
-	font-size: 14px;
+	font-size: 16px;
 }
 
 /* 🔴 대사. 읽으라고 놓은 것이므로 본문 크기로 두고 줄간격을 넉넉히 준다.
@@ -508,7 +676,7 @@
 
 .sm-cand__text {
 	margin: 0;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.65;
 	overflow-wrap: anywhere;
 }
@@ -517,14 +685,14 @@
 .sm-cand__bridge {
 	margin: 10px 0;
 	padding: 4px 0;
-	font-size: 12px;
+	font-size: 14px;
 	color: var(--text-muted);
 	border-top: 1px dashed var(--border);
 }
 
 .sm-cand__note {
 	margin: 8px 0 0;
-	font-size: 12px;
+	font-size: 14px;
 	line-height: 1.5;
 	color: var(--text-muted);
 }

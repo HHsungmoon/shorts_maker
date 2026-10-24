@@ -1,42 +1,295 @@
-/* 원본 미리보기와 구간 범위 입력. SourcePage 가 import 한다.
+/* 영상 화면의 틀(상단바 · 본문 · 미니 플레이어)과 탭별 조각. SourcePage 가 import 한다.
  *
  * 토큰(--surface, --border, --radius …)과 공통 클래스(.button, .sm-meta, .sm-fold)는
  * shared/styles.css 것을 그대로 쓴다 — 여기서 다시 정의하면 두 곳이 서로 다르게 늙는다.
  */
 
-/* 목록으로 돌아가기 ------------------------------------------------------ */
-
-/* 이 화면은 링크로 바로 열릴 수 있다 — 그때는 브라우저 뒤로가기에 돌아갈 데가 없다. */
-.sm-back {
-	display: inline-block;
-	margin-bottom: 10px;
-	font-size: 13px;
-	color: var(--text-muted);
-	text-decoration: none;
+/* 틀 — 상단바 · 본문 · 미니 플레이어 ----------------------------------------
+ *
+ * 🔴 예전에는 `.page`(1100px 가운데 정렬) 안에 제목 · 펼친 플레이어 · 탭 줄을 차례로 쌓아서 탭 줄이
+ * y≈700 에야 나왔다. 상단바로 줄이고 원본은 미니 플레이어로 뺐다(개선안 A2, 2026-10-24).
+ * 폭은 화면 전체를 쓴다 — 질문 화면이 목록 · 질문 · 후보 3단이라 가운데 1100px 로 묶으면 후보 대사가
+ * 좁은 칸에서 접힌다(2026-10-24 사용자 피드백). */
+.sm-shell {
+	/* 화면에 붙는 탭 줄의 높이(44 + 경계선 1). 안쪽의 sticky(질문 목록·질문 칸)가 이만큼 내려와
+	   붙어야 탭 줄 밑으로 숨지 않는다. 탭 줄 높이를 바꾸면 여기도 바꾼다. */
+	--sm-bar-h: 45px;
+	min-height: 100vh;
 }
 
-.sm-back:hover {
+/* 로고 줄과 영상 줄. 스크롤하면 올라간다 — 둘 다 한 번 보면 되는 정보라 세로를 계속 먹을 이유가 없다. */
+.sm-bar {
+	/* 맨 위 3px 띠가 로고 그라데이션이다. 화면에서 브랜드 색이 넓게 깔리는 곳은 여기와 켜진 탭 밑줄뿐이다. */
+	background: var(--brand-gradient) top / 100% 3px no-repeat, var(--surface);
+	padding: 3px 32px 0;
+}
+
+.sm-bar__brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 60px;
+}
+
+.sm-bar__home {
+	display: flex;
+	flex-shrink: 0;
+}
+
+.sm-bar__home img {
+	display: block;
+	height: 36px;
+	width: auto;
+}
+
+.sm-bar__home:focus-visible,
+.sm-bar__back:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 6px;
+}
+
+.sm-bar__account {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-bar__account .button {
+	white-space: nowrap;
+}
+
+/* 제목 줄부터 아래는 좌우 여백(--sm-gutter)을 더 받는다. 로고 줄은 받지 않는다 — 로고는 늘 왼쪽 끝이다. */
+.sm-bar__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 2px 0 10px;
+	margin-inline: var(--sm-gutter, 0px);
+}
+
+/* 영상 목록으로. 글자 없는 화살표라 누를 자리가 작아 보이지 않게 칸을 잡아 준다. */
+.sm-bar__back {
+	flex-shrink: 0;
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	margin-left: -6px;
+	border-radius: 6px;
+	color: var(--text-muted);
+}
+
+.sm-bar__back:hover {
+	background: var(--bg);
 	color: var(--text);
 }
 
-/* 원본 플레이어 ---------------------------------------------------------- */
-
-.sm-player {
-	/* 16:9. iframe 이 늦게 떠도 아래 단계 목록이 밀려 올라갔다 내려오지 않는다. */
-	aspect-ratio: 16 / 9;
-	/* 페이지 폭(1100px)을 다 먹으면 정작 눌러야 할 단계가 화면 밖으로 나간다. */
-	max-width: 720px;
-	background: #000;
-	border-radius: var(--radius);
+/* 강연 제목은 길다(60자 넘는 것도 흔하다). 한 줄에서 자르고 전문은 title 로 둔다. */
+.sm-bar__title {
+	margin: 0;
+	min-width: 0;
+	font-size: 22px;
+	white-space: nowrap;
 	overflow: hidden;
-	margin-bottom: 6px;
+	text-overflow: ellipsis;
 }
 
-.sm-player iframe {
-	width: 100%;
-	height: 100%;
-	border: 0;
+.sm-bar__meta {
+	flex-shrink: 0;
+	font-size: 15px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.sm-bar__chip {
+	flex-shrink: 0;
+	padding: 1px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-size: 13px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.sm-bar__chip--ok {
+	border-color: transparent;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 600;
+}
+
+/* 탭 줄 — 이것만 화면에 붙는다. 스크롤해도 탭과 "원본 보기" 가 남는다.
+   쓰는 빈도 순서다: 질문은 매일, 영상 준비는 영상당 한 번, 기록은 뭔가 이상할 때만. */
+.sm-bar__tabs {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	align-items: stretch;
+	gap: 4px;
+	height: 44px;
+	padding: 0 calc(32px + var(--sm-gutter, 0px));
+	background: var(--surface);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.sm-bar__tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 12px;
+	/* 비활성 탭도 같은 두께의 투명 밑줄을 갖는다 — 없으면 고를 때 글자가 위아래로 흔들린다. */
+	border-bottom: 2px solid transparent;
+	font-size: 16px;
+	color: var(--text-muted);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.sm-bar__tab:hover {
+	color: var(--text);
+}
+
+.sm-bar__tab--on {
+	/* 밑줄을 테두리가 아니라 배경으로 그린다 — border 는 그라데이션을 받지 못한다. 투명 테두리는 그대로
+	   두어 켜고 끌 때 글자 높이가 같다. */
+	background: var(--brand-gradient) bottom / 100% 2px no-repeat;
+	color: var(--text);
+	font-weight: 600;
+}
+
+/* 답을 기다리는 질문 수. 이 탭에 갈 이유가 곧 이 숫자라서 탭 이름 옆에 붙인다. */
+.sm-bar__badge {
+	padding: 0 7px;
+	border-radius: 999px;
+	background: var(--accent);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* 준비가 안 끝나면 질문에 답할 수 없다. 고장이 아니라 아직 안 한 일이라 알림 색이다. */
+.sm-bar__need {
+	padding: 0 7px;
+	border: 1px solid var(--warn-line);
+	border-radius: 999px;
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 13px;
+	font-weight: 400;
+}
+
+.sm-bar__end {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding-left: 12px;
+}
+
+.sm-bar__end .button {
+	white-space: nowrap;
+}
+
+.sm-bar__readonly {
+	padding: 2px 9px;
+	border: 1px solid var(--warn-line);
+	border-radius: 999px;
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 14px;
+	white-space: nowrap;
+	cursor: help;
+}
+
+.sm-shell__main {
+	padding: 24px calc(32px + var(--sm-gutter, 0px)) 64px;
+}
+
+/* 미니 플레이어 — 본문 위에 떠서 아무것도 밀어내지 않는다. */
+.sm-mini {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	z-index: 30;
+	width: 360px;
+	border-radius: 10px;
+	overflow: hidden;
+	background: #111;
+	box-shadow: 0 12px 32px rgb(0 0 0 / 25%);
+}
+
+.sm-mini iframe {
 	display: block;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 0;
+}
+
+.sm-mini__bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 8px 6px 12px;
+	font-size: 14px;
+	color: #e5e7eb;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-mini__close {
+	width: 32px;
+	height: 32px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: #e5e7eb;
+	font-size: 22px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.sm-mini__close:hover {
+	background: rgb(255 255 255 / 12%);
+}
+
+/* 좁은 화면 — 영상 줄이 넘치면 정보(메타·칩)를 먼저 버린다. 제목이 남는다. */
+@media (max-width: 1000px) {
+	.sm-bar__meta,
+	.sm-bar__chip {
+		display: none;
+	}
+}
+
+@media (max-width: 640px) {
+	.sm-bar,
+	.sm-bar__tabs {
+		padding: 0 16px;
+	}
+
+	.sm-bar__brand {
+		height: 52px;
+	}
+
+	.sm-bar__title {
+		font-size: 18px;
+	}
+
+	.sm-shell__main {
+		padding: 16px 16px 48px;
+	}
+
+	.sm-mini {
+		right: 12px;
+		bottom: 12px;
+		width: calc(100% - 24px);
+	}
 }
 
 /* 구간 범위 입력 ---------------------------------------------------------- */
@@ -65,7 +318,7 @@
 	background: var(--surface);
 	color: var(--text);
 	font: inherit;
-	font-size: 13px;
+	font-size: 15px;
 	text-align: right;
 }
 
@@ -78,173 +331,1208 @@
 	border-color: var(--danger);
 }
 
-/* 조각 상세 -------------------------------------------------------------- */
+/* 영상 준비 탭 — 단계 표시 · 단계 칸 넷(개선안 C1·C2·C3 종합, 2026-10-24) ------------ */
 
-/* 2단계 카드 바로 아래에 붙는다. 왼쪽 여백은 단계 번호(26px) + 간격(12px) 만큼이라
-   조각 목록이 단계 제목과 같은 세로선에서 시작한다. */
-.sm-chunks {
-	margin: -2px 0 6px 38px;
-	padding: 8px 14px;
+.sm-prep {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
 }
 
-.sm-chunks > summary {
-	font-weight: 400;
-	font-size: 13px;
+.sm-prep__head {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.sm-prep__title {
+	margin: 0;
+	font-size: 22px;
+}
+
+/* 단계 표시. 넷이 한 줄이고 누르면 아래 그 칸으로 내려간다. */
+.sm-steps {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 8px;
+	padding: 8px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+}
+
+.sm-steps__item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 14px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: none;
+	font: inherit;
+	color: var(--text);
+	text-align: left;
+	cursor: pointer;
+}
+
+.sm-steps__item:hover {
+	background: var(--bg);
+}
+
+.sm-steps__item:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+/* 단계 사이 잇는 선. 끝난 단계 뒤는 accent 로 이어진다. */
+.sm-steps__item + .sm-steps__item::before {
+	content: "";
+	position: absolute;
+	left: -8px;
+	top: 50%;
+	width: 8px;
+	height: 2px;
+	background: var(--border);
+}
+
+.sm-steps__item--done + .sm-steps__item::before {
+	background: var(--accent);
+}
+
+.sm-steps__item--next {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.sm-steps__no {
+	flex: 0 0 30px;
+	height: 30px;
+	display: grid;
+	place-items: center;
+	border-radius: 50%;
+	border: 1px solid var(--border);
+	background: var(--bg);
+	color: var(--text-muted);
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.sm-steps__item--done .sm-steps__no,
+.sm-steps__no--done {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: #fff;
+}
+
+.sm-steps__text {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.sm-steps__title {
+	font-weight: 600;
+	font-size: 16px;
+}
+
+.sm-steps__detail {
+	font-size: 14px;
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sm-steps__item--next .sm-steps__detail {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+/* 원본 | 구간 추출·음성 인식. 원본 쪽이 입력칸이 많아 조금 넓다. */
+.sm-prep__top {
+	display: grid;
+	grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
+	gap: 16px;
+	/* 두 칸의 테두리 높이를 맞춘다 — 짧은 쪽이 긴 쪽만큼 늘어난다(2026-10-24 사용자 피드백). */
+	align-items: stretch;
+}
+
+/* 한 칸 안의 둘째 단계(음성 인식). 단계 표시에서 눌러 내려오면 여기에 멈춘다. */
+.sm-prep__sub {
+	scroll-margin-top: calc(var(--sm-bar-h, 0px) + 16px);
+	border-top: 1px solid var(--border);
+}
+
+/* 단계 칸 하나. 단계 표시를 눌러 내려왔을 때 화면에 붙은 탭 줄 밑으로 숨지 않게 띄운다. */
+.sm-prep__card {
+	scroll-margin-top: calc(var(--sm-bar-h, 0px) + 16px);
+	padding: 4px 20px 16px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+}
+
+.sm-prep__stephead {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 12px;
+	padding: 14px 0;
+}
+
+.sm-prep__steptitle {
+	margin: 0;
+	font-size: 18px;
+}
+
+.sm-prep__stepdetail {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	min-width: 0;
+	font-size: 15px;
 	color: var(--text-muted);
 }
 
-.sm-chunks ul {
-	margin: 0;
-	padding: 0;
-	list-style: none;
-	font-size: 13px;
-	line-height: 1.8;
+.sm-prep__body {
+	padding: 4px 0 4px 42px;
 }
 
-.sm-chunks li {
+/* 원본 칸의 설정 줄 — 왼쪽 이름(설명 포함) · 오른쪽 값(C2). */
+.sm-prep__row {
+	display: grid;
+	grid-template-columns: 170px minmax(0, 1fr);
+	gap: 16px;
+	align-items: start;
+	padding: 16px 0;
+	border-top: 1px solid var(--border);
+}
+
+.sm-prep__label {
 	display: flex;
-	gap: 10px;
-	flex-wrap: wrap;
+	flex-direction: column;
+	gap: 2px;
+	font-weight: 600;
+	font-size: 16px;
 }
 
-.sm-chunks__idx {
-	min-width: 28px;
+.sm-prep__label .sm-meta {
+	font-weight: 400;
+	line-height: 1.5;
+}
+
+.sm-prep__value {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.sm-prep__value.sm-actions {
+	flex-direction: row;
+	min-height: 32px;
+}
+
+.sm-prep__input {
+	width: 100%;
+	padding: 9px 12px;
+	font: inherit;
+	font-size: 16px;
+	line-height: 1.5;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	resize: vertical;
+}
+
+.sm-prep__input:focus {
+	outline: 2px solid var(--accent);
+	outline-offset: -1px;
+}
+
+.sm-prep__warn {
+	font-size: 14px;
+	color: var(--danger);
+}
+
+.sm-prep__save {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 10px;
+	padding-top: 12px;
+	border-top: 1px solid var(--border);
+}
+
+.sm-prep__save .state {
+	margin: 0;
+}
+
+.sm-prep__lang {
+	width: auto;
+	padding: 5px 8px;
+}
+
+/* 켜고 끄는 스위치. 진짜 <button role="switch"> 다 — 키보드로도 켜진다. */
+.sm-switch {
+	position: relative;
+	flex-shrink: 0;
+	width: 44px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	border-radius: 999px;
+	background: #c3c8d4;
+	cursor: pointer;
+	transition: background 0.15s;
+}
+
+.sm-switch--on {
+	background: var(--accent);
+}
+
+.sm-switch:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.sm-switch:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.sm-switch__knob {
+	position: absolute;
+	top: 3px;
+	left: 3px;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	background: #fff;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+	transition: transform 0.15s;
+}
+
+.sm-switch--on .sm-switch__knob {
+	transform: translateX(20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.sm-switch,
+	.sm-switch__knob {
+		transition: none;
+	}
+}
+
+/* 음성 인식 칸의 조각별 진행. */
+.sm-prep__chunks {
+	margin: 0;
+	padding: 12px 0 4px;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.sm-prep__chunks li {
+	display: grid;
+	grid-template-columns: 130px minmax(0, 1fr) 130px;
+	align-items: center;
+	gap: 14px;
+	font-size: 14px;
+}
+
+.sm-prep__chunktime {
 	color: var(--text-muted);
 	font-variant-numeric: tabular-nums;
 }
 
-/* 새 클립 탭 ------------------------------------------------------------ */
+/* 분당 발화. 가장 빽빽한 조각이 100% 다. */
+.sm-prep__chunkbar {
+	height: 8px;
+	border-radius: 4px;
+	background: var(--bg);
+	overflow: hidden;
+}
 
-/* 탭 첫 줄. 질문 탭과 무엇이 다른 길인지를 여기서 한 번 말한다. */
-.sm-newclip__lead {
-	margin: 4px 0 14px;
-	font-size: 14px;
-	line-height: 1.7;
+.sm-prep__chunkbar > span {
+	display: block;
+	height: 100%;
+	border-radius: 4px;
+	background: var(--accent);
+}
+
+/* 음성 인식 설정 — 모델 · 언어 · 무음 거르기 · 용어 힌트. */
+.sm-stt {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	padding: 4px 0 12px;
+	border-bottom: 1px solid var(--border);
+}
+
+.sm-stt__facts {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 8px;
+	margin: 0;
+}
+
+.sm-stt__facts > div {
+	padding: 8px 10px;
+	background: var(--bg);
+	border-radius: var(--radius);
+	min-width: 0;
+}
+
+.sm-stt__facts dt {
+	font-size: 13px;
 	color: var(--text-muted);
 }
 
-/* 선정 기준 입력. 몇 문장짜리 요청이 흔해서 처음부터 세 줄을 주고, 쓰는 만큼 늘어난다. */
-.sm-criteria {
+.sm-stt__facts dd {
+	margin: 2px 0 0;
+	font-size: 15px;
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 용어 힌트 — 왼쪽 버튼 · 오른쪽 한 줄 미리보기. 넣고 빼기는 버튼의 모달에서 한다. */
+.sm-stt__hint {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	min-width: 0;
+}
+
+/* 이 칸에서 사람이 손대는 유일한 자리라 네모지고 크게 둔다. */
+.sm-stt__open {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 16px;
+	border: 1px solid var(--accent);
+	border-radius: var(--radius);
+	background: var(--surface);
+	font: inherit;
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--accent);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.sm-stt__open:hover {
+	background: var(--accent-soft);
+}
+
+.sm-stt__open:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.sm-stt__opencount {
+	min-width: 22px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--accent);
+	color: #fff;
+	font-size: 13px;
+	text-align: center;
+}
+
+.sm-stt__line {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+}
+
+/* 한 줄만. 넘친 칩은 감추고 옆에 "외 N개" 로 센다. */
+.sm-stt__terms {
+	flex: 1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+	height: 28px;
+	overflow: hidden;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-stt__terms li {
+	padding: 3px 10px;
+	border: 1px solid var(--accent-line);
+	border-radius: 999px;
+	background: var(--accent-soft);
+	font-size: 14px;
+	line-height: 20px;
+	color: var(--text);
+	white-space: nowrap;
+}
+
+.sm-stt__more {
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
+.sm-stt__count {
+	margin-left: auto;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-stt__count--over {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.sm-stt__empty {
+	margin: 0;
+}
+
+/* 용어 힌트 모달. */
+.sm-terms {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: min(520px, 80vw);
+}
+
+.sm-terms__add {
+	display: flex;
+	gap: 8px;
+}
+
+.sm-terms__head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 15px;
+}
+
+.sm-terms__list {
+	display: flex;
+	flex-direction: column;
+	max-height: 50vh;
+	overflow-y: auto;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sm-terms__list li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 8px 8px 14px;
+	font-size: 16px;
+}
+
+.sm-terms__list li + li {
+	border-top: 1px solid var(--border);
+}
+
+.sm-terms__foot {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	padding-top: 4px;
+}
+
+.sm-stt__changed {
+	margin: 0;
+	padding: 8px 12px;
+	border: 1px solid var(--warn-line);
+	border-radius: var(--radius);
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 14px;
+}
+
+/* 구간 추출이 한 일 — 조각 막대와 경계를 어디로 당겼나. */
+.sm-range-ov {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 0 0 14px;
+}
+
+.sm-range-ov__bar {
+	position: relative;
+	height: 28px;
+	border-radius: 6px;
+	background: var(--bg);
+}
+
+.sm-range-ov__chunk {
+	position: absolute;
+	top: 0;
+	height: 100%;
+	display: grid;
+	place-items: center;
+	border-right: 2px solid var(--surface);
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.sm-range-ov__chunk:nth-child(even) {
+	background: var(--accent-line);
+}
+
+.sm-range-ov__cuts {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-size: 14px;
+}
+
+.sm-range-ov__cuts li {
+	display: flex;
+	gap: 10px;
+}
+
+.sm-range-ov__cutat {
+	flex: 0 0 64px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-range-ov__took {
+	margin: 0;
+}
+
+.sm-prep__chunkstate {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-muted);
+}
+
+/* 주제 분할 칸의 구간 타임라인(C3). */
+.sm-segs {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 4px 0 4px;
+}
+
+.sm-segs__bar {
+	position: relative;
+	height: 44px;
+	border-radius: 6px;
+	background: var(--bg);
+}
+
+/* 구간 하나. 이웃과 1px 틈을 둬서 경계가 보이게 한다. 짝·홀로 명도를 갈라 붙은 구간도 구분된다. */
+.sm-segs__seg {
+	position: absolute;
+	top: 0;
+	height: 100%;
+	min-width: 2px;
+	padding: 0;
+	border: none;
+	border-right: 1px solid var(--surface);
+	background: #d5dae5;
+	cursor: pointer;
+}
+
+.sm-segs__seg:nth-child(even) {
+	background: #e3e7ef;
+}
+
+.sm-segs__seg:hover {
+	background: var(--accent-line);
+}
+
+.sm-segs__seg--clip,
+.sm-segs__seg--clip:nth-child(even) {
+	background: var(--accent-2);
+	opacity: 0.75;
+}
+
+.sm-segs__seg--out {
+	background: repeating-linear-gradient(45deg, #e3e7ef 0 4px, #f4f6fb 4px 8px);
+}
+
+.sm-segs__seg--on,
+.sm-segs__seg--on:nth-child(even) {
+	background: var(--accent);
+	opacity: 1;
+	outline: 2px solid var(--text);
+	outline-offset: 1px;
+	z-index: 1;
+}
+
+.sm-segs__cut {
+	position: absolute;
+	top: -5px;
+	bottom: -5px;
+	width: 2px;
+	margin-left: -1px;
+	background: var(--text);
+	opacity: 0.35;
+	pointer-events: none;
+}
+
+.sm-segs__ticks {
+	display: flex;
+	justify-content: space-between;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-segs__legend {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 0;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.sm-segs__key {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border-radius: 2px;
+	margin-left: 10px;
+}
+
+.sm-segs__key:first-child {
+	margin-left: 0;
+}
+
+.sm-segs__key--clip {
+	background: var(--accent-2);
+}
+
+.sm-segs__key--cut {
+	width: 2px;
+	background: var(--text);
+	opacity: 0.35;
+}
+
+/* 목록(고르는 자리) · 상세(읽는 자리). */
+.sm-segs__split {
+	display: grid;
+	grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+	gap: 16px;
+	margin-top: 8px;
+	align-items: start;
+}
+
+.sm-segs__list {
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+	max-height: 480px;
+	overflow-y: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sm-segs__row {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	width: 100%;
+	padding: 8px 10px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	font: inherit;
+	font-size: 14px;
+	color: var(--text);
+	text-align: left;
+	cursor: pointer;
+}
+
+.sm-segs__row:hover {
+	background: var(--bg);
+}
+
+.sm-segs__row--on,
+.sm-segs__row--on:hover {
+	background: var(--accent-soft);
+}
+
+.sm-segs__time {
+	flex: 0 0 62px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-segs__row--on .sm-segs__time {
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.sm-segs__desc {
+	flex: 1;
+	min-width: 0;
+	line-height: 1.45;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.sm-segs__dot {
+	flex: 0 0 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--accent-2);
+	align-self: center;
+}
+
+.sm-segs__detail {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 16px 18px;
+	border: 1px solid var(--accent-line);
+	border-radius: var(--radius);
+	min-width: 0;
+}
+
+.sm-segs__dhead {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	font-size: 17px;
+}
+
+.sm-segs__ddesc {
+	margin: 0;
+	font-size: 16px;
+	line-height: 1.6;
+}
+
+/* 전사. 길면 칸 안에서 스크롤한다 — 3분 구간이면 마흔 줄이 넘는다. */
+.sm-segs__text {
+	max-height: 400px;
+	overflow-y: auto;
+	padding: 12px 14px;
+	background: var(--bg);
+	border-radius: var(--radius);
+	font-size: 15px;
+	line-height: 1.75;
+}
+
+.sm-segs__text p {
+	margin: 0 0 4px;
+}
+
+.sm-segs__ut {
+	display: inline-block;
+	min-width: 52px;
+	margin-right: 8px;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+	.sm-prep__top {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media (max-width: 900px) {
+	.sm-stt__facts {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.sm-steps {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.sm-steps__item + .sm-steps__item::before {
+		display: none;
+	}
+
+	.sm-prep__row,
+	.sm-segs__split {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.sm-prep__body,
+	.sm-prep__chunks {
+		padding-left: 0;
+	}
+
+	.sm-prep__chunks li {
+		grid-template-columns: 120px minmax(0, 1fr) 90px;
+	}
+}
+
+/* 새 클립 탭 — 기준 쓰기(D1) · 점수순 결과 카드(D3), 2026-10-24 ------------------------- */
+
+.sm-make {
+	display: flex;
+	flex-direction: column;
+	gap: 28px;
+}
+
+.sm-make__compose {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	max-width: 960px;
+}
+
+.sm-make__title {
+	margin: 0;
+	font-size: 28px;
+	letter-spacing: -0.01em;
+}
+
+.sm-make__lead {
+	margin: 6px 0 0;
+	font-size: 16px;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
+.sm-make__need {
+	margin: 0;
+	padding: 10px 14px;
+	border: 1px solid var(--warn-line);
+	border-radius: var(--radius);
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 15px;
+}
+
+/* 입력 상자 — 이 탭의 주인공이라 테두리를 accent 로 두고 그림자로 띄운다. */
+.sm-make__box {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 16px 18px 14px;
+	background: var(--surface);
+	border: 2px solid var(--accent);
+	border-radius: 14px;
+	box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.sm-make__label {
+	font-size: 14px;
+	font-weight: 700;
+	color: var(--text-muted);
+}
+
+.sm-make__input {
+	width: 100%;
+	min-height: calc(1.6em * 3);
+	max-height: 50vh;
+	padding: 0;
+	border: none;
+	outline: none;
+	resize: none;
+	background: none;
+	font: inherit;
+	font-size: 18px;
+	line-height: 1.6;
+	color: var(--text);
+	/* 글 길이만큼 자란다. 지원하지 않는 브라우저는 세 줄 고정으로 떨어진다. */
+	field-sizing: content;
+}
+
+.sm-make__foot {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border);
+}
+
+.sm-make__run {
+	margin-left: auto;
+	padding: 10px 22px;
+	font-size: 16px;
+}
+
+.sm-make__picks {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
 }
 
-.sm-criteria__input {
-	width: 100%;
-	font: inherit;
-	font-size: 14px;
-	line-height: 1.6;
-	min-height: calc(1.6em * 3 + 20px);
-	/* 너무 길어지면 아래 후보가 화면 밖으로 밀린다. 거기서부터는 칸 안에서 스크롤한다. */
-	max-height: 50vh;
-	resize: vertical;
-	/* 글 길이만큼 자란다. 지원하지 않는 브라우저는 세 줄 + 손잡이로 늘리는 방식으로 떨어진다. */
-	field-sizing: content;
-}
-
-.sm-criteria__foot {
+.sm-make__pickrow {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.sm-make__picklabel {
+	flex: 0 0 80px;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-muted);
+}
+
+.sm-make__chip {
+	max-width: 360px;
+	padding: 7px 14px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	background: var(--surface);
+	font: inherit;
+	font-size: 15px;
+	color: var(--text);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.sm-make__chip:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.sm-make__chip--past {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+}
+
+/* 결과 */
+.sm-make__results {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding-top: 24px;
+	border-top: 1px solid var(--border);
+}
+
+.sm-make__rhead {
+	display: flex;
+	align-items: baseline;
 	flex-wrap: wrap;
 	gap: 10px;
 }
 
-/* 버튼 테두리를 두르면 [실행] 과 같은 무게로 읽힌다. 보조 동작이라 글자 링크로 둔다. */
-.sm-linkbtn {
-	padding: 0;
-	border: none;
-	background: none;
-	font: inherit;
-	font-size: 13px;
-	color: var(--accent);
-	text-decoration: underline;
-	text-underline-offset: 2px;
-	cursor: pointer;
+.sm-make__rtitle {
+	margin: 0;
+	font-size: 20px;
 }
 
-/* 지금 보이는 후보를 고를 때 쓴 기준. 입력칸의 글과 다를 수 있어서 따로 보여준다. */
-.sm-criteria__used {
-	margin: -4px 0 12px;
-	padding: 8px 12px;
+.sm-make__filters {
+	margin-left: auto;
+	display: flex;
+	gap: 6px;
+}
+
+.sm-make__used {
+	margin: 0;
+	padding: 10px 14px;
 	background: var(--surface);
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.6;
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
 
-.sm-criteria__usedlabel {
+.sm-make__usedlabel {
 	display: block;
-	font-size: 12px;
+	font-size: 13px;
 	color: var(--text-muted);
 	margin-bottom: 2px;
 }
 
-/* 탭 -------------------------------------------------------------------- */
-
-/* 세로로 쌓여 있던 여섯 덩어리를 넷으로 갈랐다. 쓰는 빈도가 다르기 때문이다 — 질문은 매일,
-   영상 준비는 영상당 한 번, 기록은 뭔가 이상할 때만 연다. 같은 무게로 늘어놓으면 매일 하는
-   일이 한 번뿐인 일에 파묻힌다. */
-.sm-tabs {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: flex-end;
-	gap: 4px;
-	border-bottom: 1px solid var(--border);
-	margin: 14px 0 16px;
+.sm-make__empty {
+	margin: 0;
+	padding: 28px 0;
+	text-align: center;
+	color: var(--text-muted);
 }
 
-.sm-tab {
-	display: inline-flex;
-	align-items: center;
+.sm-make__grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	gap: 14px;
+}
+
+.sm-make__more {
+	align-self: center;
+}
+
+.sm-make__preview {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* 결과 카드 */
+.sm-card {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 16px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+}
+
+.sm-card--top {
+	border: 2px solid var(--accent);
+	padding: 15px;
+}
+
+/* 이미 클립을 만든 결과. 다시 만들 수 있으니 숨기지 않고 바탕만 옅게 칠한다. */
+.sm-card--made {
+	background: var(--accent-soft);
+}
+
+.sm-card--out {
+	background: var(--bg);
+}
+
+.sm-card__top {
+	display: flex;
+	align-items: baseline;
 	gap: 6px;
-	padding: 8px 14px;
-	/* 비활성 탭도 같은 폭의 투명 테두리를 갖는다 — 없으면 활성/비활성 사이에서 글자가 흔들린다. */
-	border: 1px solid transparent;
-	border-bottom: none;
-	border-radius: var(--radius) var(--radius) 0 0;
-	/* 아래 경계선 위에 1px 얹혀 활성 탭이 선을 끊는다. */
-	margin-bottom: -1px;
+	min-width: 0;
+}
+
+.sm-card__rank {
+	align-self: center;
+	display: grid;
+	place-items: center;
+	min-width: 26px;
+	height: 26px;
+	margin-right: 4px;
+	border-radius: 6px;
+	background: var(--text);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 700;
+}
+
+.sm-card--top .sm-card__rank {
+	background: var(--accent);
+}
+
+.sm-card__score {
+	font-size: 26px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+}
+
+.sm-card--top .sm-card__score {
+	color: var(--accent);
+}
+
+.sm-card__where {
+	margin-left: auto;
 	font-size: 14px;
 	color: var(--text-muted);
-	text-decoration: none;
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 
-.sm-tab:hover {
-	color: var(--text);
+.sm-card__label {
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--danger-soft);
+	color: var(--danger-ink);
+	font-size: 13px;
+	font-weight: 600;
 }
 
-.sm-tab--on {
+.sm-card__pos {
+	position: relative;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--bg);
+}
+
+.sm-card--made .sm-card__pos {
 	background: var(--surface);
-	border-color: var(--border);
-	color: var(--text);
-	font-weight: 600;
 }
 
-/* 답을 기다리는 질문 수. 이 탭에 갈 이유가 곧 이 숫자라서 탭 이름 옆에 붙인다. */
-.sm-tab__badge {
+.sm-card__pos > span {
+	position: absolute;
+	top: 0;
+	height: 100%;
+	min-width: 4px;
+	border-radius: 3px;
 	background: var(--accent);
-	color: #fff;
-	border-radius: 999px;
-	padding: 0 7px;
-	font-size: 12px;
-	font-weight: 600;
 }
 
-/* 준비가 안 끝나면 질문에 답할 수 없다. 고장이 아니라 아직 안 한 일이라 위험(빨강)이 아니라
-   알림 배너와 같은 색을 쓴다. */
-.sm-tab__need {
-	padding: 0 7px;
-	border: 1px solid #f0dca8;
-	border-radius: 999px;
-	background: #fff8e6;
-	color: #6b5518;
-	font-size: 12px;
-	font-weight: 400;
+.sm-card__desc {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+	line-height: 1.5;
+}
+
+/* 고른 이유. 길면 네 줄에서 자른다 — 카드 높이가 들쭉날쭉하면 격자가 읽히지 않는다. 전문은 미리보기와 함께 본다. */
+.sm-card__reason {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--text-muted);
+	display: -webkit-box;
+	-webkit-line-clamp: 4;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.sm-card__actions {
+	margin-top: auto;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-top: 4px;
+}
+
+.sm-card__link {
+	margin-left: auto;
+	font-size: 14px;
+}
+
+/* 버튼 테두리를 두르면 주 버튼과 같은 무게로 읽힌다. 보조 동작이라 글자 링크로 둔다. */
+.sm-linkbtn {
+	padding: 0;
+	border: none;
+	background: none;
+	font: inherit;
+	font-size: 15px;
+	color: var(--accent);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
 }
 
 /* 탭 맨 위의 한 줄 안내(질문 탭의 "준비가 끝나야 답할 수 있습니다"). */
@@ -252,62 +1540,361 @@
 	margin: 0 0 10px;
 }
 
-/* 플레이어 접기 ---------------------------------------------------------- */
-
-/* 🔴 95분짜리 영상의 임베드는 세로를 크게 먹는데, 답을 쓰는 동안 원본이 실제로 뭐라고
-   하는지 확인해야 해서 없앨 수도 없다. 그래서 접을 수 있게만 하고 기본은 펼쳐 둔다. */
-.sm-playerfold > summary {
-	/* 요약줄이 곧 영상 제목이다. 아래 <details> 들(전사·비용)과 같은 무게로 둔다. */
-	font-size: 14px;
-}
-
-.sm-playerfold .sm-player {
-	margin-bottom: 0;
-}
-
-/* 회차 리포트 — 크리에이터가 **가져가는** 화면.
+/* 회차 리포트 — 크리에이터가 **가져가는** 화면(개선안 F1 + 막대표, 2026-10-24).
  *
  * 🔴 다른 탭보다 글이 크고 여백이 넓다. 작업하는 자리가 아니라 읽고 판단하는 자리이고,
  * 이 내용이 그대로 메일과 보고로 나간다. */
-.sm-report__lead {
-	margin: 4px 0 20px;
+.sm-report {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+}
+
+.sm-report__top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sm-report__title {
+	margin: 0;
+	font-size: 22px;
+}
+
+/* 숫자 여섯 */
+.sm-kpis {
+	display: grid;
+	grid-template-columns: repeat(6, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.sm-kpi {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 16px 18px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	min-width: 0;
+}
+
+.sm-kpi__label {
 	font-size: 14px;
-	line-height: 1.7;
+	color: var(--text-muted);
+}
+
+.sm-kpi__value {
+	font-size: 32px;
+	font-weight: 700;
+	line-height: 1.2;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sm-kpi__sub {
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+/* 색은 숫자에만 — 바탕까지 칠하면 여섯 칸이 신호등처럼 읽힌다. 이름표(label)가 뜻을 말한다. */
+.sm-kpi--good .sm-kpi__value {
+	color: var(--accent);
+}
+
+.sm-kpi--bad .sm-kpi__value {
+	color: var(--danger);
+}
+
+.sm-kpi--todo .sm-kpi__value {
+	color: var(--warn-ink);
+}
+
+.sm-report__card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 18px 20px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
 }
 
 .sm-report__head {
-	margin: 24px 0 2px;
-	font-size: 15px;
+	margin: 0;
+	font-size: 18px;
 }
 
+.sm-report__hint,
+.sm-report__note {
+	margin: 0;
+}
+
+.sm-report__cols {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	gap: 18px;
+	align-items: start;
+}
+
+.sm-report__col {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	min-width: 0;
+}
+
+/* 막대표 — 가장 많이 물은 질문 */
+.sm-chart__head {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.sm-chart__legend {
+	display: flex;
+	gap: 12px;
+	margin: 0 0 0 auto;
+	padding: 0;
+	list-style: none;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.sm-chart__legend li {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.sm-chart__swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+}
+
+.sm-chart {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 6px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-chart__row {
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 52px 92px;
+	align-items: center;
+	gap: 12px;
+	padding: 2px 0;
+	border-radius: 4px;
+}
+
+.sm-chart__row:hover {
+	background: var(--bg);
+}
+
+.sm-chart__label {
+	font-size: 15px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sm-chart__track {
+	height: 14px;
+}
+
+/* 데이터 끝만 둥글게 — 기준선(왼쪽)에서 자라는 막대다. */
+.sm-chart__bar {
+	display: block;
+	height: 100%;
+	min-width: 3px;
+	border-radius: 0 4px 4px 0;
+}
+
+.sm-chart__value {
+	font-size: 14px;
+	font-weight: 600;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-chart__tag {
+	justify-self: start;
+	padding: 1px 8px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+/* 상태 색. 답함 = 테마 색, 영상에 없음 = 위험, 아직 = 회색, 물림 = 알림. 글자 딱지가 늘 같이 붙는다. */
+.sm-chart__bar--answered,
+.sm-chart__swatch--answered {
+	background: var(--accent);
+}
+
+.sm-chart__bar--missing,
+.sm-chart__swatch--missing {
+	background: var(--danger);
+}
+
+.sm-chart__bar--waiting,
+.sm-chart__swatch--waiting {
+	background: #9aa1b2;
+}
+
+.sm-chart__bar--declined,
+.sm-chart__swatch--declined {
+	background: #d9b45a;
+}
+
+.sm-chart__tag--answered {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.sm-chart__tag--missing {
+	background: var(--danger-soft);
+	color: var(--danger-ink);
+}
+
+.sm-chart__tag--waiting {
+	background: var(--bg);
+	color: var(--text-muted);
+}
+
+.sm-chart__tag--declined {
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+}
+
+/* 목록 */
 .sm-report__missing {
-	margin: 10px 0 0;
-	padding-left: 20px;
+	margin: 4px 0 0;
+	padding-left: 22px;
 }
 
 .sm-report__missing > li {
-	margin-bottom: 14px;
+	margin-bottom: 12px;
 }
 
 .sm-report__q {
 	margin: 0 0 3px;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1.5;
+}
+
+.sm-report__go {
+	margin-left: 8px;
+	font-size: 14px;
+	font-weight: 600;
+	white-space: nowrap;
 }
 
 /* 왜 답하지 못했는지. 실패가 아니라 정직한 결과라 오류 상자가 아니라 옅은 본문으로 둔다. */
 .sm-report__why {
 	margin: 0;
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.6;
 	color: var(--text-muted);
 	padding-left: 10px;
 	border-left: 2px solid var(--border);
 }
 
+.sm-report__texts > summary {
+	cursor: pointer;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
 .sm-report__list {
 	margin: 6px 0 0;
 	padding-left: 18px;
-	font-size: 13px;
+	font-size: 15px;
 	line-height: 1.7;
+}
+
+.sm-report__answered {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-report__answered li {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 2px 10px;
+	padding: 10px 0;
+	border-top: 1px solid var(--border);
+}
+
+.sm-report__answered li:first-child {
+	border-top: none;
+}
+
+.sm-report__aq {
+	font-size: 16px;
+	line-height: 1.45;
+}
+
+.sm-report__answered .sm-meta {
+	grid-column: 1;
+}
+
+.sm-report__pub {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	align-self: center;
+	padding: 1px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-size: 12px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.sm-report__pub--on {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: #fff;
+	font-weight: 600;
+}
+
+.sm-report__cost {
+	margin: 0;
+}
+
+@media (max-width: 1200px) {
+	.sm-kpis {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 900px) {
+	.sm-report__cols {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.sm-chart__row {
+		grid-template-columns: minmax(0, 1fr) 44px 80px;
+	}
+
+	/* 좁으면 질문 글을 막대 위 한 줄로 올린다. */
+	.sm-chart__label {
+		grid-column: 1 / -1;
+	}
+}
+
+@media (max-width: 560px) {
+	.sm-kpis {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
 }
