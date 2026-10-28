@@ -53,7 +53,14 @@ export interface ShortsSource {
 	 * 🔴 이미 끝난 전사에는 반영되지 않는다 — 다시 인식해야 한다.
 	 */
 	stt_terms: string[];
+	/**
+	 * 음성 인식 교정 사전. 잘못 들린 말 → 바른 말, 적힌 순서대로 적용한다.
+	 * 🔴 힌트와 달리 저장하면 **지금 전사에 바로** 적용된다. 이미 렌더한 클립 자막은 그대로다.
+	 */
+	stt_fixes: SttFix[];
 }
+
+export type SttFix = { from: string; to: string };
 
 /**
  * 목록(GET /api/sources)이 주는 행 = `sources` 행 + **어디까지 왔는지** 세어 준 집계.

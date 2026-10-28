@@ -16,6 +16,7 @@ import type {
 	ShortsStageCallBody,
 	ShortsStatus,
 	ShortsUtterance,
+	SttFix,
 } from "./types";
 
 // 경로가 admin-web 시절의 `/admin/shorts/**` 에서 `/api/**` 로 바뀌었다 — 그 접두사는
@@ -308,7 +309,16 @@ export function saveStandard(body: string): Promise<PromptStandard> {
  */
 export function patchSource(
 	sourceId: number,
-	patch: { title?: string; context?: string; youtubeId?: string; sttTerms?: string[] },
-): Promise<{ id: number; title: string; context: string | null; youtube_id: string | null; stt_terms: string[] }> {
+	patch: { title?: string; context?: string; youtubeId?: string; sttTerms?: string[]; sttFixes?: SttFix[] },
+): Promise<{
+	id: number;
+	title: string;
+	context: string | null;
+	youtube_id: string | null;
+	stt_terms: string[];
+	stt_fixes: SttFix[];
+	/** sttFixes 를 보냈을 때만 — 지금 전사에서 고친 발화 수. */
+	fixedUtterances?: number;
+}> {
 	return request(`/api/sources/${sourceId}`, { method: "PATCH", body: patch });
 }

@@ -1898,3 +1898,8 @@
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
+
+/* 교정 사전 저장 결과 — 몇 곳을 고쳤나. 저장했는데 아무 반응이 없으면 먹혔는지 알 수 없다. */
+.sm-stt__fixed {
+	margin: 0;
+}

@@ -12,7 +12,7 @@ import {
 import { time } from "../../shared/format";
 import { Modal } from "../../shared/Modal";
 import type { SourceView } from "../SourcePage";
-import type { ShortsUtterance } from "../types";
+import type { ShortsUtterance, SttFix } from "../types";
 
 /** 위 단계 표시가 데려가는 자리. 단계마다 아래에 같은 id 의 칸이 있다. */
 const STEP_IDS = ["prep-source", "prep-range", "prep-stt", "prep-segments"] as const;
@@ -318,10 +318,18 @@ export function PrepareTab({ view }: { view: SourceView }) {
 						call={lastStt}
 						languages={status.data?.languages ?? {}}
 						terms={data.source.stt_terms ?? []}
+						fixes={data.source.stt_fixes ?? []}
 						transcribed={utterances > 0}
 						onSave={(terms) =>
 							act(async () => {
 								await patchSource(data.source.id, { sttTerms: terms });
+								reload();
+							})
+						}
+						onSaveFixes={(fixes, fixed) =>
+							act(async () => {
+								const saved = await patchSource(data.source.id, { sttFixes: fixes });
+								fixed(saved.fixedUtterances ?? 0);
 								reload();
 							})
 						}
@@ -503,42 +511,30 @@ function SttSettings({
 	call,
 	languages,
 	terms,
+	fixes,
 	transcribed,
 	onSave,
+	onSaveFixes,
 }: {
 	call: StageCall | null;
 	languages: Record<string, string>;
 	terms: string[];
+	fixes: SttFix[];
 	/** 전사가 한 번이라도 돌았나. 그래야 "바꾼 힌트는 다시 인식해야 붙는다" 가 말이 된다. */
 	transcribed: boolean;
 	onSave: (terms: string[]) => void;
+	/** 저장이 끝나면 `fixed` 로 지금 전사에서 고친 발화 수를 알려 준다. */
+	onSaveFixes: (fixes: SttFix[], fixed: (count: number) => void) => void;
 }) {
 	const [editing, setEditing] = useState(false);
+	const [editingFixes, setEditingFixes] = useState(false);
+	// 마지막 교정 저장이 지금 전사에서 몇 곳을 고쳤나. 저장했는데 아무 반응이 없으면 먹혔는지 알 수 없다.
+	const [fixedNote, setFixedNote] = useState<number | null>(null);
 	const params = call?.params ?? {};
 	const language = typeof params.language === "string" ? params.language : null;
 	const usedHint = typeof params.initial_prompt === "string" ? params.initial_prompt : "";
 	const model = call?.model?.replace(/^faster-whisper:/, "whisper ") ?? "—";
 	const changed = transcribed && terms.join(", ") !== usedHint;
-
-	// 한 줄에 다 못 들어간 칩 수. 줄이 넘친 칩을 세어 "외 N개" 로 적는다 — 폭은 화면마다 달라 미리 알 수 없다.
-	const line = useRef<HTMLUListElement>(null);
-	const [hidden, setHidden] = useState(0);
-	useLayoutEffect(() => {
-		const list = line.current;
-		if (!list) {
-			setHidden(0);
-			return;
-		}
-		const count = () => {
-			const items = Array.from(list.children) as HTMLElement[];
-			const top = items[0]?.offsetTop ?? 0;
-			setHidden(items.filter((item) => item.offsetTop > top).length);
-		};
-		count();
-		const observer = new ResizeObserver(count);
-		observer.observe(list);
-		return () => observer.disconnect();
-	}, [terms]);
 
 	return (
 		<div className="sm-stt">
@@ -573,18 +569,7 @@ function SttSettings({
 					<span className="sm-stt__opencount">{terms.length}</span>
 				</button>
 				{terms.length > 0 ? (
-					<div className="sm-stt__line">
-						<ul className="sm-stt__terms" ref={line}>
-							{terms.map((term) => (
-								<li key={term}>{term}</li>
-							))}
-						</ul>
-						{hidden > 0 && (
-							<button type="button" className="sm-linkbtn sm-stt__more" onClick={() => setEditing(true)}>
-								외 {hidden}개
-							</button>
-						)}
-					</div>
+					<ChipLine items={terms} onMore={() => setEditing(true)} />
 				) : (
 					<p className="sm-meta sm-stt__empty">
 						없이 인식합니다. 학교·전형·고등학교 이름처럼 잘못 알아듣기 쉬운 고유명사를 넣어 두세요.
@@ -595,6 +580,39 @@ function SttSettings({
 				<p className="sm-stt__changed">
 					지난 인식과 힌트가 다릅니다. 바꾼 힌트는 <b>다시 인식</b>해야 전사에 반영됩니다.
 				</p>
+			)}
+
+			{/* 교정 사전 — 힌트로도 못 고친 말을 알아들은 뒤에 고친다(2026-10-24). 힌트에 "수능최저학력기준" 을
+			    넣었는데도 small·large-v3·유튜브 자동자막이 모두 "수능체제학력" 으로 적었다. */}
+			<div className="sm-stt__hint">
+				<button type="button" className="sm-stt__open" onClick={() => setEditingFixes(true)}>
+					교정 사전
+					<span className="sm-stt__opencount">{fixes.length}</span>
+				</button>
+				{fixes.length > 0 ? (
+					<ChipLine items={fixes.map((f) => `${f.from} → ${f.to}`)} onMore={() => setEditingFixes(true)} />
+				) : (
+					<p className="sm-meta sm-stt__empty">
+						힌트를 넣어도 계속 틀리는 말을 고칩니다. 저장하면 지금 전사에 바로 적용됩니다.
+					</p>
+				)}
+			</div>
+			{fixedNote !== null && (
+				<p className="sm-meta sm-stt__fixed">
+					{fixedNote > 0 ? `지금 전사에서 발화 ${fixedNote.toLocaleString()}곳을 고쳤습니다.` : "지금 전사에는 고칠 곳이 없었습니다."}{" "}
+					이미 만든 클립의 자막은 다시 만들어야 바뀝니다.
+				</p>
+			)}
+
+			{editingFixes && (
+				<FixesModal
+					fixes={fixes}
+					onClose={() => setEditingFixes(false)}
+					onSave={(next) => {
+						onSaveFixes(next, setFixedNote);
+						setEditingFixes(false);
+					}}
+				/>
 			)}
 
 			{editing && (
@@ -713,6 +731,168 @@ function TermsModal({
 						disabled={!dirty || over}
 						onClick={() => onSave(list)}
 					>
+						저장
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
+/**
+ * 칩 한 줄 미리보기. 넘친 칩은 감추고 옆에 "외 N개" 로 센다 — 폭은 화면마다 달라 미리 알 수 없어서
+ * 줄이 넘친 칩을 그려 놓고 센다. 용어 힌트와 교정 사전이 같이 쓴다.
+ */
+function ChipLine({ items, onMore }: { items: string[]; onMore: () => void }) {
+	const line = useRef<HTMLUListElement>(null);
+	const [hidden, setHidden] = useState(0);
+	useLayoutEffect(() => {
+		const list = line.current;
+		if (!list) {
+			setHidden(0);
+			return;
+		}
+		const count = () => {
+			const children = Array.from(list.children) as HTMLElement[];
+			const top = children[0]?.offsetTop ?? 0;
+			setHidden(children.filter((item) => item.offsetTop > top).length);
+		};
+		count();
+		const observer = new ResizeObserver(count);
+		observer.observe(list);
+		return () => observer.disconnect();
+	}, [items]);
+
+	return (
+		<div className="sm-stt__line">
+			<ul className="sm-stt__terms" ref={line}>
+				{items.map((item) => (
+					<li key={item}>{item}</li>
+				))}
+			</ul>
+			{hidden > 0 && (
+				<button type="button" className="sm-linkbtn sm-stt__more" onClick={onMore}>
+					외 {hidden}개
+				</button>
+			)}
+		</div>
+	);
+}
+
+/**
+ * 교정 사전 넣고 빼기. 용어 힌트 모달처럼 [저장] 을 눌러야 한 번에 나간다 — 저장할 때마다 전사 전체에
+ * 다시 적용되므로 한 줄씩 저장하면 그만큼 전사를 다시 훑는다.
+ *
+ * 🔴 짧은 말은 다른 말 속에도 들어 있다. "체제" → "최저" 는 진짜 "체제" 까지 바꾼다 — 그래서 앞뒤를
+ * 붙여 길게 적으라고 안내한다("수능체제" → "수능최저"). 바른 말 안에 잘못 들린 말이 들어 있으면
+ * 서버가 거절한다(고칠 때마다 늘어난다).
+ */
+function FixesModal({
+	fixes,
+	onClose,
+	onSave,
+}: {
+	fixes: SttFix[];
+	onClose: () => void;
+	onSave: (fixes: SttFix[]) => void;
+}) {
+	const [list, setList] = useState(fixes);
+	const [wrong, setWrong] = useState("");
+	const [right, setRight] = useState("");
+	const dirty = JSON.stringify(list) !== JSON.stringify(fixes);
+	const from = wrong.replace(/\s+/g, " ").trim();
+	const to = right.replace(/\s+/g, " ").trim();
+	const duplicate = list.some((f) => f.from === from);
+	const grows = from !== "" && to.includes(from);
+
+	function add() {
+		setList([...list, { from, to }]);
+		setWrong("");
+		setRight("");
+	}
+
+	return (
+		<Modal
+			open
+			title="교정 사전"
+			onClose={onClose}
+			subhead="음성 인식이 계속 틀리게 적는 말을 바른 말로 바꿉니다. 저장하면 지금 전사에 바로 적용되고, 다음 음성 인식에도 붙습니다."
+		>
+			<div className="sm-terms">
+				<form
+					className="sm-terms__add"
+					onSubmit={(event) => {
+						event.preventDefault();
+						add();
+					}}
+				>
+					<input
+						className="sm-prep__input"
+						type="text"
+						value={wrong}
+						maxLength={40}
+						placeholder="잘못 들린 말 — 예) 수능체제"
+						aria-label="잘못 들린 말"
+						autoFocus
+						onChange={(event) => setWrong(event.target.value)}
+					/>
+					<input
+						className="sm-prep__input"
+						type="text"
+						value={right}
+						maxLength={40}
+						placeholder="바른 말 — 예) 수능최저"
+						aria-label="바른 말"
+						onChange={(event) => setRight(event.target.value)}
+					/>
+					<button
+						type="submit"
+						className="button sm-go"
+						disabled={from === "" || to === "" || from === to || duplicate || grows}
+					>
+						추가
+					</button>
+				</form>
+				{duplicate && <p className="sm-prep__warn">"{from}" 은 이미 있습니다.</p>}
+				{grows && (
+					<p className="sm-prep__warn">
+						바른 말 안에 잘못 들린 말이 들어 있으면 고칠 때마다 늘어납니다. 잘못 들린 말을 더 길게 적어 주세요.
+					</p>
+				)}
+				<p className="sm-meta">
+					짧은 말은 다른 말 속에도 들어 있습니다. "체제" 를 바꾸면 진짜 "체제" 도 바뀌니 앞뒤를 붙여 적으세요.
+				</p>
+
+				<div className="sm-terms__head">
+					<b>{list.length}개</b>
+				</div>
+				{list.length === 0 ? (
+					<p className="sm-meta">아직 없습니다.</p>
+				) : (
+					<ul className="sm-terms__list">
+						{list.map((fix) => (
+							<li key={fix.from}>
+								<span>
+									{fix.from} → <b>{fix.to}</b>
+								</span>
+								<button
+									type="button"
+									className="button button--small"
+									onClick={() => setList(list.filter((f) => f.from !== fix.from))}
+								>
+									빼기
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+				<p className="sm-meta">빼도 이미 고친 글자는 되돌아가지 않습니다.</p>
+
+				<div className="sm-terms__foot">
+					<button type="button" className="button" onClick={onClose}>
+						취소
+					</button>
+					<button type="button" className="button sm-go" disabled={!dirty} onClick={() => onSave(list)}>
 						저장
 					</button>
 				</div>
