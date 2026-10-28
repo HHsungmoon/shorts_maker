@@ -62,6 +62,118 @@ def terms_prompt(terms: list[str]) -> str | None:
     return ", ".join(terms) or None
 
 
+# 교정 사전(sources.stt_fixes) 상한. 한 항목은 잘못 들린 낱말 하나 — 문장을 바꾸는 자리가 아니다.
+FIX_MAX_CHARS = 40
+FIXES_MAX = 100
+
+
+def normalize_fixes(raw: list[dict]) -> list[dict]:
+    """화면에서 온 교정 목록을 정리한다 — 앞뒤 공백을 걷고, 빈 줄은 버리고, 순서는 지킨다.
+
+    🔴 **몇 번을 다시 적용해도 결과가 같아야 한다.** 저장할 때마다 전사 전체에 다시 적용하기 때문이다
+    (apply_fixes_to_source). 그래서 둘을 거절한다:
+      - 바른 말 안에 잘못 들린 말이 들어 있는 것: "최저" → "수능최저" 는 적용할 때마다 "수능수능…" 이 된다
+      - 한 항목의 바른 말이 다른 항목의 잘못 들린 말을 품는 것: 순서에 따라 결과가 달라진다
+    """
+    fixes: list[dict] = []
+    for item in raw:
+        wrong = " ".join(str(item.get("from", "")).split())
+        right = " ".join(str(item.get("to", "")).split())
+        if not wrong and not right:
+            continue
+        if not wrong or not right:
+            raise SttError("잘못 들린 말과 바른 말을 둘 다 적어야 합니다")
+        if len(wrong) > FIX_MAX_CHARS or len(right) > FIX_MAX_CHARS:
+            raise SttError(f"교정 한 줄은 {FIX_MAX_CHARS}자까지입니다: {wrong[:20]}…")
+        if wrong == right:
+            continue
+        if wrong in right:
+            raise SttError(f"바른 말 안에 잘못 들린 말이 들어 있으면 고칠 때마다 늘어납니다: {wrong} → {right}")
+        if any(f["from"] == wrong for f in fixes):
+            raise SttError(f"같은 말을 두 번 고칠 수 없습니다: {wrong}")
+        fixes.append({"from": wrong, "to": right})
+    if len(fixes) > FIXES_MAX:
+        raise SttError(f"교정은 {FIXES_MAX}개까지입니다")
+    for fix in fixes:
+        for other in fixes:
+            if other is not fix and other["from"] in fix["to"]:
+                raise SttError(
+                    f"'{fix['to']}' 안에 다른 교정의 '{other['from']}' 이 들어 있어 순서에 따라 결과가 달라집니다"
+                )
+    return fixes
+
+
+def fix_words(words: list[dict], wrong: str, right: str) -> list[dict]:
+    """단어 타임스탬프 목록에서 `wrong` 을 `right` 로 바꾼다. 원본 목록은 건드리지 않는다.
+
+    자막은 이 목록을 그대로 이어 붙여 만든다(subtitles.build_cues) — `text` 만 고치면 화면 자막은 틀린
+    그대로다. 🔴 잘못 들린 말이 **여러 단어에 걸치면** 그 단어들을 하나로 합친다: 첫 단어의 시작부터 끝
+    단어의 끝까지. 단어를 지우고 시각을 비우면 자막에 구멍이 나고, 시각을 나누면 우리가 지어낸 초가 된다.
+    """
+    out = list(words)
+    at = 0
+    # 왼쪽부터 하나씩 바꾸고 매번 다시 센다. 한 단어 안에 두 번 걸리는 경우("체저체저")가 있어서
+    # 위치를 미리 다 구해 두면 앞의 교체가 뒤의 결과를 덮는다. 발화 하나의 단어는 수십 개라 다시 세도 싸다.
+    while True:
+        joined = "".join(w["text"] for w in out)
+        at = joined.find(wrong, at)
+        if at == -1:
+            return out
+        starts = []  # 단어마다 이은 문자열에서의 시작 위치
+        offset = 0
+        for w in out:
+            starts.append(offset)
+            offset += len(w["text"])
+        first = max(i for i, s in enumerate(starts) if s <= at)
+        end = at + len(wrong)
+        last = max(i for i, s in enumerate(starts) if s < end)
+        text = out[first]["text"][:at - starts[first]] + right + out[last]["text"][end - starts[last]:]
+        out[first:last + 1] = [{**out[first], "text": text, "end": out[last]["end"]}]
+        # 바꿔 넣은 말 뒤부터 찾는다 — 바른 말 안은 다시 보지 않는다.
+        at += len(right)
+
+
+def apply_fixes(row: dict, fixes: list[dict]) -> dict:
+    """발화 하나에 교정을 적용한 새 행. `text` 와 `words` 를 같이 고친다.
+
+    둘은 따로 고친다 — whisper 의 `text` 와 단어를 이은 문자열은 앞 공백 정도가 다를 뿐 같은 말이라
+    같은 교정이 양쪽에 똑같이 걸린다.
+    """
+    text = row["text"]
+    words = row.get("words")
+    for fix in fixes:
+        text = text.replace(fix["from"], fix["to"])
+        if words:
+            words = fix_words(words, fix["from"], fix["to"])
+    return {**row, "text": text, "words": words}
+
+
+def apply_fixes_to_source(conn: psycopg.Connection, source_id: int, fixes: list[dict]) -> int:
+    """이미 끝난 전사 전체에 교정을 적용한다. 바뀐 발화 수를 돌려준다. 커밋은 부른 쪽이 한다.
+
+    🔴 이미 렌더한 클립의 자막은 바뀌지 않는다 — 영상에 구워져 있다. 발화 번호(idx)와 시각은 그대로라
+    구간·클립이 가리키는 범위는 깨지지 않는다.
+    🔴 교정을 **빼도** 이미 고친 글자는 되돌아가지 않는다. 원래 글자를 따로 남기지 않는다.
+    """
+    if not fixes:
+        return 0
+    rows = conn.execute(
+        """select u.id, u.text, u.words from utterances u join chunks c on c.id = u.chunk_id
+           where c.source_id = %s""",
+        (source_id,),
+    ).fetchall()
+    changed = []
+    for row in rows:
+        fixed = apply_fixes(dict(row), fixes)
+        if fixed["text"] != row["text"] or fixed["words"] != row["words"]:
+            changed.append({"id": row["id"], "text": fixed["text"],
+                            "words": Jsonb(fixed["words"]) if fixed["words"] else None})
+    if changed:
+        with conn.cursor() as cur:
+            cur.executemany("update utterances set text = %(text)s, words = %(words)s where id = %(id)s", changed)
+    return len(changed)
+
+
 def check_language(code: str | None) -> str | None:
     """None 은 자동 감지다. 🔴 자동은 앞 30초로 판단해서 가끔 틀리고, 틀리면 결과가 통째로
     쓸모없어진다 — 아는 언어면 지정하는 쪽이 낫다."""
@@ -260,6 +372,14 @@ def run_for_chunk(
         audio, float(chunk["start_sec"]), model_name or cfg.whisper_model, initial_prompt, chosen
     )
 
+    # 교정 사전은 **전사가 끝난 뒤에** 읽는다. 몇 분 도는 사이 화면에서 교정을 저장하면 그 저장은 이미 있는
+    # 발화에만 걸리고(apply_fixes_to_source) 지금 전사 중인 조각은 빠진다 — 여기서 새로 읽어야 그 틈이 없다.
+    fixes = conn.execute(
+        "select stt_fixes from sources where id = %s", (chunk["source_id"],)
+    ).fetchone()["stt_fixes"]
+    rows = [apply_fixes(row, fixes) for row in result.rows]
+    fixed = sum(1 for before, after in zip(result.rows, rows) if before["text"] != after["text"])
+
     conn.execute("delete from utterances where chunk_id = %s", (chunk_id,))
     # 🔴 executemany 는 **커서**의 메서드다. psycopg 의 Connection 에는 없다(sqlite3 에는 있었다).
     with conn.cursor() as cur:
@@ -269,7 +389,7 @@ def run_for_chunk(
             [
                 # words 는 jsonb 컬럼 — 리스트를 Jsonb 로 감싸야 psycopg 가 직렬화한다. None 은 그대로 null.
                 {**row, "words": Jsonb(row["words"]) if row["words"] else None, "chunk_id": chunk_id}
-                for row in result.rows
+                for row in rows
             ],
         )
     conn.execute(
@@ -286,6 +406,8 @@ def run_for_chunk(
                 "vad_filter": True,
                 "language": chosen or "auto",
                 "chunk_id": chunk_id,
+                # 교정 사전으로 고친 발화 수. 0 이 아니면 utterances 의 글자는 whisper 원문이 아니다.
+                "fixed": fixed,
             }),
         ),
     )

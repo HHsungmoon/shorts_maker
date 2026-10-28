@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from shorts_maker.db import store
 from shorts_maker.http import deps, server
@@ -46,7 +47,7 @@ class SourcePatchTest(unittest.TestCase):
         with store.connect(self.url) as conn:
             return dict(
                 conn.execute(
-                    "select title, context, youtube_id from sources where id = %s", (self.source_id,)
+                    "select title, context, youtube_id, stt_fixes from sources where id = %s", (self.source_id,)
                 ).fetchone()
             )
 
@@ -116,6 +117,37 @@ class SourcePatchTest(unittest.TestCase):
                 "select stt_terms from sources where id = %s", (self.source_id,)
             ).fetchone()["stt_terms"]
         self.assertEqual(["숭문고"], terms)
+
+    def test_stt_fixes_are_saved_and_applied_to_the_transcript_at_once(self):
+        """🔴 large-v3 전사는 영상 길이만큼 걸린다. 고치려고 다시 인식하게 하면 아무도 안 쓴다."""
+        with store.connect(self.url) as conn:
+            chunk_id = conn.execute(
+                "insert into chunks (source_id, idx, start_sec, end_sec, path)"
+                " values (%s, 0, 0, 60, 'c.wav') returning id", (self.source_id,)
+            ).fetchone()["id"]
+            conn.execute(
+                "insert into utterances (chunk_id, idx, start_sec, end_sec, text, words) values"
+                " (%s, 0, 1, 3, '수능체제학력 기준', %s), (%s, 1, 3, 4, '논술만 본다', null)",
+                (chunk_id, Jsonb([{"start": 1, "end": 2, "text": " 수능체제학력", "probability": 0.9},
+                                  {"start": 2, "end": 3, "text": " 기준", "probability": 0.9}]), chunk_id),
+            )
+        response = self.client.patch(
+            f"/api/sources/{self.source_id}", json={"sttFixes": [{"from": "수능체제", "to": "수능최저"}]}
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, response.json()["fixedUtterances"])
+        self.assertEqual([{"from": "수능체제", "to": "수능최저"}], response.json()["stt_fixes"])
+        with store.connect(self.url) as conn:
+            row = conn.execute("select text, words from utterances where idx = 0").fetchone()
+        self.assertEqual("수능최저학력 기준", row["text"])
+        self.assertEqual(" 수능최저학력", row["words"][0]["text"])
+
+    def test_stt_fixes_that_would_grow_are_refused_and_nothing_changes(self):
+        response = self.client.patch(
+            f"/api/sources/{self.source_id}", json={"sttFixes": [{"from": "최저", "to": "수능최저"}]}
+        )
+        self.assertEqual(400, response.status_code)
+        self.assertEqual([], self.stored()["stt_fixes"])
 
     def test_a_request_that_changes_nothing_is_refused(self):
         """빈 요청을 200 으로 받아 주면 화면이 저장됐다고 말하고 아무 일도 안 일어난다."""

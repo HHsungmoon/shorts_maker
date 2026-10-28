@@ -130,6 +130,66 @@ class NormalizeTermsTest(unittest.TestCase):
         self.assertIsNone(stt.terms_prompt([]))
 
 
+class NormalizeFixesTest(unittest.TestCase):
+    """교정 사전은 저장할 때마다 전사 전체에 다시 적용된다 — 몇 번을 적용해도 같은 결과여야 한다."""
+
+    def test_trims_drops_blank_rows_and_keeps_order(self):
+        fixes = stt.normalize_fixes([
+            {"from": " 수능체제 ", "to": "수능최저"}, {"from": "", "to": ""}, {"from": "체저", "to": "최저"},
+        ])
+        self.assertEqual([{"from": "수능체제", "to": "수능최저"}, {"from": "체저", "to": "최저"}], fixes)
+
+    def test_a_half_filled_row_is_refused(self):
+        with self.assertRaises(stt.SttError):
+            stt.normalize_fixes([{"from": "체저", "to": ""}])
+
+    def test_a_fix_that_would_grow_on_every_apply_is_refused(self):
+        # "최저" → "수능최저" 를 두 번 적용하면 "수능수능최저" 가 된다.
+        with self.assertRaises(stt.SttError):
+            stt.normalize_fixes([{"from": "최저", "to": "수능최저"}])
+
+    def test_fixes_that_feed_each_other_are_refused(self):
+        with self.assertRaises(stt.SttError):
+            stt.normalize_fixes([{"from": "체저", "to": "최저"}, {"from": "최저", "to": "최소"}])
+
+    def test_the_same_wrong_word_twice_is_refused(self):
+        with self.assertRaises(stt.SttError):
+            stt.normalize_fixes([{"from": "체저", "to": "최저"}, {"from": "체저", "to": "체제"}])
+
+
+class FixWordsTest(unittest.TestCase):
+    """자막은 단어 목록으로 만든다 — text 만 고치면 화면 자막은 틀린 그대로다."""
+
+    def words(self, *pairs):
+        return [{"start": s, "end": s + 1, "text": t, "probability": 0.9} for s, t in pairs]
+
+    def test_fixes_inside_one_word_and_keeps_its_time(self):
+        out = stt.fix_words(self.words((0, " 이"), (1, " 체저도")), "체저", "최저")
+        self.assertEqual([" 이", " 최저도"], [w["text"] for w in out])
+        self.assertEqual((1, 2), (out[1]["start"], out[1]["end"]))
+
+    def test_a_match_across_words_merges_them_from_first_start_to_last_end(self):
+        out = stt.fix_words(self.words((0, " 수능"), (1, " 체자"), (2, " 학력")), "수능 체자", "수능 최저")
+        self.assertEqual([" 수능 최저", " 학력"], [w["text"] for w in out])
+        self.assertEqual((0, 2), (out[0]["start"], out[0]["end"]))
+
+    def test_two_matches_in_one_word_are_both_fixed(self):
+        out = stt.fix_words(self.words((0, " 체저체저")), "체저", "최저")
+        self.assertEqual([" 최저최저"], [w["text"] for w in out])
+
+    def test_no_match_returns_the_words_untouched(self):
+        words = self.words((0, " 논술"))
+        self.assertEqual(words, stt.fix_words(words, "체저", "최저"))
+
+    def test_applying_twice_gives_the_same_row(self):
+        row = {"text": "수능체제학력 기준", "words": self.words((0, " 수능체제학력"), (1, " 기준"))}
+        fixes = [{"from": "수능체제", "to": "수능최저"}]
+        once = stt.apply_fixes(row, fixes)
+        self.assertEqual("수능최저학력 기준", once["text"])
+        self.assertEqual(" 수능최저학력", once["words"][0]["text"])
+        self.assertEqual(once, stt.apply_fixes(once, fixes))
+
+
 class RunForChunkTest(DbTestCase):
     """전사 결과가 실제로 utterances 에 들어가는가. whisper 는 부르지 않는다."""
 
@@ -206,6 +266,16 @@ class RunForChunkTest(DbTestCase):
         with mock.patch.object(stt, "transcribe", return_value=result) as fake:
             stt.run_for_source(self.conn, self.cfg, source_id, None, True, "광성고")
         self.assertEqual(fake.call_args.args[3], "광성고")
+
+    def test_the_source_fixes_are_applied_before_the_rows_land(self):
+        self.conn.execute("""update sources set stt_fixes = '[{"from": "체저", "to": "최저"}]'""")
+        self.conn.commit()
+        self.run_stt([segment(0.0, 2.0, "이 체저도", words=[word(0.0, 1.0, " 이"), word(1.0, 2.0, " 체저도")])])
+        row = self.utterances()[0]
+        self.assertEqual("이 최저도", row["text"])
+        self.assertEqual(" 최저도", row["words"][1]["text"])
+        call = self.conn.execute("select params from stage_calls where stage = 'stt'").fetchone()
+        self.assertEqual(1, call["params"]["fixed"])
 
     def test_a_second_run_needs_force_and_then_replaces(self):
         self.run_stt([segment(0.0, 1.0, "처음")])

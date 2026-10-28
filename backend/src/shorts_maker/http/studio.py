@@ -232,6 +232,9 @@ class SourcePatchIn(BaseModel):
     # 음성 인식 용어 힌트. 목록 전체를 보낸다(넣기·빼기 모두). 정확한 상한은 stt.normalize_terms 가 본다 —
     # 여기 상한은 터무니없는 입력만 막는다.
     sttTerms: list[str] | None = Field(default=None, max_length=200)
+    # 음성 인식 교정 사전 [{"from": 잘못 들린 말, "to": 바른 말}]. 이것도 목록 전체를 보낸다.
+    # 🔴 저장하면 **지금 전사에 바로** 적용된다(stt.apply_fixes_to_source) — 힌트와 다르다.
+    sttFixes: list[dict[str, str]] | None = Field(default=None, max_length=200)
 
 
 class ClusterPatchIn(BaseModel):
@@ -804,6 +807,13 @@ def patch_source(source_id: int, body: SourcePatchIn) -> dict:
             updates["stt_terms"] = stt.normalize_terms(body.sttTerms or [])
         except stt.SttError as exc:
             raise HTTPException(400, str(exc)) from exc
+    fixes = None
+    if "sttFixes" in body.model_fields_set:
+        try:
+            fixes = stt.normalize_fixes(body.sttFixes or [])
+        except stt.SttError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        updates["stt_fixes"] = Jsonb(fixes)
     if not updates:
         raise HTTPException(400, "고칠 값이 없습니다")
 
@@ -812,13 +822,18 @@ def patch_source(source_id: int, body: SourcePatchIn) -> dict:
     with connect() as conn:
         row = conn.execute(
             f"update sources set {assignments}, updated_at = now() where id = %s"
-            " returning id, title, context, youtube_id, stt_terms",
+            " returning id, title, context, youtube_id, stt_terms, stt_fixes",
             (*updates.values(), source_id),
         ).fetchone()
         if row is None:
             raise HTTPException(404, "source not found")
+        # 사전 저장과 전사 고치기를 한 트랜잭션에 둔다 — 사전만 바뀌고 전사는 그대로인 상태가 남지 않게.
+        fixed = stt.apply_fixes_to_source(conn, source_id, fixes) if fixes is not None else None
         conn.commit()
-    return dict(row)
+    result = dict(row)
+    if fixed is not None:
+        result["fixedUtterances"] = fixed
+    return result
 
 
 @router.get("/cost")
