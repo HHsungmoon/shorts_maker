@@ -29,9 +29,12 @@ ENV UV_LINK_MODE=copy \
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --extra stt --no-install-project --no-default-groups
 
-# 🔴 whisper 모델을 이미지에 구워둔다. 안 그러면 첫 STT 가 464MB 를 받느라 몇 분 멈추고,
-# 그 사이 사용자는 잡이 멈춘 건지 다운로드 중인지 알 수 없다.
-RUN uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
+# 🔴 whisper 모델을 이미지에 구워둔다. 안 그러면 첫 STT 가 모델(large-v3 는 2.9GB)을 받느라 몇 분
+# 멈추고, 그 사이 사용자는 잡이 멈춘 건지 다운로드 중인지 알 수 없다.
+# 🔴 config 의 SHORTS_WHISPER_MODEL 기본값과 **같은 모델**이어야 한다. 다르면 이미지에 구운 게 안 쓰이고
+# 첫 STT 가 다시 받는다. 다른 모델로 빌드하려면 `--build-arg WHISPER_MODEL=small` 과 환경변수를 함께 바꾼다.
+ARG WHISPER_MODEL=large-v3
+RUN uv run python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')"
 
 COPY backend/src ./src
 RUN uv sync --frozen --extra stt --no-default-groups

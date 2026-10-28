@@ -96,7 +96,12 @@ services:
     # whisper `small` 추론이 실측 1.1GB(make_shorts §7)라 2600m 는 ffmpeg 와 겹쳐도 여유가 있고,
     # 애초에 잡 워커가 1개라 STT 와 렌더는 겹치지 않는다.
     # swap 2GB 는 서버 위 `npm ci`·vite 빌드가 튀는 **그 순간**의 안전망이지 상시 여유가 아니다.
-    mem_limit: 2600m
+    #
+    # 🔴 위 배분은 4GB VM 시절 것이다. 2026-10-24 클라우드를 내리고 로컬에서 돌리며 whisper 를
+    # large-v3 로 올렸다(config.py 주석). large-v3 는 피크 3.5~4.0GB 라 2600m 에서는 OOM 이다.
+    # 그래서 기본을 5g 로 올렸다(Docker Desktop 8GB = shorts 5g + db 600m + 여유).
+    # 다시 4GB VM 에 올리면 `SHORTS_MEM_LIMIT=2600m` + whisper small 로 되돌려야 한다.
+    mem_limit: ${SHORTS_MEM_LIMIT:-5g}
     logging:
       driver: json-file
       options:
