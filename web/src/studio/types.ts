@@ -44,6 +44,11 @@ export interface ShortsSource {
 	youtube_id: string | null;
 	channel: string | null;
 	/**
+	 * 지금 발화가 어디서 왔나(tease §5-1). 유튜브 자막이 기본이고 음성 인식은 따로 누른다.
+	 * null 은 아직 대사가 없거나, 이 표시가 생기기 전(2026-11-01)에 만든 것이다.
+	 */
+	caption_source: "youtube" | "whisper" | null;
+	/**
 	 * 영상 개요(프롬프트 3층). 구간 분할·순위·자르기·후보 생성에 붙는다.
 	 * 🔴 이미 나눈 구간에는 반영되지 않는다 — 구간은 캐시된 자산이다.
 	 */
@@ -310,7 +315,55 @@ export interface ShortsSourceDetail {
 	clips: ShortsClip[];
 	cost: ShortsCost;
 	stageCalls: ShortsStageCall[];
+	/** 보관한 대사의 발화 수(tease §5-1). 0 이면 그 출처는 아직 없다. 쓰는 대사는 `source.caption_source`. */
+	transcripts: Record<TranscriptOrigin, number>;
+	stt: {
+		/** 음성 인식이 들은 범위. 🔴 같은 오디오는 다시 듣지 않는다. */
+		spans: ShortsSttSpan[];
+		heardSec: number;
+		/** 아직 안 들은 분석 범위. 0 이고 heardSec 가 있으면 음성 인식은 끝났다 — 버튼이 사라진다. */
+		remainingSec: number;
+	};
 }
+
+export type TranscriptOrigin = "youtube" | "whisper";
+
+export interface ShortsSttSpan {
+	start_sec: number;
+	end_sec: number;
+	model: string;
+	language: string | null;
+	created_at: string;
+}
+
+/**
+ * 자막과 음성 인식이 다른 곳 하나. 종류는 서버(transcript_diff.KINDS)와 같은 순서로 보여 준다.
+ * `invented` = 음성 인식 쪽에 0초 단어가 있다 — 소리 없이 지어냈을 수 있다(뜻을 바꾸는 것이 이것).
+ */
+export type TranscriptSpotKind = "invented" | "caption_missing" | "whisper_missing" | "different" | "number";
+
+export interface TranscriptSpot {
+	start_sec: number;
+	end_sec: number;
+	kind: TranscriptSpotKind;
+	caption: string;
+	whisper: string;
+	before: string;
+	after: string;
+}
+
+export type TranscriptDiff =
+	| { available: false; reason: string }
+	| {
+			available: true;
+			comparedSec: number;
+			captionChars: number;
+			whisperChars: number;
+			mismatchChars: number;
+			mismatchRatio: number;
+			byKind: Record<TranscriptSpotKind, number>;
+			spots: TranscriptSpot[];
+	  };
 
 // ---------------------------------------------------------------- 시청자 질문 묶기
 

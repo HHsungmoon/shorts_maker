@@ -1903,3 +1903,112 @@
 .sm-stt__fixed {
 	margin: 0;
 }
+
+/* 음성 인식 시작 전 확인(tease §5-1). 🔴 같은 오디오에 한 번뿐이라 되돌릴 수 없다 — 누른 버튼 바로 아래에
+   펼쳐 언어·걸리는 시간을 한 번 더 보여 준다. 모달로 화면을 덮지 않는다(2026-09-17 결정과 같은 이유). */
+.sm-prep__confirm {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin: 0 0 12px;
+	padding: 12px 14px;
+	background: var(--accent-soft);
+	border-radius: var(--radius);
+	font-size: 14px;
+}
+
+.sm-prep__confirm p {
+	margin: 0;
+	line-height: 1.6;
+}
+
+/* 자막 ↔ 음성 인식 비교 ------------------------------------------------------------ */
+.sm-tcmp {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 4px;
+}
+
+.sm-tcmp__head {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.sm-tcmp__summary {
+	margin: 0;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.sm-tcmp__kinds {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+/* 지어냈을 수 있는 곳이 있으면 그 고르개만 위험색 — 가장 먼저 봐야 할 곳이다. */
+.sm-tcmp__danger:not(.sm-chip--on) {
+	color: var(--danger);
+	border-color: var(--danger);
+}
+
+.sm-tcmp__hint {
+	margin: 0;
+}
+
+.sm-tcmp__list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	max-height: 520px;
+	overflow-y: auto;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sm-tcmp__item {
+	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
+	gap: 12px;
+	padding: 10px 12px;
+	border-top: 1px solid var(--border);
+}
+
+.sm-tcmp__item:first-child {
+	border-top: 0;
+}
+
+.sm-tcmp__time {
+	align-self: start;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.sm-tcmp__pair p {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.7;
+}
+
+.sm-tcmp__who {
+	display: inline-block;
+	width: 64px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-muted);
+}
+
+.sm-tcmp__text mark {
+	padding: 0 2px;
+	background: var(--accent-soft);
+	color: inherit;
+	border-radius: 3px;
+}
+
+.sm-tcmp__none {
+	color: var(--text-muted);
+	font-style: italic;
+}

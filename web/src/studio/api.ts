@@ -17,6 +17,8 @@ import type {
 	ShortsStatus,
 	ShortsUtterance,
 	SttFix,
+	TranscriptDiff,
+	TranscriptOrigin,
 	YoutubeState,
 	YoutubeUploadDraft,
 	YoutubeUploadForm,
@@ -114,12 +116,28 @@ export function fetchUtterances(chunkId: number): Promise<ShortsUtterance[]> {
 	return request<ShortsUtterance[]>(`/api/chunks/${chunkId}/utterances`);
 }
 
-// 소스 단위다. 조각이 여럿이면 서버가 순서대로 전사하고, 화면에는 잡 하나로 보인다.
-export function runStt(sourceId: number, language: string | null, force = true): Promise<ShortsJob> {
+// 소스 단위다. **아직 안 들은 범위**만 서버가 순서대로 전사하고, 화면에는 잡 하나로 보인다.
+// 🔴 같은 오디오는 한 번뿐이다(tease §5-1) — 다 들었으면 409. 다시 돌리는 인자(force)는 없다.
+export function runStt(sourceId: number, language: string | null): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/stt`, {
 		method: "POST",
-		body: { force, language },
+		body: { language },
 	});
+}
+
+/** 유튜브 자막을 받아 쓰는 대사로 삼는다 — 기본 경로(tease §5-1). 음성 인식 대사는 따로 남는다. */
+export function importCaptions(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/captions`, { method: "POST" });
+}
+
+/** [이 대사로 쓰기] — 보관한 대사를 쓰는 대사로 옮겨 담는다. 다시 받거나 다시 듣지 않는다(잡 아님, 1초 안쪽). */
+export function chooseTranscript(sourceId: number, origin: TranscriptOrigin): Promise<unknown> {
+	return request(`/api/sources/${sourceId}/transcript`, { method: "POST", body: { origin } });
+}
+
+/** 자막 ↔ 음성 인식 비교. 음성 인식이 들은 범위 안에서만 맞댄다. */
+export function fetchTranscriptDiff(sourceId: number): Promise<TranscriptDiff> {
+	return request<TranscriptDiff>(`/api/sources/${sourceId}/transcript-diff`);
 }
 
 // 구간 번호는 소스 안에서 연속이다 — 조각 경계는 여기서 이미 사라진다.

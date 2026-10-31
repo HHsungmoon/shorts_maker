@@ -6,13 +6,17 @@ import {
 	fetchUtterances,
 	patchSource,
 	publishSource,
+	importCaptions,
 	runSegment,
 	runStt,
 } from "../api";
 import { time } from "../../shared/format";
 import { Modal } from "../../shared/Modal";
 import type { SourceView } from "../SourcePage";
-import type { ShortsUtterance, SttFix } from "../types";
+import type { ShortsUtterance, SttFix, TranscriptOrigin } from "../types";
+import { TranscriptCompare } from "./TranscriptCompare";
+
+const ORIGIN_LABEL: Record<TranscriptOrigin, string> = { youtube: "유튜브 자막", whisper: "음성 인식" };
 
 /** 위 단계 표시가 데려가는 자리. 단계마다 아래에 같은 id 의 칸이 있다. */
 const STEP_IDS = ["prep-source", "prep-range", "prep-stt", "prep-segments"] as const;
@@ -57,6 +61,7 @@ export function PrepareTab({ view }: { view: SourceView }) {
 		language,
 		setLanguage,
 		job,
+		playAt,
 	} = view;
 
 	// 개요 초안은 DB 가 아니라 **잡 결과**로 온다 — 저장하지 않고 돌려주기 때문이다.
@@ -71,13 +76,19 @@ export function PrepareTab({ view }: { view: SourceView }) {
 	const steps = [
 		{ title: "원본", detail: data ? time(data.source.duration_sec ?? 0) : "불러오는 중…" },
 		{ title: "구간 추출", detail: hasChunks ? `${chunks.length}조각` : "범위를 정합니다" },
-		{ title: "음성 인식", detail: utterances > 0 ? `발화 ${utterances.toLocaleString()}` : "몇 분 걸립니다" },
+		{ title: "대사 가져오기", detail: utterances > 0 ? `발화 ${utterances.toLocaleString()}` : "유튜브 자막은 몇 초" },
 		{ title: "주제 분할", detail: segments.length > 0 ? `구간 ${segments.length}` : "전사를 주제로 나눕니다" },
 	];
 
 	// 마지막으로 성공한 음성 인식 호출. 무엇으로 돌렸는지(모델·언어·용어 힌트)가 여기 남아 있다.
 	// stageCalls 는 최근 것이 앞이다.
 	const lastStt = data?.stageCalls.find((c) => c.stage === "stt" && c.error === null) ?? null;
+	// 지금 쓰는 대사가 어디서 왔나(tease §5-1). 유튜브 자막이 기본이고, 음성 인식은 자막이 없을 때 누른다.
+	const captionSource = data?.source.caption_source ?? null;
+	// 🔴 음성 인식은 같은 오디오에 한 번뿐이다 — 들은 것이 있고 남은 것이 없으면 끝났다.
+	const sttFinished = !!data && data.stt.heardSec > 0 && data.stt.remainingSec === 0;
+	const sttRunning = jobBusy && job?.kind === "stt";
+	const [confirmStt, setConfirmStt] = useState(false);
 	const maxPerMin = Math.max(
 		0,
 		...chunks.map((c) => c.utteranceCount / Math.max(1, (c.end_sec - c.start_sec) / 60)),
@@ -188,7 +199,7 @@ export function PrepareTab({ view }: { view: SourceView }) {
 				)}
 			</section>
 
-			{/* 2·3 · 구간 추출 · 음성 인식 --------------------------------------------- */}
+			{/* 2·3 · 구간 추출 · 대사 가져오기 ------------------------------------------ */}
 			<section id={STEP_IDS[1]} className="sm-prep__card">
 				<StepHead no={2} title="구간 추출" done={done[1]} next={nextStep === 2}>
 					{hasChunks && !editingRange
@@ -276,41 +287,92 @@ export function PrepareTab({ view }: { view: SourceView }) {
 					/>
 				)}
 
+				{/* 3 · 대사 가져오기 — 🔴 유튜브 자막이 기본, 음성 인식은 두 번째 버튼(2026-11-01, tease §5-1).
+				    whisper 가 없는 문장을 지어내는 것을 실측했다. 두 대사는 따로 보관되고(transcripts) 쓰는 것 하나를
+				    고른다 — 자막을 받아도 음성 인식이 날아가지 않고, 둘이 다 있으면 아래 비교 칸이 열린다.
+				    🔴 음성 인식은 같은 오디오에 한 번뿐이다. 다 들었으면 버튼 대신 "끝남" 만 보인다. */}
 				<div id={STEP_IDS[2]} className="sm-prep__sub">
-					<StepHead no={3} title="음성 인식" done={done[2]} next={nextStep === 3}>
-						{utterances > 0 ? `발화 ${utterances.toLocaleString()}` : "조각마다 몇 분씩 걸립니다"}
+					<StepHead no={3} title="대사 가져오기" done={done[2]} next={nextStep === 3}>
+						{utterances > 0
+							? `발화 ${utterances.toLocaleString()} · ${captionSource ? ORIGIN_LABEL[captionSource] : "출처 모름"}`
+							: "유튜브 자막은 몇 초 · 음성 인식은 길이의 1.4배쯤"}
 						{data && hasChunks && (
 							<span className="sm-actions sm-actions--end">
+								{/* 유튜브 id 가 없으면 받을 곳이 없다 — 이건 권한이 아니라 전제라 잠그고 이유를 옆에 쓴다. */}
+								{!data.source.youtube_id && <span className="sm-meta">유튜브 id 가 없어 음성 인식만 됩니다</span>}
+								<button
+									type="button"
+									className={`button button--small${nextStep === 3 && data.source.youtube_id ? " sm-go" : ""}`}
+									disabled={jobBusy || sourceBusy || !data.source.youtube_id}
+									onClick={() => submit(() => importCaptions(data.source.id))}
+								>
+									{data.transcripts.youtube > 0 ? "자막 다시 가져오기" : "유튜브 자막"}
+								</button>
+								{sttRunning ? (
+									<button type="button" className="button button--small" disabled>
+										음성 인식 중…
+									</button>
+								) : sttFinished ? (
+									<span className="sm-meta" title="같은 오디오는 다시 듣지 않습니다">
+										음성 인식 끝남 · {time(data.stt.heardSec)} 들음
+									</span>
+								) : (
+									<button
+										type="button"
+										className={`button button--small${nextStep === 3 && !data.source.youtube_id ? " sm-go" : ""}`}
+										disabled={jobBusy || sourceBusy}
+										onClick={() => setConfirmStt(true)}
+									>
+										{data.stt.heardSec > 0 ? "음성 인식 이어서" : "음성 인식"}
+									</button>
+								)}
+							</span>
+						)}
+					</StepHead>
+					{/* 🔴 되돌릴 수 없는 한 번이라 시작 전에 한 번 더 보여 준다 — 언어를 잘못 고르면 다시 돌릴 길이 없다.
+					    모달이 아니라 이 자리에 펼친다(누른 버튼 바로 아래라 눈에 들어온다). */}
+					{data && confirmStt && !sttFinished && !sttRunning && (
+						<div className="sm-prep__confirm">
+							<p>
+								음성 인식은 <strong>같은 오디오에 한 번만</strong> 합니다 — 끝나면 다시 돌릴 수 없습니다.
+								<br />
+								<span className="sm-meta">
+									남은 범위 {time(data.stt.remainingSec)} · 약 {Math.max(1, Math.round((data.stt.remainingSec * 1.4) / 60))}분
+									걸립니다(실측 0.7배속). 도는 동안 다른 작업은 기다립니다.
+									{data.transcripts.youtube > 0 && " 지금 쓰는 자막 대사는 그대로이고, 끝나면 둘을 비교합니다."}
+								</span>
+							</p>
+							<span className="sm-actions">
 								<select
 									className="field__input sm-prep__lang"
 									value={language ?? data.source.language ?? ""}
 									onChange={(e) => setLanguage(e.target.value)}
 									aria-label="음성 언어"
 								>
-									{Object.entries(status.data?.languages ?? { ko: "한국어", en: "영어" }).map(
-										([code, label]) => (
-											<option key={code} value={code}>
-												{label}
-											</option>
-										),
-									)}
+									{Object.entries(status.data?.languages ?? { ko: "한국어", en: "영어" }).map(([code, label]) => (
+										<option key={code} value={code}>
+											{label}
+										</option>
+									))}
 									<option value="">자동 감지</option>
 								</select>
-								{/* 전사가 중간에 끊겼으면 force 를 끄고 부른다 — 서버가 끝난 데를 건너뛰고 이어서 간다.
-								    여기서 force 를 켜면 이미 몇 분씩 걸려 끝낸 전사를 통째로 다시 돌린다. */}
 								<button
 									type="button"
-									className={`button button--small${nextStep === 3 ? " sm-go" : ""}`}
+									className="button button--small sm-go"
 									disabled={jobBusy || sourceBusy}
-									onClick={() =>
-										submit(() => runStt(data.source.id, language ?? data.source.language ?? null, sttDone))
-									}
+									onClick={() => {
+										setConfirmStt(false);
+										submit(() => runStt(data.source.id, language ?? data.source.language ?? null));
+									}}
 								>
-									{sttDone ? "다시 인식" : utterances > 0 ? "이어서" : "실행"}
+									시작
+								</button>
+								<button type="button" className="button button--small" onClick={() => setConfirmStt(false)}>
+									취소
 								</button>
 							</span>
-						)}
-					</StepHead>
+						</div>
+					)}
 				</div>
 
 				{data && (
@@ -364,6 +426,24 @@ export function PrepareTab({ view }: { view: SourceView }) {
 				)}
 			</section>
 			</div>
+
+			{/* 자막 ↔ 음성 인식 비교 — 둘 다 있을 때만(tease §5-1). 폭 전체를 쓴다: 두 줄을 나란히 읽어야 한다. */}
+			{data && data.transcripts.youtube > 0 && data.transcripts.whisper > 0 && (
+				<section className="sm-prep__card">
+					<div className="sm-prep__stephead">
+						<h3 className="sm-prep__steptitle">자막 ↔ 음성 인식 비교</h3>
+						<span className="sm-prep__stepdetail">어느 쪽이 맞는지는 들어 봐야 압니다 — 시각을 누르면 그 자리부터 틉니다</span>
+					</div>
+					<TranscriptCompare
+						sourceId={data.source.id}
+						using={captionSource}
+						version={`${data.transcripts.youtube}-${data.transcripts.whisper}-${data.stt.heardSec}-${JSON.stringify(data.source.stt_fixes ?? [])}`}
+						busy={jobBusy || sourceBusy}
+						act={act}
+						playAt={playAt}
+					/>
+				</section>
+			)}
 
 			{/* 4 · 주제 분할 (C3) ------------------------------------------------------- */}
 			<section id={STEP_IDS[3]} className="sm-prep__card">
@@ -816,7 +896,7 @@ function FixesModal({
 			open
 			title="교정 사전"
 			onClose={onClose}
-			subhead="음성 인식이 계속 틀리게 적는 말을 바른 말로 바꿉니다. 저장하면 지금 전사에 바로 적용되고, 다음 음성 인식에도 붙습니다."
+			subhead="유튜브 자막이나 음성 인식이 계속 틀리게 적는 말을 바른 말로 바꿉니다. 저장하면 지금 대사에 바로 적용되고, 다음에 가져올 때도 붙습니다."
 		>
 			<div className="sm-terms">
 				<form

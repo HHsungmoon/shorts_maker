@@ -15,6 +15,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	download: "영상 받기",
 	register: "원본 등록",
 	chunk: "구간 추출",
+	caption: "유튜브 자막 가져오기",
 	stt: "음성 인식",
 	segment: "주제 분할",
 	overview: "개요 초안",
