@@ -109,3 +109,37 @@
 .sm-home-files {
 	margin-top: 8px;
 }
+
+/* 연결된 유튜브 채널 — 머리의 버튼들과 높이를 맞춘 알약 하나. [끊기] 는 자주 누르지 않아 글자로 둔다. */
+.sm-yt-channel {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px 4px 12px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-size: 14px;
+}
+
+.sm-yt-channel__name {
+	max-width: 16em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sm-yt-channel__off {
+	padding: 2px 6px;
+	border: none;
+	border-radius: 999px;
+	background: none;
+	font: inherit;
+	font-size: 13px;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.sm-yt-channel__off:hover {
+	background: var(--bg);
+	color: var(--text);
+}

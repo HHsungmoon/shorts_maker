@@ -159,6 +159,60 @@ export interface ShortsClip {
 	route: string | null;
 	description: string | null;
 	reviews: ShortsClipReview[];
+	/** 이 클립을 유튜브에 올린 기록, 최신 먼저. 같은 클립을 비공개로 시험한 뒤 다시 올릴 수 있어 여럿이다. */
+	uploads: ShortsClipUpload[];
+}
+
+export type YoutubePrivacy = "private" | "unlisted" | "public";
+
+/** 유튜브 업로드 한 번(clip_uploads). */
+export interface ShortsClipUpload {
+	id: number;
+	/** 실제로 보낸 값 — 대화상자에서 고친 뒤의 것이다. */
+	title: string;
+	privacy: YoutubePrivacy;
+	/** UPLOADING 은 잡이 도는 중. 재기동하면 FAILED 로 정리된다(채널에 올라갔는지 확인해야 한다). */
+	status: "UPLOADING" | "DONE" | "FAILED";
+	youtube_video_id: string | null;
+	channel_id: string | null;
+	error: string | null;
+	created_at: string;
+	finished_at: string | null;
+	/** 올라간 영상(올라가지 않았으면 null). 🔴 주소는 서버가 짓는다(upload._view) — 화면이 따로 짓지 않는다. */
+	shorts_url: string | null;
+	/** 유튜브 스튜디오 편집 화면. 관련 동영상(원본 링크)은 API 로 달 수 없어 여기서 지정한다. */
+	studio_url: string | null;
+}
+
+/**
+ * 연결된 채널. 🔴 refresh token 은 서버가 싣지 않는다.
+ * 채널 id·이름은 **첫 업로드 뒤에** 채워진다 — 업로드 권한만으로는 채널 정보를 물을 수 없다.
+ */
+export interface YoutubeChannel {
+	channel_id: string | null;
+	channel_title: string | null;
+	scopes: string;
+	connected_at: string;
+}
+
+export interface YoutubeState {
+	/** .env 에 OAuth 클라이언트 ID·시크릿이 있나. */
+	configured: boolean;
+	redirectUri: string;
+	channel: YoutubeChannel | null;
+}
+
+export interface YoutubeUploadDraft {
+	title: string;
+	description: string;
+	privacy: YoutubePrivacy;
+}
+
+export interface YoutubeUploadForm {
+	defaults: YoutubeUploadDraft;
+	uploads: ShortsClipUpload[];
+	channel: YoutubeChannel | null;
+	configured: boolean;
 }
 
 export interface ShortsStageCall {

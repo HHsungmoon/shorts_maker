@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { clipUrl, fetchInsights, patchClipTitle, publishClip, renderClip, reviewClip } from "../api";
+import { clipUrl, fetchInsights, patchClipTitle, publishClip, renderClip, reviewClip, uploadClipToYoutube } from "../api";
 import { Modal } from "../../shared/Modal";
 import { useAsync } from "../../shared/useAsync";
 import { time } from "../../shared/format";
 import type { ShortsClip, ShortsFunnelRow, ShortsInsights } from "../types";
 import type { SourceView } from "../SourcePage";
+import { YoutubeUploadLine, YoutubeUploadModal } from "./YoutubeUploadModal";
 import "../clips.css";
 
 // 거르개. "공개" 탭이지만 안에는 아직 안 내보낸 클립도 있다 — 둘을 한 번에 가를 수 있어야
@@ -145,6 +146,7 @@ export function PublishTab({ view }: { view: SourceView }) {
 function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; stats: ShortsFunnelRow | null }) {
 	const { jobBusy, submit, act, reload } = view;
 	const [editing, setEditing] = useState(false);
+	const [uploading, setUploading] = useState(false);
 	const live = clip.published_at !== null;
 	const envelope = clip.end_sec - clip.start_sec;
 	// 🔴 길이는 total_sec 이 먼저다. 조합 클립의 start~end 는 조각들을 감싼 봉투라서, 그걸 빼면
@@ -233,20 +235,33 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 					    움직여야 하므로). 여기 있는 건 크리에이터가 자기 기준으로 뽑은 클립에도 시청자에게
 					    보여줄 길이 있어야 해서 둔 것이다. */}
 					{clip.rendered && (
-						<button
-							type="button"
-							className={`button button--small sm-short__publish${live ? "" : " sm-go"}`}
-							disabled={jobBusy}
-							onClick={() =>
-								act(async () => {
-									await publishClip(clip.id, !clip.published_at);
-									reload();
-								})
-							}
-						>
-							{live ? "내리기" : "시청자에게 공개"}
-						</button>
+						<div className="sm-short__sends">
+							<button
+								type="button"
+								className={`button button--small sm-short__publish${live ? "" : " sm-go"}`}
+								disabled={jobBusy}
+								onClick={() =>
+									act(async () => {
+										await publishClip(clip.id, !clip.published_at);
+										reload();
+									})
+								}
+							>
+								{live ? "내리기" : "시청자에게 공개"}
+							</button>
+							{/* 🔴 시청자 공개(우리 페이지)와 유튜브 업로드(남의 채널)는 다른 일이다 — 한 버튼에 묶지
+							    않는다. 여는 것까지는 보기 전용도 된다. 막는 건 대화상자 안의 [올리기] 다. */}
+							<button
+								type="button"
+								className="button button--small"
+								disabled={jobBusy}
+								onClick={() => setUploading(true)}
+							>
+								유튜브에 올리기
+							</button>
+						</div>
 					)}
+					{clip.uploads.length > 0 && <YoutubeUploadLine upload={clip.uploads[0]} />}
 					<div className="sm-short__tools">
 						{/* 누른 쪽이 눌린 채로 보여야 한다 — 안 그러면 들어갔는지 몰라 다시 누른다(연타의 출발점). */}
 						<button
@@ -284,6 +299,17 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 							reload();
 						})
 					}
+				/>
+			)}
+			{uploading && (
+				<YoutubeUploadModal
+					clip={clip}
+					onClose={() => setUploading(false)}
+					onSubmit={(draft) => {
+						// 잡이다 — 진행은 위 배너가, 결과는 카드의 유튜브 줄이 말한다.
+						submit(() => uploadClipToYoutube(clip.id, draft));
+						setUploading(false);
+					}}
 				/>
 			)}
 		</article>

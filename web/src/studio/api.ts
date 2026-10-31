@@ -17,6 +17,9 @@ import type {
 	ShortsStatus,
 	ShortsUtterance,
 	SttFix,
+	YoutubeState,
+	YoutubeUploadDraft,
+	YoutubeUploadForm,
 } from "./types";
 
 // 경로가 admin-web 시절의 `/admin/shorts/**` 에서 `/api/**` 로 바뀌었다 — 그 접두사는
@@ -321,4 +324,32 @@ export function patchSource(
 	fixedUtterances?: number;
 }> {
 	return request(`/api/sources/${sourceId}`, { method: "PATCH", body: patch });
+}
+
+// ---------------------------------------------------------------- 유튜브 (tease §7-5)
+
+export function fetchYoutube(): Promise<YoutubeState> {
+	return request<YoutubeState>("/api/youtube");
+}
+
+/**
+ * 채널 연결 — 서버가 준 Google 동의 화면으로 **이 창을** 옮긴다. 끝나면 서버가 `/studio?youtube=…` 로
+ * 돌려보낸다(StudioHome 이 그 안내를 띄운다). 새 창으로 열지 않는다 — 돌아온 창이 하나여야 헷갈리지 않는다.
+ */
+export async function connectYoutube(): Promise<void> {
+	const { url } = await request<{ url: string }>("/api/youtube/connect", { method: "POST" });
+	window.location.assign(url);
+}
+
+export function disconnectYoutube(): Promise<{ disconnected: boolean; revoked: boolean }> {
+	return request<{ disconnected: boolean; revoked: boolean }>("/api/youtube", { method: "DELETE" });
+}
+
+export function fetchYoutubeUploadForm(clipId: number): Promise<YoutubeUploadForm> {
+	return request<YoutubeUploadForm>(`/api/clips/${clipId}/youtube`);
+}
+
+// 🔴 연결된 채널에 실제로 올라간다. 공개 범위는 사람이 고른 값을 그대로 보낸다 — 서버에 기본값이 없다.
+export function uploadClipToYoutube(clipId: number, draft: YoutubeUploadDraft): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/clips/${clipId}/youtube`, { method: "POST", body: draft });
 }

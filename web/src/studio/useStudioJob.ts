@@ -24,6 +24,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	pipeline: "전체 실행",
 	cluster: "질문 집계",
 	answer: "질문에 답하기",
+	upload: "유튜브 업로드",
 };
 
 export interface StudioJob {

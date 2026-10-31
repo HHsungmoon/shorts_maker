@@ -1,14 +1,15 @@
-import { useCallback, useState } from "react";
-import { Link } from "react-router-dom";
-import { deleteMedia, fetchMedia, fetchShortsSources, fetchStatus, thumbnailUrl } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { deleteMedia, fetchMedia, fetchShortsSources, fetchStatus, fetchYoutube, thumbnailUrl } from "./api";
 import { PRODUCT_NAME } from "../shared/brand";
 import { useAuth } from "./AuthContext";
 import { MediaLibrary } from "./components/MediaLibrary";
 import { NewSourceModal } from "./components/NewSourceModal";
 import { StudioBanners, StudioHead } from "./components/StudioChrome";
+import { YoutubeConnect } from "./components/YoutubeConnect";
 import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
-import type { ShortsMediaList, ShortsSourceListItem, ShortsStatus } from "./types";
+import type { ShortsMediaList, ShortsSourceListItem, ShortsStatus, YoutubeState } from "./types";
 import "./home.css";
 
 /**
@@ -86,8 +87,28 @@ export function StudioHome() {
 	);
 	// 파일 목록은 소스 목록과 다르다 — 등록되지 않은 파일(scp 로 올린 것)이 여기에만 보인다.
 	const media = useAsync<ShortsMediaList>(fetchMedia, [studio.reloadToken], { keepPrevious: true });
+	const youtube = useAsync<YoutubeState>(fetchYoutube, [studio.reloadToken], { keepPrevious: true });
 
 	const { setError, setNotice, reload } = studio;
+
+	// 유튜브 연결에서 돌아온 자리(서버 콜백이 `/studio?youtube=…&reason=…` 로 보낸다). 안내를 띄우고
+	// 주소에서 지운다 — 남겨 두면 새로고침할 때마다 같은 안내가 다시 뜬다.
+	const [params, setParams] = useSearchParams();
+	useEffect(() => {
+		const result = params.get("youtube");
+		if (!result) {
+			return;
+		}
+		const reason = params.get("reason");
+		if (result === "connected") {
+			setNotice("유튜브 채널을 연결했습니다. 영상 페이지의 공개 탭에서 숏폼마다 [유튜브에 올리기] 로 올립니다.");
+		} else if (result === "denied") {
+			setNotice("유튜브 연결을 취소했습니다.");
+		} else {
+			setError(`유튜브 연결에 실패했습니다. ${reason ?? ""}`.trim());
+		}
+		setParams({}, { replace: true });
+	}, [params, setParams, setNotice, setError]);
 	// 🔴 서버에서 파일과 파생물을 실제로 지운다. 되돌릴 수 없어 무엇이 사라지는지 먼저 말한다.
 	const remove = useCallback(
 		async (name: string) => {
@@ -123,6 +144,14 @@ export function StudioHome() {
 				<Link to="/studio/prompts" className="button button--small">
 					프롬프트
 				</Link>
+				<YoutubeConnect
+					state={youtube.data}
+					onError={setError}
+					onChanged={(message) => {
+						setNotice(message);
+						reload();
+					}}
+				/>
 				{/* 🔴 보기 전용이라고 비활성화하지 않는다. 눌리지 않는 버튼은 이유를 말할 기회가
 				    없어서 "고장난 화면" 으로 읽힌다.
 
