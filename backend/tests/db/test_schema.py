@@ -188,7 +188,7 @@ class StageCallTest(SchemaTestCase):
     STAGES = (
         "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
         "caption", "embed", "retrieve", "cluster", "judge", "classify", "locate", "download", "preview",
-        "upload",
+        "upload", "livechat",
     )
 
     def test_rejects_unknown_stage(self):
@@ -510,6 +510,38 @@ class YoutubeUploadTest(SchemaTestCase):
         self.conn.execute("delete from clips where id = %s", (clip_id,))
         row = self.conn.execute("select clip_id, youtube_video_id from clip_uploads").fetchone()
         self.assertEqual((row["clip_id"], row["youtube_video_id"]), (None, "vid"))
+
+class QuestionOriginTest(SchemaTestCase):
+    """질문의 출처(마이그레이션 014, tease §3-5)."""
+
+    def test_page_questions_need_no_external_id(self):
+        source_id = self.insert_source()
+        question_id = self.insert_question(source_id)
+        row = self.conn.execute("select origin, external_id from questions where id = %s", (question_id,)).fetchone()
+        self.assertEqual((row["origin"], row["external_id"]), ("page", None))
+
+    def test_a_chat_question_must_carry_its_message_id(self):
+        source_id = self.insert_source()
+        self.expect_integrity_error(
+            "insert into questions (source_id, text, viewer_id, origin) values (%s, '질문?', 'yt:1', 'live_chat')",
+            (source_id,),
+        )
+
+    def test_the_same_chat_message_cannot_land_twice(self):
+        # 🔴 [가져오기] 를 두 번 누르면 같은 질문이 둘이 되어 "2명이 궁금해함" 으로 부풀려진다.
+        source_id = self.insert_source()
+        sql = ("insert into questions (source_id, text, viewer_id, origin, external_id)"
+               " values (%s, '질문?', 'yt:1', 'live_chat', 'm1')")
+        self.conn.execute(sql, (source_id,))
+        self.expect_integrity_error(sql, (source_id,))
+
+    def test_unknown_origin_is_refused(self):
+        source_id = self.insert_source()
+        self.expect_integrity_error(
+            "insert into questions (source_id, text, viewer_id, origin, external_id)"
+            " values (%s, '질문?', 'v', 'comment', 'c1')",
+            (source_id,),
+        )
 
 
 if __name__ == "__main__":
