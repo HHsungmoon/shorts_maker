@@ -129,7 +129,7 @@ def demand(conn: psycopg.Connection, source_id: int) -> list[dict]:
 
 def questions_of(conn: psycopg.Connection, cluster_id: int) -> list[dict]:
     rows = conn.execute(
-        """select q.id, q.text, q.created_at, count(l.id) as likes
+        """select q.id, q.text, q.created_at, q.origin, q.asked_at_sec, count(l.id) as likes
            from questions q left join question_likes l on l.question_id = q.id
            where q.cluster_id = %s group by q.id order by likes desc, q.id""",
         (cluster_id,),
@@ -212,7 +212,7 @@ def candidates_of(conn: psycopg.Connection, run_id: int | None) -> list[dict]:
 
 def unclustered(conn: psycopg.Connection, source_id: int) -> list[dict]:
     rows = conn.execute(
-        """select q.id, q.text, q.created_at, count(l.id) as likes
+        """select q.id, q.text, q.created_at, q.origin, q.asked_at_sec, count(l.id) as likes
            from questions q left join question_likes l on l.question_id = q.id
            where q.source_id = %s and q.cluster_id is null
            group by q.id order by q.id""",

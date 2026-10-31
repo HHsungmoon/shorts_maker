@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
-from ..answers import answer, clusters, events, report, suggest
+from ..answers import answer, clusters, events, livechat, report, suggest
 from . import auth, deps, prompt_catalog, youtube
 from ..pipeline import (
     cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt, upload,
@@ -567,6 +567,23 @@ def aggregate_questions(source_id: int) -> dict:
             return clusters.aggregate(conn, deps.cfg, source_id)
 
     return submit("cluster", f"source {source_id}", work)
+
+
+@router.post("/sources/{source_id}/live-chat")
+def import_live_chat(source_id: int) -> dict:
+    """**[채팅에서 질문 가져오기]** — 끝난 라이브의 채팅 다시보기에서 질문 꼴만 골라 넣는다(tease §3-5).
+
+    잡이다(받는 데 몇십 초). 들어간 질문은 미분류로 남는다 — 묶는 건 여전히 [집계] 다.
+    """
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+
+    def work() -> dict:
+        with connect() as conn:
+            return livechat.import_replay(conn, deps.cfg, source_id)
+
+    return submit("livechat", f"source {source_id}", work)
 
 
 @router.get("/sources/{source_id}/clusters")
