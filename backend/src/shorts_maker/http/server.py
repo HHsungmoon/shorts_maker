@@ -212,6 +212,12 @@ def serve() -> None:
         # sources 의 RUNNING 은 다운로드·등록 잡이 만든다(ingest.begin_source).
         conn.execute("update sources set status = 'FAILED', error = '재기동으로 중단됨' where status = 'RUNNING'")
         conn.execute("update runs set status = 'FAILED', error = '재기동으로 중단됨' where status = 'RUNNING'")
+        # 유튜브 업로드 잡(pipeline/upload.py). 🔴 실제로는 올라갔을 수도 있다 — 바이트를 다 보낸 뒤 응답을
+        # 받기 전에 죽었으면 영상은 채널에 있다. 그래서 "중단됨" 이라고만 적고 채널을 확인하라고 한다.
+        conn.execute(
+            "update clip_uploads set status = 'FAILED', finished_at = now(),"
+            " error = '재기동으로 중단됨 — 채널에 올라갔는지 확인하세요' where status = 'UPLOADING'"
+        )
         # 클러스터의 IN_PROGRESS 도 같은 이유로 죽은 것이다 — 크리에이터가 다시 [답하기] 를 누를 수 있게 되돌린다.
         clusters.reopen_stuck(conn)
         conn.commit()
