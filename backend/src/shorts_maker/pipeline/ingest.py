@@ -24,7 +24,7 @@ import psycopg
 from .. import config
 from ..adapters import ffmpeg
 from ..db import store
-from . import media
+from . import media, transcripts
 
 
 class IngestError(RuntimeError):
@@ -276,6 +276,12 @@ def add_chunks(
                           replace=replace and position == 0,
                           idx=position, allow_more=position > 0)
             )
+        # 청크를 지우면 쓰는 대사(utterances)도 같이 지워지지만 보관한 대사(transcripts)는 남는다(tease §5-1).
+        # 고른 출처가 있으면 새 범위로 바로 옮겨 담는다 — 자막은 다시 받지 않고, 음성 인식은 들은 범위만큼 채워진다.
+        chosen = conn.execute("select caption_source from sources where id = %s", (source_id,)).fetchone()
+        if chosen and chosen["caption_source"] and transcripts.counts(conn, source_id)[chosen["caption_source"]]:
+            transcripts.use(conn, source_id, chosen["caption_source"])
+            conn.commit()
         return made
 
 

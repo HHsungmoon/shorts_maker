@@ -334,6 +334,23 @@ class AddChunksTest(_IngestDbCase):
             ingest.add_chunks(self.conn, self.cfg, source_id)
         self.assertEqual(len(self.chunks(source_id)), 4)
 
+    def test_a_new_range_is_filled_from_the_kept_transcript_without_fetching_again(self):
+        # 🔴 청크를 지우면 쓰는 대사도 지워진다. 보관한 대사(tease §5-1)에서 새 범위로 바로 옮겨 담는다.
+        from shorts_maker.pipeline import transcripts
+
+        source_id = self.source_of(600)
+        ingest.add_chunks(self.conn, self.cfg, source_id, 0, 300)
+        transcripts.store_rows(self.conn, source_id, "youtube", [
+            {"start_sec": s, "end_sec": s + 2, "text": f"{s}초"} for s in (10, 200, 400)
+        ], replace=True)
+        transcripts.use(self.conn, source_id, "youtube")
+        self.conn.commit()
+        ingest.add_chunks(self.conn, self.cfg, source_id, 0, 600, replace=True)
+        texts = [r["text"] for r in self.conn.execute(
+            "select u.text from utterances u join chunks c on c.id = u.chunk_id where c.source_id = %s"
+            " order by u.start_sec", (source_id,))]
+        self.assertEqual(texts, ["10초", "200초", "400초"])
+
     def test_replace_starts_over_instead_of_appending(self):
         source_id = self.source_of(5736)
         ingest.add_chunks(self.conn, self.cfg, source_id)

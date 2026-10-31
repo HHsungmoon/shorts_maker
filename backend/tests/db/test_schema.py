@@ -546,3 +546,46 @@ class QuestionOriginTest(SchemaTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TranscriptTablesTest(SchemaTestCase):
+    """두 대사 보관(마이그레이션 015, tease §5-1)."""
+
+    def test_unknown_origin_is_refused(self):
+        source_id = self.insert_source()
+        self.expect_integrity_error(
+            "insert into transcripts (source_id, origin, start_sec, end_sec, text) values (%s, 'manual', 0, 1, '말')",
+            (source_id,),
+        )
+
+    def test_a_line_must_have_a_length(self):
+        source_id = self.insert_source()
+        self.expect_integrity_error(
+            "insert into transcripts (source_id, origin, start_sec, end_sec, text) values (%s, 'youtube', 3, 3, '말')",
+            (source_id,),
+        )
+
+    def test_a_heard_span_must_have_a_length(self):
+        source_id = self.insert_source()
+        self.expect_integrity_error(
+            "insert into stt_spans (source_id, start_sec, end_sec, model) values (%s, 10, 5, 'faster-whisper:small')",
+            (source_id,),
+        )
+
+    def test_both_survive_rechunking_and_go_with_the_source(self):
+        # 🔴 청크에 매달지 않는다 — 범위를 다시 추출해도 몇십 분 걸린 음성 인식이 남아야 한다.
+        source_id, chunk_id, _, _ = self.insert_chain()
+        self.conn.execute(
+            "insert into transcripts (source_id, origin, start_sec, end_sec, text) values (%s, 'whisper', 0, 1, '말')",
+            (source_id,),
+        )
+        self.conn.execute(
+            "insert into stt_spans (source_id, start_sec, end_sec, model) values (%s, 0, 1800, 'faster-whisper:small')",
+            (source_id,),
+        )
+        self.conn.execute("delete from chunks where id = %s", (chunk_id,))
+        counts = store.row_counts(self.conn)
+        self.assertEqual((counts["transcripts"], counts["stt_spans"]), (1, 1))
+        self.conn.execute("delete from sources where id = %s", (source_id,))
+        counts = store.row_counts(self.conn)
+        self.assertEqual((counts["transcripts"], counts["stt_spans"]), (0, 0))
