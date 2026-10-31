@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 
 from shorts_maker.db import store
 from shorts_maker.http import server, auth, deps, studio, watch
@@ -121,17 +121,31 @@ def _fill(path: str) -> str:
     return re.sub(r"\{[a-z_]+\}", "1", out)
 
 
+def _routes(routes) -> list:
+    """하위 라우터까지 **펼친** API 라우트. 각 항목에 실제 경로(`path`)·메서드(`methods`)가 있다.
+
+    🔴 `router.routes` 를 그대로 돌면 안 된다. FastAPI 0.141 은 `include_router` 를 복사하지 않고
+    `_IncludedRouter` 한 칸으로 넣어서(2026-10-31 확인), 하위 라우터(`http/youtube.py`)의 라우트가 순회에서
+    통째로 빠진다 — 그러면 이 파일의 검사가 그 라우트들을 본 적도 없이 통과한다.
+    """
+    return [ctx for ctx in iter_route_contexts(routes) if isinstance(ctx.original_route, APIRoute)]
+
+
 class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
     """🔴 라우트 테이블을 **순회**한다. 몇 개 골라 확인하는 방식은 새 엔드포인트를 놓친다 —
     v8 이전에 그렇게 `/api/segments/{id}/preview` 가 열린 채로 며칠 있었다."""
 
     def test_the_router_has_routes(self):
         # 순회 테스트가 빈 목록을 돌며 통과하는 것을 막는다.
-        self.assertGreaterEqual(len(studio.router.routes), 20)
+        self.assertGreaterEqual(len(_routes(studio.router.routes)), 20)
+
+    def test_sub_routers_are_walked_too(self):
+        # 🔴 펼치기가 헛돌면 하위 라우터의 라우트가 위 401 검사에서 조용히 빠진다.
+        paths = {route.path for route in _routes(studio.router.routes)}
+        self.assertIn("/api/youtube/callback", paths)
 
     def test_every_route_and_method_returns_401_without_credentials(self):
-        for route in studio.router.routes:
-            assert isinstance(route, APIRoute)
+        for route in _routes(studio.router.routes):
             for method in route.methods:
                 with self.subTest(method=method, path=route.path):
                     response = self.client.request(method, _fill(route.path), json={})
@@ -139,9 +153,11 @@ class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
 
     def test_every_api_route_of_the_app_belongs_to_one_of_the_two_routers(self):
         # server.py 에 `/api/...` 를 직접 등록하면 라우터 레벨 인증이 안 걸린다. 그 실수를 잡는다.
-        known = {(r.path, m) for router in (studio.router, watch.router) for r in router.routes for m in r.methods}
-        for route in server.app.routes:
-            if not isinstance(route, APIRoute) or not route.path.startswith("/api/"):
+        known = {
+            (r.path, m) for router in (studio.router, watch.router) for r in _routes(router.routes) for m in r.methods
+        }
+        for route in _routes(server.app.routes):
+            if not route.path.startswith("/api/"):
                 continue
             for method in route.methods:
                 with self.subTest(method=method, path=route.path):
@@ -150,31 +166,28 @@ class EveryStudioRouteIsClosedTest(ApiAuthTestCase):
     def test_the_public_router_only_owns_the_watch_prefix(self):
         # 🔴 스튜디오 엔드포인트를 시청자 라우터에 잘못 넣으면 무인증으로 샌다. 경로가 그 실수를 막는다 —
         # `/api/watch/` 밖의 경로가 저기 있으면 여기서 걸린다.
-        for route in watch.router.routes:
-            assert isinstance(route, APIRoute)
+        for route in _routes(watch.router.routes):
             with self.subTest(path=route.path):
                 self.assertTrue(route.path.startswith("/api/watch/"), route.path)
 
     def test_the_two_routers_do_not_overlap(self):
-        studio_paths = {r.path for r in studio.router.routes}
-        watch_paths = {r.path for r in watch.router.routes}
+        studio_paths = {r.path for r in _routes(studio.router.routes)}
+        watch_paths = {r.path for r in _routes(watch.router.routes)}
         self.assertEqual(studio_paths & watch_paths, set())
 
     def test_the_public_router_is_reachable_without_credentials(self):
         # 반대 방향의 실수: 시청자 엔드포인트를 스튜디오 라우터에 넣으면 인증이 걸려 시청자가 못 쓴다.
         # 401 만 아니면 된다 — 404(없는 id)나 422(본문 없음)는 정상이다.
-        for route in watch.router.routes:
-            assert isinstance(route, APIRoute)
+        for route in _routes(watch.router.routes):
             for method in route.methods:
                 with self.subTest(method=method, path=route.path):
                     response = self.client.request(method, _fill(route.path), json={})
                     self.assertNotEqual(response.status_code, 401, response.text)
 
     def test_the_only_routes_outside_api_are_health_auth_and_the_frontend(self):
-        public = sorted(
-            r.path for r in server.app.routes
-            if isinstance(r, APIRoute) and not r.path.startswith("/api/")
-        )
+        # 🔴 펼쳐서 본다. 라우터를 앱에 **직접** 붙이면(`app.include_router(youtube.router)`) 그 라우트는
+        # `/api` 도 인증도 없이 열리는데, 펼치지 않으면 `_IncludedRouter` 한 칸이라 여기서 안 보인다.
+        public = sorted(r.path for r in _routes(server.app.routes) if not r.path.startswith("/api/"))
         self.assertEqual(
             public, ["/auth/login", "/auth/logout", "/auth/me", "/debug", "/health", "/{full_path:path}"]
         )
@@ -192,8 +205,7 @@ class ReadOnlyRoleTest(ApiAuthTestCase):
         # 🔴 401 이면 화면이 "다시 로그인하라" 로 읽는다. 로그인은 돼 있으니 403 이어야 한다.
         self.login(READONLY)
         checked = 0
-        for route in studio.router.routes:
-            assert isinstance(route, APIRoute)
+        for route in _routes(studio.router.routes):
             for method in route.methods:
                 if method in deps.SAFE_METHODS:
                     continue
@@ -205,8 +217,7 @@ class ReadOnlyRoleTest(ApiAuthTestCase):
 
     def test_reading_still_works(self):
         self.login(READONLY)
-        for route in studio.router.routes:
-            assert isinstance(route, APIRoute)
+        for route in _routes(studio.router.routes):
             if "GET" not in route.methods:
                 continue
             with self.subTest(path=route.path):

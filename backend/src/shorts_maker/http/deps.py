@@ -32,8 +32,9 @@ queue = jobs.JobQueue()
 # 반드시 빠뜨린다. 메서드로 가르면 새 엔드포인트가 자동으로 옳은 쪽에 들어가고, 라우트 테이블을
 # 순회하는 테스트가 그걸 증명한다(tests/http/test_api_auth.py).
 #
-# GET 인데 실제로는 행동인 것이 하나 있다: 구간 미리보기는 없으면 ffmpeg 로 만든다. 그건 그
-# 자리에서 따로 막는다(http/studio.py).
+# GET 인데 실제로는 행동인 것이 둘 있다. 구간 미리보기는 없으면 ffmpeg 로 만들고(http/studio.py),
+# 유튜브 콜백은 토큰을 저장한다(http/youtube.py — Google 이 GET 으로 돌려보내 메서드를 못 바꾼다).
+# 둘 다 그 자리에서 따로 막는다.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 

@@ -5,6 +5,9 @@
 그래서 빠뜨릴 수도 없다. `tests/test_api_auth.py` 가 이 라우터의 모든 라우트를 순회하며
 무인증 401 을 확인한다.
 
+한 주제가 길어지면 하위 라우터로 가른다(`http/youtube.py`). 하위 라우터는 이 라우터에 붙어서 같은
+인증을 받는다 — 아래 `router.include_router` 주석.
+
 시청자용 공개 API(`/api/watch/**`, tease §7-1) 는 M3 에서 **별도 라우터**(watch.py) 로
 붙는다. 여기 넣으면 인증이 걸려 시청자가 못 쓰고, 저기 넣을 걸 여기 넣는 실수는 위 테스트가
 잡지 못한다 — 공개 라우터에는 발행된 것만 읽는 조건이 따로 있다.
@@ -24,14 +27,18 @@ from pydantic import BaseModel, Field
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, report, suggest
-from . import auth, deps, prompt_catalog
+from . import auth, deps, prompt_catalog, youtube
 from ..pipeline import (
-    cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
+    cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt, upload,
 )
 from ..db import store
 from .deps import connect, require_auth, rows, submit
 
 router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+
+# 🔴 하위 라우터는 **이 라우터에** 붙인다. 붙이는 순간 `/api` 접두사와 `require_auth` 가 그 라우트들에
+# 복사돼 들어온다 — 앱(server.py)에 따로 붙이면 둘 다 빠진다. 하위 라우터 쪽에는 접두사·인증을 적지 않는다.
+router.include_router(youtube.router)  # 채널 연결 · Shorts 업로드(tease §7-5)
 
 
 # ---------------------------------------------------------------- 조회
@@ -119,6 +126,8 @@ def get_source(source_id: int) -> dict:
                 "select * from clip_reviews where clip_id = %s order by id desc",
                 (clip["id"],),
             )
+            # 유튜브에 올린 기록(tease §7-5). 카드가 마지막 것의 링크·상태를 보여 준다.
+            clip["uploads"] = upload.history(conn, clip["id"])
         # 🔴 `select *` 를 쓰지 않는다. prompt·response 는 한 건이 수십 KB 라 화면 한 번에 수 MB 가
         # 실린다(마이그레이션 005). 본문은 사용자가 그 행을 펼칠 때만 따로 읽는다 —
         # `has_body` 로 펼칠 것이 있는지만 알려 준다.
