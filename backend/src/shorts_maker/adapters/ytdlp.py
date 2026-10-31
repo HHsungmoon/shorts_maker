@@ -256,3 +256,106 @@ def parse_live_chat(path: Path, owner_id: str) -> list[ChatMessage]:
                 staff=bool(owner_id and author == owner_id) or bool(badges & {"OWNER", "MODERATOR"}),
             ))
     return messages
+
+
+# ---------------------------------------------------------------- 자막 (tease §5-1, 2026-11-01)
+
+
+class NoCaptions(DownloadError):
+    """그 언어의 자막 트랙이 없다. 원티드 영상은 화면 안에 자막을 구워 넣은 것이 많다 — 그러면 트랙이 없다."""
+
+
+@dataclass(frozen=True)
+class CaptionWord:
+    # 원본 절대 초.
+    start: float
+    end: float
+    # 자막에 적힌 그대로(앞 공백 · 문장부호 포함). 🔴 `>>` 는 여기서 떼고 `speaker_change` 로 옮긴다.
+    text: str
+    # 이 단어부터 다른 사람이 말한다. 대담 영상에서 자동자막이 `>>` 로 표시한다.
+    speaker_change: bool
+
+
+# 단어의 끝을 이보다 길게 잡지 않는다. json3 는 단어의 **시작만** 준다 — 끝은 다음 단어의 시작이 기본인데,
+# 말이 끊긴 뒤 다음 단어가 10초 뒤에 오면 마지막 단어가 10초짜리가 되고 자막이 그만큼 화면에 머문다.
+# 한국어 어절 하나는 실측(삼성 31분 whisper 단어)에서 대부분 0.2~1.2초다.
+MAX_WORD_SEC = 1.5
+
+
+def fetch_captions(cfg: config.Config, video_id: str, language: str) -> Path:
+    """그 언어의 자막을 json3 로 받아 파일 경로를 돌려준다. 부르는 쪽이 읽고 지운다.
+
+    사람이 올린 자막이 있으면 그것을, 없으면 자동자막을 받는다 — 둘을 다 요청하면 yt-dlp 가 사람 자막을
+    고른다. 🔴 VTT 가 아니라 json3 다(update_plan D2): 자동자막 VTT 는 롤링 표시라 타임스탬프가 겹친다.
+    """
+    if not ID_PATTERN.match(video_id):
+        raise DownloadError(f"영상 id 가 이상하다: {video_id!r}")
+    if not re.fullmatch(r"[a-z]{2,3}(-[A-Za-z]{2,4})?", language):
+        raise DownloadError(f"언어 코드가 이상하다: {language!r}")
+    folder = cfg.work_dir / "captions"
+    folder.mkdir(parents=True, exist_ok=True)
+    # 남아 있으면 yt-dlp 가 "이미 있다" 며 건너뛴다. 지난번 것을 읽으면 그사이 고친 자막을 놓친다.
+    for old in folder.glob(f"{video_id}.*.json3"):
+        old.unlink(missing_ok=True)
+    _run(
+        [
+            "yt-dlp", "--no-playlist", "--skip-download",
+            "--write-subs", "--write-auto-subs", "--sub-langs", language, "--sub-format", "json3",
+            "-o", str(folder / video_id),
+            f"https://www.youtube.com/watch?v={video_id}",
+        ],
+        # 134분 영상 자막이 1초 안쪽(2026-11-01). 네트워크가 느려도 넉넉하다.
+        timeout=300,
+    )
+    found = sorted(folder.glob(f"{video_id}.*.json3"))
+    if not found:
+        raise NoCaptions(
+            f"이 영상에는 '{language}' 자막이 없습니다. 화면 안에 자막이 구워진 영상일 수 있습니다 — [음성 인식] 을 쓰세요"
+        )
+    return found[0]
+
+
+def parse_json3(path: Path) -> list[CaptionWord]:
+    """json3 자막을 단어 목록으로. 시간 순서대로다.
+
+    자동자막은 한 줄(event)에 단어 여럿이 `tOffsetMs` 와 함께 온다. 사람이 올린 자막은 줄 하나가 통째로
+    한 조각이다 — 그때는 줄을 단어 하나로 둔다. 🔴 줄 안에서 단어별 시각을 나눠 지어내지 않는다(§12).
+    줄바꿈만 든 줄(`aAppend`)·빈 조각은 버린다.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DownloadError(f"자막 파일을 읽을 수 없습니다: {exc}") from exc
+
+    # (시작, 그 줄의 끝, 글자, 말하는 사람 바뀜, 자동자막 단어인가)
+    raw: list[tuple[float, float, str, bool, bool]] = []
+    for event in data.get("events") or []:
+        segs = event.get("segs") or []
+        start_ms = event.get("tStartMs")
+        if not segs or start_ms is None:
+            continue
+        line_end = (start_ms + (event.get("dDurationMs") or 0)) / 1000
+        for seg in segs:
+            text = seg.get("utf8") or ""
+            if not text.strip():
+                continue
+            change = bool(seg.get("isSpeakerChange"))
+            stripped = text.lstrip()
+            if stripped.startswith(">>"):
+                change = True
+                text = " " + stripped[2:].lstrip()
+                if not text.strip():
+                    continue
+            # 자동자막 조각에만 인식 신뢰도 키가 붙는다. 사람 자막의 조각은 줄 하나라 단어 길이 상한을 걸면 안 된다.
+            is_word = "acAsrConf" in seg
+            raw.append(((start_ms + (seg.get("tOffsetMs") or 0)) / 1000, line_end, text, change, is_word))
+
+    raw.sort(key=lambda item: item[0])
+    words: list[CaptionWord] = []
+    for index, (start, line_end, text, change, is_word) in enumerate(raw):
+        following = raw[index + 1][0] if index + 1 < len(raw) else line_end
+        end = min(following, line_end, start + MAX_WORD_SEC if is_word else line_end)
+        # 시작이 같은 단어가 둘이면 끝이 시작과 같아진다. 0초 단어는 번인 자막에서 사라진다(subtitles) —
+        # 최소 길이만 준다. 지어낸 초가 아니라 "이 단어는 여기서 시작했다" 를 지키는 쪽이다.
+        words.append(CaptionWord(round(start, 3), round(max(end, start + 0.05), 3), text, change))
+    return words

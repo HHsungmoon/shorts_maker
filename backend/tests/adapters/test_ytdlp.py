@@ -186,5 +186,117 @@ class FetchLiveChatTest(unittest.TestCase):
         run.assert_not_called()
 
 
+def json3(*events) -> str:
+    return json.dumps({"events": [{"tStartMs": 0, "dDurationMs": 999999, "id": 1}, *events]}, ensure_ascii=False)
+
+
+def asr_line(start_ms: int, duration_ms: int, *words: tuple[int, str], change: bool = False) -> dict:
+    """자동자막 한 줄. 단어는 (줄 안 오프셋 ms, 글자)."""
+    segs = []
+    for index, (offset, text) in enumerate(words):
+        seg = {"utf8": text, "acAsrConf": 0}
+        if offset:
+            seg["tOffsetMs"] = offset
+        if change and index == 0:
+            seg["isSpeakerChange"] = 1
+        segs.append(seg)
+    return {"tStartMs": start_ms, "dDurationMs": duration_ms, "wWinId": 1, "segs": segs}
+
+
+class ParseJson3Test(unittest.TestCase):
+    """json3 자막 → 단어. 🔴 시각은 자막이 준 것만 쓴다 — 단어의 끝은 다음 단어의 시작이다."""
+
+    def parse(self, text: str) -> list[ytdlp.CaptionWord]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.ko.json3"
+            path.write_text(text, encoding="utf-8")
+            return ytdlp.parse_json3(path)
+
+    def test_word_offsets_become_absolute_seconds_and_end_at_the_next_word(self):
+        words = self.parse(json3(
+            asr_line(10_000, 5_000, (0, "예,"), (360, " 반갑습니다.")),
+            # 줄바꿈만 든 줄(자동자막의 롤링 표시)은 버린다.
+            {"tStartMs": 12_000, "dDurationMs": 2_000, "wWinId": 1, "aAppend": 1, "segs": [{"utf8": "\n"}]},
+            asr_line(12_100, 6_000, (0, "서강대학교"), (700, " 입학처장")),
+        ))
+        self.assertEqual([w.text for w in words], ["예,", " 반갑습니다.", "서강대학교", " 입학처장"])
+        self.assertEqual([w.start for w in words], [10.0, 10.36, 12.1, 12.8])
+        self.assertEqual(words[0].end, 10.36)
+        # 다음 줄 첫 단어가 이 줄 마지막 단어의 끝이다.
+        self.assertEqual(words[1].end, 11.86)
+
+    def test_a_word_before_a_long_pause_does_not_last_until_the_next_one(self):
+        words = self.parse(json3(
+            asr_line(0, 30_000, (0, "그래서")),
+            asr_line(20_000, 3_000, (0, "다음")),
+        ))
+        self.assertEqual(words[0].end, ytdlp.MAX_WORD_SEC)
+
+    def test_a_speaker_marker_is_taken_off_the_text_and_kept_as_a_flag(self):
+        words = self.parse(json3(asr_line(0, 3_000, (0, ">> 네."), (500, " 그리고"))))
+        self.assertEqual([w.text for w in words], [" 네.", " 그리고"])
+        self.assertEqual([w.speaker_change for w in words], [True, False])
+        self.assertTrue(self.parse(json3(asr_line(0, 3_000, (0, "네"), change=True)))[0].speaker_change)
+
+    def test_an_uploaded_caption_line_stays_one_piece_for_its_whole_line(self):
+        # 사람이 올린 자막: 줄 하나가 조각 하나, 단어 오프셋·신뢰도 키가 없다. 줄 안에서 시각을 지어내지 않는다.
+        line = {"tStartMs": 4_000, "dDurationMs": 3_000, "segs": [{"utf8": "수능 최저를 적용합니다."}]}
+        words = self.parse(json3(line, {"tStartMs": 9_000, "dDurationMs": 2_000, "segs": [{"utf8": "다음"}]}))
+        self.assertEqual((words[0].start, words[0].end, words[0].text), (4.0, 7.0, "수능 최저를 적용합니다."))
+
+    def test_words_that_start_together_still_last_a_moment(self):
+        # 0초 단어는 번인 자막에서 사라진다(subtitles.build_cues).
+        words = self.parse(json3(asr_line(0, 3_000, (0, "a"), (0, " b"), (900, " c"))))
+        self.assertGreater(words[0].end, words[0].start)
+
+    def test_a_broken_file_is_a_download_error(self):
+        with self.assertRaises(ytdlp.DownloadError):
+            self.parse("{not json")
+
+
+class FetchCaptionsTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = make_config(Path(self._tmp.name))
+
+    def test_asks_for_uploaded_then_auto_captions_in_json3(self):
+        def fake_run(args, timeout):
+            Path(args[args.index("-o") + 1] + ".ko.json3").write_text(json3(), encoding="utf-8")
+            return ""
+
+        with mock.patch.object(ytdlp, "_run", side_effect=fake_run) as run:
+            path = ytdlp.fetch_captions(self.cfg, "abcDEF12345", "ko")
+        self.assertTrue(path.is_file())
+        args = run.call_args.args[0]
+        for flag in ("--skip-download", "--write-subs", "--write-auto-subs"):
+            self.assertIn(flag, args)
+        self.assertEqual(args[args.index("--sub-format") + 1], "json3")
+        self.assertEqual(args[args.index("--sub-langs") + 1], "ko")
+
+    def test_no_caption_track_says_what_to_do_instead(self):
+        # 화면 안에 자막을 구운 영상: yt-dlp 는 성공하지만 파일을 만들지 않는다.
+        with mock.patch.object(ytdlp, "_run", return_value=""):
+            with self.assertRaises(ytdlp.NoCaptions) as caught:
+                ytdlp.fetch_captions(self.cfg, "abcDEF12345", "ko")
+        self.assertIn("음성 인식", str(caught.exception))
+
+    def test_a_leftover_file_from_last_time_is_not_read(self):
+        folder = self.cfg.work_dir / "captions"
+        folder.mkdir(parents=True)
+        (folder / "abcDEF12345.ko.json3").write_text(json3(), encoding="utf-8")
+        with mock.patch.object(ytdlp, "_run", return_value=""):
+            with self.assertRaises(ytdlp.NoCaptions):
+                ytdlp.fetch_captions(self.cfg, "abcDEF12345", "ko")
+
+    def test_a_strange_id_or_language_never_reaches_the_command(self):
+        with mock.patch.object(ytdlp, "_run") as run:
+            with self.assertRaises(ytdlp.DownloadError):
+                ytdlp.fetch_captions(self.cfg, "../../etc", "ko")
+            with self.assertRaises(ytdlp.DownloadError):
+                ytdlp.fetch_captions(self.cfg, "abcDEF12345", "ko;rm")
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
