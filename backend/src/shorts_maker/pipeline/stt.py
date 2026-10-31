@@ -1,7 +1,9 @@
 """A3 — STT (문서 §4-[1]).
 
-이 강연에는 사람이 만든 자막이 없고 자동자막은 타임스탬프가 롤링 윈도로 겹쳐 쓸 수 없다
-(§1-2 실측). 그래서 STT 가 대안이 아니라 유일한 경로다.
+🔴 **2026-11-01 부터 기본 경로가 아니다.** 대사는 유튜브 자막(`captions.py`)이 기본이고, 이건 영상 준비의
+두 번째 버튼이다 — 자막 트랙이 없는 영상(화면에 자막을 구운 원티드 영상 등)·로컬 파일용. whisper large-v3 가
+**없는 문장을 지어내는 것**을 실측했다(make_shorts §7-1 재측정 2): 흔적은 길이 0초 단어다.
+(옛 판단 "자동자막은 롤링 윈도로 겹쳐 쓸 수 없다" 는 VTT 형식의 문제였다 — json3 는 단어 오프셋이 있다.)
 
 여기서 만든 발화 타임스탬프가 파이프라인 전체의 시간 기준이 된다 — [3]·[6] 의 LLM 은
 **발화 인덱스만** 고르고, 초는 언제나 여기서 되찾는다(§12).
@@ -15,7 +17,9 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .. import config
+from ..adapters import ffmpeg
 from ..db import store
+from . import transcripts
 
 
 # whisper 가 아는 코드 중 이 프로젝트가 쓰는 것만 연다. 늘리려면 여기 한 줄이면 된다.
@@ -149,29 +153,36 @@ def apply_fixes(row: dict, fixes: list[dict]) -> dict:
 
 
 def apply_fixes_to_source(conn: psycopg.Connection, source_id: int, fixes: list[dict]) -> int:
-    """이미 끝난 전사 전체에 교정을 적용한다. 바뀐 발화 수를 돌려준다. 커밋은 부른 쪽이 한다.
+    """이미 있는 대사 전체에 교정을 적용한다. 바뀐 **쓰는 대사** 발화 수를 돌려준다. 커밋은 부른 쪽이 한다.
 
+    지금 쓰는 대사(utterances)와 보관한 두 대사(transcripts)에 모두 건다 — 보관한 쪽을 빼면 [이 대사로 쓰기]
+    로 옮겨 담는 순간 교정이 풀리고, 비교 화면이 사전으로 이미 고친 차이를 계속 보여 준다.
     🔴 이미 렌더한 클립의 자막은 바뀌지 않는다 — 영상에 구워져 있다. 발화 번호(idx)와 시각은 그대로라
     구간·클립이 가리키는 범위는 깨지지 않는다.
     🔴 교정을 **빼도** 이미 고친 글자는 되돌아가지 않는다. 원래 글자를 따로 남기지 않는다.
     """
     if not fixes:
         return 0
-    rows = conn.execute(
-        """select u.id, u.text, u.words from utterances u join chunks c on c.id = u.chunk_id
-           where c.source_id = %s""",
-        (source_id,),
-    ).fetchall()
-    changed = []
-    for row in rows:
-        fixed = apply_fixes(dict(row), fixes)
-        if fixed["text"] != row["text"] or fixed["words"] != row["words"]:
-            changed.append({"id": row["id"], "text": fixed["text"],
-                            "words": Jsonb(fixed["words"]) if fixed["words"] else None})
-    if changed:
-        with conn.cursor() as cur:
-            cur.executemany("update utterances set text = %(text)s, words = %(words)s where id = %(id)s", changed)
-    return len(changed)
+    targets = (
+        # 테이블 이름은 이 상수에서만 온다(사용자 입력 아님).
+        ("utterances", """select u.id, u.text, u.words from utterances u join chunks c on c.id = u.chunk_id
+                          where c.source_id = %s"""),
+        ("transcripts", "select id, text, words from transcripts where source_id = %s"),
+    )
+    counted = 0
+    for table, query in targets:
+        changed = []
+        for row in conn.execute(query, (source_id,)).fetchall():
+            fixed = apply_fixes(dict(row), fixes)
+            if fixed["text"] != row["text"] or fixed["words"] != row["words"]:
+                changed.append({"id": row["id"], "text": fixed["text"],
+                                "words": Jsonb(fixed["words"]) if fixed["words"] else None})
+        if changed:
+            with conn.cursor() as cur:
+                cur.executemany(f"update {table} set text = %(text)s, words = %(words)s where id = %(id)s", changed)
+        if table == "utterances":
+            counted = len(changed)
+    return counted
 
 
 def check_language(code: str | None) -> str | None:
@@ -228,7 +239,7 @@ def to_utterance_rows(segments, chunk_start_sec: float) -> tuple[list[dict], int
                 "start_sec": round(start, 3),
                 "end_sec": round(end, 3),
                 "text": text,
-                # 순수 파이썬 리스트로 둔다. jsonb 래핑(Jsonb)은 insert 시점(run_for_chunk)에서 — 이 함수는 DB 를 모른다.
+                # 순수 파이썬 리스트로 둔다. jsonb 래핑(Jsonb)은 insert 시점(transcripts.store_rows)에서 — 이 함수는 DB 를 모른다.
                 "words": words if words else None,
                 "avg_logprob": getattr(segment, "avg_logprob", None),
                 "no_speech_prob": getattr(segment, "no_speech_prob", None),
@@ -286,28 +297,68 @@ def transcribe(
     )
 
 
+# 이보다 짧게 남은 범위는 듣지 않는다. 청크 경계 반올림(밀리초)이 "안 들은 범위" 로 남는 것을 막는다.
+MIN_SPAN_SEC = 1.0
+
+
+def uncovered(start: float, end: float, heard: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """[start, end) 에서 이미 들은 범위를 뺀 나머지. MIN_SPAN_SEC 보다 짧은 조각은 버린다."""
+    left = [(start, end)]
+    for a, b in sorted(heard):
+        nxt = []
+        for x, y in left:
+            if b <= x or a >= y:
+                nxt.append((x, y))
+                continue
+            if a > x:
+                nxt.append((x, a))
+            if b < y:
+                nxt.append((b, y))
+        left = nxt
+    return [(x, y) for x, y in left if y - x >= MIN_SPAN_SEC]
+
+
+def remaining(conn: psycopg.Connection, source_id: int) -> list[dict]:
+    """아직 안 들은 범위. 청크별로 `{chunk_id, start, end, whole}` — `whole` 이면 청크 오디오를 그대로 쓴다.
+
+    🔴 **한 번 들은 오디오는 다시 듣지 않는다**(사용자 결정 2026-11-01, tease §5-1). 이 목록이 비면 [음성 인식] 은
+    끝난 것이다. 분석 범위를 넓혀 다시 추출하면 새로 생긴 부분만 여기 나온다.
+    """
+    heard = [(r["start_sec"], r["end_sec"]) for r in conn.execute(
+        "select start_sec, end_sec from stt_spans where source_id = %s", (source_id,)
+    )]
+    plan = []
+    for chunk in conn.execute(
+        "select id, start_sec, end_sec from chunks where source_id = %s order by idx", (source_id,)
+    ).fetchall():
+        for a, b in uncovered(chunk["start_sec"], chunk["end_sec"], heard):
+            plan.append({
+                "chunk_id": chunk["id"], "start": a, "end": b,
+                "whole": a == chunk["start_sec"] and b == chunk["end_sec"],
+            })
+    return plan
+
+
 def run_for_source(
     conn: psycopg.Connection,
     cfg: config.Config,
     source_id: int,
     model_name: str | None = None,
-    force: bool = False,
     initial_prompt: str | None = None,
     language: str | None = None,
 ) -> list[Transcription]:
-    """소스의 **모든 청크**를 순서대로 전사한다. 화면에서 "음성 인식" 한 번이 이것이다.
+    """**아직 안 들은 범위**를 순서대로 전사한다. 화면에서 [음성 인식] 한 번이 이것이다.
 
-    🔴 청크를 하나씩 도는 이유는 메모리다 — 95분을 한 번에 돌리면 컨테이너 한도를 넘어 죽는다
-    (ingest.add_chunk 주석). 청크 사이에서 메모리가 반납되므로 영상이 길어져도 최대 사용량은
-    청크 하나 분량에 묶인다.
+    🔴 같은 오디오는 한 번뿐이다 — 다 들었으면 SttError. 다시 돌리는 인자(force)는 없다.
+    🔴 범위를 하나씩 도는 이유는 메모리다 — 95분을 한 번에 돌리면 컨테이너 한도를 넘어 죽는다
+    (ingest.add_chunk 주석). 범위는 청크보다 길지 않다.
 
-    중간에 실패하면 거기서 멈춘다. 앞 청크의 전사는 이미 커밋돼 있어 다시 돌리면 이어서 간다
-    (force 를 주지 않으면 이미 된 청크는 건너뛴다).
+    결과는 `transcripts`(whisper)에 **덧붙이고** 들은 범위를 `stt_spans` 에 남긴다. 지금 쓰는 대사가 유튜브
+    자막이면 그대로 둔다(비교 화면이 둘을 맞댄다). 자막이 아니면(없거나 이미 음성 인식) 범위 하나가 끝날
+    때마다 음성 인식 대사를 쓰는 대사로 옮겨 담는다 — 화면이 조각별 진행을 본다.
+    중간에 실패하면 거기서 멈춘다. 끝난 범위는 이미 커밋돼 있어 다시 누르면 남은 범위만 한다.
     """
-    chunks = conn.execute(
-        "select id from chunks where source_id = %s order by idx", (source_id,)
-    ).fetchall()
-    if not chunks:
+    if not conn.execute("select 1 from chunks where source_id = %s limit 1", (source_id,)).fetchone():
         raise SttError(f"source {source_id} 에 청크가 없다 — 먼저 구간을 추출한다")
     # 힌트를 따로 주지 않으면 원본에 저장된 용어 목록을 쓴다(화면의 "용어 힌트"). CLI `--prompt` 는 덮어쓴다.
     if initial_prompt is None:
@@ -315,88 +366,80 @@ def run_for_source(
         initial_prompt = terms_prompt(list(row["stt_terms"])) if row else None
     # 🔴 도는 동안 재분할이 들어오면 청크가 사라져 외래키 위반으로 죽는다(store.source_lock).
     with store.source_lock(conn, source_id, "전사"):
-        return _transcribe_chunks(conn, cfg, chunks, model_name, force, initial_prompt, language)
+        plan = remaining(conn, source_id)
+        if not plan:
+            raise SttError("이 원본은 음성 인식을 이미 했습니다 — 같은 오디오는 다시 돌리지 않습니다")
+        return [
+            run_span(conn, cfg, source_id, span, model_name, initial_prompt, language) for span in plan
+        ]
 
 
-def _transcribe_chunks(conn, cfg, chunks, model_name, force, initial_prompt, language) -> list["Transcription"]:
-    results = []
-    for chunk in chunks:
-        done = conn.execute(
-            "select count(*) as n from utterances where chunk_id = %s", (chunk["id"],)
-        ).fetchone()["n"]
-        if done and not force:
-            continue
-        results.append(
-            run_for_chunk(conn, cfg, chunk["id"], model_name, force, initial_prompt, language)
-        )
-    return results
-
-
-def run_for_chunk(
+def run_span(
     conn: psycopg.Connection,
     cfg: config.Config,
-    chunk_id: int,
+    source_id: int,
+    span: dict,
     model_name: str | None,
-    force: bool,
     initial_prompt: str | None = None,
     language: str | None = None,
 ) -> Transcription:
+    """범위 하나를 듣는다. `span` 은 `remaining()` 의 한 항목."""
     chunk = conn.execute(
-        "select c.*, s.id as source_id, s.language from chunks c join sources s on s.id = c.source_id"
-        " where c.id = %s",
-        (chunk_id,),
+        "select c.*, s.language, s.path as source_path, s.caption_source"
+        " from chunks c join sources s on s.id = c.source_id where c.id = %s",
+        (span["chunk_id"],),
     ).fetchone()
     if chunk is None:
-        raise SttError(f"chunk {chunk_id} 없음")
-
-    existing = conn.execute(
-        "select count(*) as n from utterances where chunk_id = %s", (chunk_id,)
-    ).fetchone()["n"]
-    if existing and not force:
-        raise SttError(f"chunk {chunk_id} 에 이미 발화 {existing}개가 있다 — 다시 하려면 --force")
-
-    audio = cfg.work_file(chunk["path"])
-    if not audio.is_file():
-        raise SttError(f"청크 파일이 없다: {audio}")
+        raise SttError(f"chunk {span['chunk_id']} 없음")
 
     # 이번 호출에 언어를 주면 원본 설정을 덮고 그 값을 저장한다 — 처음에 잘못 골랐을 때
     # 원본을 다시 등록하지 않고 고칠 수 있어야 한다.
     chosen = check_language(language) if language is not None else chunk["language"]
     if chosen != chunk["language"]:
-        conn.execute("update sources set language = %s where id = %s", (chosen, chunk["source_id"]))
+        conn.execute("update sources set language = %s where id = %s", (chosen, source_id))
         conn.commit()
 
     # 🔴 STT 는 몇 분 돈다. 트랜잭션을 열어둔 채 몇 분 계산하지 않는다 — 위 읽기로 열린 트랜잭션을 여기서 끊는다.
     conn.commit()
-    result = transcribe(
-        audio, float(chunk["start_sec"]), model_name or cfg.whisper_model, initial_prompt, chosen
-    )
+    extracted: Path | None = None
+    if span["whole"]:
+        audio = cfg.work_file(chunk["path"])
+        if not audio.is_file():
+            raise SttError(f"청크 파일이 없다: {audio}")
+    else:
+        # 청크 일부만 남았다(범위를 넓혀 다시 추출했거나, 옛 범위와 겹친다). 남은 부분만 원본에서 뽑는다 —
+        # 들은 초를 다시 듣지 않으려고. 오디오 재인코딩이라 시작이 샘플 단위로 정확하다(ingest.add_chunk).
+        extracted = cfg.work_dir / f"source{source_id}_stt_{span['start']:.0f}_{span['end']:.0f}.wav"
+        ffmpeg.extract_audio(str(cfg.source_file(chunk["source_path"])), str(extracted), span["start"], span["end"])
+        audio = extracted
+    try:
+        result = transcribe(audio, float(span["start"]), model_name or cfg.whisper_model, initial_prompt, chosen)
+    finally:
+        if extracted is not None:
+            extracted.unlink(missing_ok=True)
 
     # 교정 사전은 **전사가 끝난 뒤에** 읽는다. 몇 분 도는 사이 화면에서 교정을 저장하면 그 저장은 이미 있는
     # 발화에만 걸리고(apply_fixes_to_source) 지금 전사 중인 조각은 빠진다 — 여기서 새로 읽어야 그 틈이 없다.
-    fixes = conn.execute(
-        "select stt_fixes from sources where id = %s", (chunk["source_id"],)
-    ).fetchone()["stt_fixes"]
+    fixes = conn.execute("select stt_fixes from sources where id = %s", (source_id,)).fetchone()["stt_fixes"]
     rows = [apply_fixes(row, fixes) for row in result.rows]
     fixed = sum(1 for before, after in zip(result.rows, rows) if before["text"] != after["text"])
 
-    conn.execute("delete from utterances where chunk_id = %s", (chunk_id,))
-    # 🔴 executemany 는 **커서**의 메서드다. psycopg 의 Connection 에는 없다(sqlite3 에는 있었다).
-    with conn.cursor() as cur:
-        cur.executemany(
-            """insert into utterances (chunk_id, idx, start_sec, end_sec, text, words, avg_logprob, no_speech_prob)
-               values (%(chunk_id)s, %(idx)s, %(start_sec)s, %(end_sec)s, %(text)s, %(words)s, %(avg_logprob)s, %(no_speech_prob)s)""",
-            [
-                # words 는 jsonb 컬럼 — 리스트를 Jsonb 로 감싸야 psycopg 가 직렬화한다. None 은 그대로 null.
-                {**row, "words": Jsonb(row["words"]) if row["words"] else None, "chunk_id": chunk_id}
-                for row in rows
-            ],
-        )
+    transcripts.store_rows(conn, source_id, "whisper", rows, replace=False)
+    conn.execute(
+        """insert into stt_spans (source_id, start_sec, end_sec, model, language, initial_prompt)
+           values (%s, %s, %s, %s, %s, %s)""",
+        (source_id, span["start"], span["end"], f"faster-whisper:{result.model}", chosen, initial_prompt),
+    )
+    # 쓰는 대사가 유튜브 자막이면 건드리지 않는다(tease §5-1). 아니면 음성 인식이 쓰는 대사다.
+    current = conn.execute("select caption_source from sources where id = %s", (source_id,)).fetchone()
+    used = None
+    if current["caption_source"] != "youtube":
+        used = transcripts.use(conn, source_id, "whisper")
     conn.execute(
         """insert into stage_calls (source_id, stage, model, latency_ms, params)
            values (%s, 'stt', %s, %s, %s)""",
         (
-            chunk["source_id"],
+            source_id,
             f"faster-whisper:{result.model}",
             result.transcribe_ms,
             # chunk_id: 어느 조각을 이 설정으로 돌렸나. 없으면 일부 조각만 다시 인식했을 때 화면이
@@ -405,9 +448,14 @@ def run_for_chunk(
                 "initial_prompt": initial_prompt,
                 "vad_filter": True,
                 "language": chosen or "auto",
-                "chunk_id": chunk_id,
-                # 교정 사전으로 고친 발화 수. 0 이 아니면 utterances 의 글자는 whisper 원문이 아니다.
+                "chunk_id": span["chunk_id"],
+                # 들은 범위(원본 절대 초). 청크 전체가 아닐 수 있다.
+                "span": [span["start"], span["end"]],
+                "utterances": len(rows),
+                # 교정 사전으로 고친 발화 수. 0 이 아니면 저장된 글자는 whisper 원문이 아니다.
                 "fixed": fixed,
+                # 쓰는 대사로 옮겨 담았나. 자막을 쓰는 중이면 false — 비교용으로만 보관했다.
+                "used": used is not None,
             }),
         ),
     )
