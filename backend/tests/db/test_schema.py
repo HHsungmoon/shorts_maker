@@ -187,7 +187,7 @@ class SegmentRangeTest(SchemaTestCase):
 class StageCallTest(SchemaTestCase):
     STAGES = (
         "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
-        "caption", "embed", "retrieve", "cluster", "judge", "classify", "download", "preview",
+        "caption", "embed", "retrieve", "cluster", "judge", "classify", "locate", "download", "preview",
     )
 
     def test_rejects_unknown_stage(self):
