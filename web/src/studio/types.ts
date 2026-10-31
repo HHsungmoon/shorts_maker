@@ -319,6 +319,10 @@ export interface ShortsClusterQuestion {
 	id: number;
 	text: string;
 	created_at: string;
+	/** 어디서 왔나(tease §3-5). `live_chat` 은 끝난 라이브의 채팅 다시보기에서 가져온 것이다. */
+	origin: "page" | "live_chat";
+	/** 채팅이 달린 영상 안의 초. 우리 페이지 질문은 null. */
+	asked_at_sec: number | null;
 	// SQL 이 센 좋아요 수(question_likes 조인). 서버가 계산해 주므로 화면에서 다시 세지 않는다.
 	likes: number;
 }

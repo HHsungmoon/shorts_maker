@@ -228,6 +228,14 @@ export function aggregateQuestions(sourceId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/aggregate`, { method: "POST" });
 }
 
+/**
+ * 끝난 라이브의 채팅 다시보기에서 질문 꼴만 가져온다(tease §3-5). 잡이다. 몇 번 눌러도 같다 —
+ * 서버가 채팅 메시지 id 로 중복을 막는다. 들어온 질문은 미분류로 남고 묶는 건 [집계] 다.
+ */
+export function importLiveChat(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/live-chat`, { method: "POST" });
+}
+
 export function fetchClusters(sourceId: number): Promise<ShortsClusterList> {
 	return request<ShortsClusterList>(`/api/sources/${sourceId}/clusters`);
 }

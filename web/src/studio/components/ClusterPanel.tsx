@@ -5,6 +5,7 @@ import {
 	answerCluster,
 	buildCandidate,
 	clipUrl,
+	importLiveChat,
 	patchCluster,
 	publishClip,
 } from "../api";
@@ -16,9 +17,24 @@ import type {
 	ShortsCluster,
 	ShortsClusterClip,
 	ShortsClusterList,
+	ShortsClusterQuestion,
 	ShortsJob,
 } from "../types";
 import "../clusters.css";
+
+/** 질문 한 줄 — 채팅에서 가져온 것은 언제 물었는지를 붙인다. 우리 페이지 질문과 섞여 보이므로 출처가 보여야 한다. */
+function QuestionLine({ question }: { question: ShortsClusterQuestion }) {
+	return (
+		<li>
+			{question.origin === "live_chat" && (
+				<span className="sm-qorigin" title="라이브 채팅 다시보기에서 가져온 질문">
+					채팅{question.asked_at_sec !== null && ` ${time(question.asked_at_sec)}`}
+				</span>
+			)}
+			{question.text} <span className="sm-meta">· 좋아요 {question.likes}</span>
+		</li>
+	);
+}
 
 // 상태 이름은 DB 값 그대로 오므로(question_clusters.status) 화면 문구는 여기서만 정한다.
 const STATUS_LABEL: Record<ShortsCluster["status"], string> = {
@@ -208,6 +224,17 @@ export function ClusterPanel({
 				</span>
 				<span className="sm-actions sm-actions--end">
 					<span className="sm-meta">{aggregateHint}</span>
+					{/* 끝난 라이브만 된다. 라이브가 아니었던 영상이면 서버가 이유를 말한다(잡 오류) — 영상마다
+					    라이브였는지 미리 알 길이 없어 버튼을 숨기지 않는다. */}
+					<button
+						type="button"
+						className="button button--small"
+						disabled={busy}
+						title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : "끝난 라이브의 채팅 다시보기에서 질문 꼴만 가져옵니다"}
+						onClick={() => onJob(() => importLiveChat(sourceId))}
+					>
+						채팅에서 질문 가져오기
+					</button>
 					<button
 						type="button"
 						className="button button--small"
@@ -300,9 +327,7 @@ export function ClusterPanel({
 								<summary>아직 안 묶인 질문 {unclustered.length}개</summary>
 								<ul className="sm-cluster__questions">
 									{unclustered.map((q) => (
-										<li key={q.id}>
-											{q.text} <span className="sm-meta">· 좋아요 {q.likes}</span>
-										</li>
+										<QuestionLine key={q.id} question={q} />
 									))}
 								</ul>
 								<p className="sm-meta">[집계] 를 누르면 비슷한 질문끼리 묶여 목록에 올라옵니다.</p>
@@ -503,9 +528,7 @@ function ClusterDetail({
 						<summary>시청자가 쓴 질문 {cluster.questions.length}개</summary>
 						<ul className="sm-cluster__questions">
 							{cluster.questions.map((q) => (
-								<li key={q.id}>
-									{q.text} <span className="sm-meta">· 좋아요 {q.likes}</span>
-								</li>
+								<QuestionLine key={q.id} question={q} />
 							))}
 						</ul>
 					</details>

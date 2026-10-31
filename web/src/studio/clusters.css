@@ -696,3 +696,16 @@
 	line-height: 1.5;
 	color: var(--text-muted);
 }
+
+/* 채팅에서 가져온 질문의 표식. 우리 페이지 질문과 한 목록에 섞이므로 출처를 앞에 짧게 붙인다. */
+.sm-qorigin {
+	display: inline-block;
+	margin-right: 6px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 12px;
+	font-weight: 600;
+	vertical-align: 1px;
+}

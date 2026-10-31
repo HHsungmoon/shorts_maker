@@ -25,6 +25,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	cluster: "질문 집계",
 	answer: "질문에 답하기",
 	upload: "유튜브 업로드",
+	livechat: "채팅에서 질문 가져오기",
 };
 
 export interface StudioJob {
