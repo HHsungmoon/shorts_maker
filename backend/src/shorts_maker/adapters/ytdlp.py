@@ -164,3 +164,95 @@ def fetch(cfg: config.Config, url: str) -> tuple[Path, VideoInfo]:
     """probe + fetch_video. 행을 먼저 만들 필요가 없는 호출자(CLI 등)용."""
     info = probe(url)
     return fetch_video(cfg, info), info
+
+
+# ---------------------------------------------------------------- 라이브 채팅 다시보기 (tease §3-5)
+#
+# 🔴 끝난 라이브의 채팅은 공식 API(`liveChatMessages`)로 못 받는다 — 방송 중에만 읽힌다. 그래서 yt-dlp 의
+# `live_chat` 자막 트랙을 쓴다. 정책 부채는 영상 받기와 같다(tease §7-5).
+
+
+class NoLiveChat(DownloadError):
+    """채팅 다시보기가 없다 — 라이브가 아니었거나, 채팅을 껐거나, 아직 다시보기가 안 만들어졌다."""
+
+
+@dataclass(frozen=True)
+class ChatMessage:
+    id: str
+    # 영상 안의 초. 방송 시작 전 대기실 채팅은 0 으로 온다.
+    offset_sec: float
+    text: str
+    # 작성자 채널 id. 🔴 **저장하지 않는다** — 부르는 쪽(answers/livechat)이 해시만 남긴다.
+    author_id: str
+    # 채널 주인이거나 주인·모더레이터 표식이 있다. 🔴 다시보기에는 표식이 빠져 오는 일이 많다
+    # (쏘카 LIVE 2026-10-31: 464개 중 표식 0) — 표식만 믿으면 안 된다(answers/livechat.ANNOUNCER_REPEATS).
+    staff: bool
+
+
+def fetch_live_chat(cfg: config.Config, video_id: str) -> tuple[Path, str]:
+    """채팅 다시보기 파일과 그 영상의 채널 id 를 돌려준다.
+
+    🔴 파일에는 **작성자 이름이 들어 있다.** 부르는 쪽이 읽고 바로 지운다(answers/livechat).
+    """
+    if not ID_PATTERN.match(video_id):
+        raise DownloadError(f"영상 id 가 이상하다: {video_id!r}")
+    folder = cfg.work_dir / "livechat"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{video_id}.live_chat.json"
+    # 남아 있으면 yt-dlp 가 "이미 있다" 며 건너뛴다. 지난번 것을 읽으면 그사이 바뀐 것을 놓친다.
+    target.unlink(missing_ok=True)
+    # `-O` 는 원래 아무것도 안 받는 모드다. `--no-simulate` 로 자막(=채팅)은 받으면서 채널 id 를 같이 찍는다.
+    out = _run(
+        [
+            "yt-dlp", "--no-playlist", "--skip-download", "--no-simulate",
+            "--write-subs", "--sub-langs", "live_chat",
+            "-O", "%(channel_id)s",
+            "-o", str(folder / video_id),
+            f"https://www.youtube.com/watch?v={video_id}",
+        ],
+        # 96분 방송 채팅 464개가 약 20초(2026-10-31). 몇 시간짜리 방송을 넉넉히 덮는다.
+        timeout=1800,
+    )
+    if not target.is_file():
+        raise NoLiveChat("이 영상에는 라이브 채팅 다시보기가 없습니다(라이브가 아니었거나 채팅이 꺼져 있었습니다)")
+    return target, out.strip().splitlines()[-1].strip() if out.strip() else ""
+
+
+def parse_live_chat(path: Path, owner_id: str) -> list[ChatMessage]:
+    """한 줄이 JSON 하나인 다시보기 파일에서 **글 메시지만** 꺼낸다.
+
+    슈퍼챗·참여 안내(liveChatViewerEngagementMessageRenderer) 같은 것은 뺀다. 이모지는 글자가 아니라
+    그림 조각으로 오는데 질문 문장에는 쓸모가 없어 버린다.
+    """
+    messages: list[ChatMessage] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            replay = json.loads(line).get("replayChatItemAction") or {}
+        except json.JSONDecodeError:
+            # 한 줄이 깨져도 나머지는 읽는다 — 줄 단위 파일이라 앞뒤가 서로 기대지 않는다.
+            continue
+        try:
+            offset = max(0.0, int(replay.get("videoOffsetTimeMsec") or 0) / 1000)
+        except (TypeError, ValueError):
+            offset = 0.0
+        for action in replay.get("actions") or []:
+            item = ((action.get("addChatItemAction") or {}).get("item") or {})
+            renderer = item.get("liveChatTextMessageRenderer")
+            if not renderer or not renderer.get("id"):
+                continue
+            text = "".join(run.get("text", "") for run in (renderer.get("message") or {}).get("runs") or [])
+            author = str(renderer.get("authorExternalChannelId") or "")
+            badges = {
+                ((badge.get("liveChatAuthorBadgeRenderer") or {}).get("icon") or {}).get("iconType")
+                for badge in renderer.get("authorBadges") or []
+            }
+            messages.append(ChatMessage(
+                id=str(renderer["id"]),
+                offset_sec=offset,
+                text=text.strip(),
+                author_id=author,
+                staff=bool(owner_id and author == owner_id) or bool(badges & {"OWNER", "MODERATOR"}),
+            ))
+    return messages

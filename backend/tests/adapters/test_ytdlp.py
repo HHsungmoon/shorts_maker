@@ -4,9 +4,15 @@
 호스트 제한이 그 통로를 닫는 유일한 장치라 여기서 고정한다.
 """
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from shorts_maker.adapters import ytdlp
+
+from ..support import make_config
 
 
 class CheckUrlTest(unittest.TestCase):
@@ -96,6 +102,88 @@ class BlockedHintTest(unittest.TestCase):
         ):
             with self.subTest(stderr=stderr):
                 self.assertFalse(ytdlp._blocked(stderr))
+
+def chat_line(msg_id: str, offset_ms, text_runs: list[dict], author: str = "UCviewer", badges=None) -> str:
+    """다시보기 파일의 한 줄 — 실제 구조(쏘카 LIVE, 2026-10-31)를 그대로 줄인 것."""
+    renderer = {
+        "id": msg_id,
+        "message": {"runs": text_runs},
+        "authorName": {"simpleText": "실명이 들어오는 자리"},
+        "authorExternalChannelId": author,
+        "timestampUsec": "1690000000000000",
+    }
+    if badges:
+        renderer["authorBadges"] = [{"liveChatAuthorBadgeRenderer": {"icon": {"iconType": b}}} for b in badges]
+    return json.dumps({"replayChatItemAction": {
+        "actions": [{"addChatItemAction": {"item": {"liveChatTextMessageRenderer": renderer}}}],
+        "videoOffsetTimeMsec": offset_ms,
+    }}, ensure_ascii=False)
+
+
+class ParseLiveChatTest(unittest.TestCase):
+    def parse(self, *lines: str, owner: str = "UCowner") -> list[ytdlp.ChatMessage]:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "x.live_chat.json"
+            path.write_text("\n".join(lines), encoding="utf-8")
+            return ytdlp.parse_live_chat(path, owner)
+
+    def test_reads_text_offset_and_author(self):
+        [message] = self.parse(chat_line("m1", "788000", [{"text": "이직이 결격사유가 될까요?"}]))
+        self.assertEqual(message, ytdlp.ChatMessage(
+            id="m1", offset_sec=788.0, text="이직이 결격사유가 될까요?", author_id="UCviewer", staff=False,
+        ))
+
+    def test_emoji_pieces_are_dropped_and_text_is_joined(self):
+        [message] = self.parse(chat_line("m1", "0", [
+            {"text": "슈퍼앱 "}, {"emoji": {"emojiId": "🚘", "shortcuts": [":car:"]}}, {"text": "가능성 궁금해요 "},
+        ]))
+        self.assertEqual(message.text, "슈퍼앱 가능성 궁금해요")
+
+    def test_the_owner_and_badged_staff_are_marked(self):
+        owner, moderator, viewer = self.parse(
+            chat_line("m1", "0", [{"text": "a"}], author="UCowner"),
+            chat_line("m2", "0", [{"text": "b"}], author="UCmod", badges=["MODERATOR"]),
+            chat_line("m3", "0", [{"text": "c"}], author="UCv", badges=["VERIFIED"]),
+        )
+        self.assertEqual((owner.staff, moderator.staff, viewer.staff), (True, True, False))
+
+    def test_other_items_and_broken_lines_are_skipped(self):
+        engagement = json.dumps({"replayChatItemAction": {"actions": [{"addChatItemAction": {"item": {
+            "liveChatViewerEngagementMessageRenderer": {"id": "e1"}}}}], "videoOffsetTimeMsec": "0"}})
+        messages = self.parse(engagement, "{not json", "", chat_line("m1", "-500", [{"text": "질문 있어요?"}]))
+        self.assertEqual([m.id for m in messages], ["m1"])
+        # 방송 전 대기실 채팅은 0 초 밑으로 오지 않게 한다.
+        self.assertEqual(messages[0].offset_sec, 0.0)
+
+
+class FetchLiveChatTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = make_config(Path(self._tmp.name))
+
+    def test_no_replay_file_says_why(self):
+        # 라이브가 아니었던 영상: yt-dlp 는 성공하지만 채팅 파일을 만들지 않는다.
+        with mock.patch.object(ytdlp, "_run", return_value="UCowner\n"):
+            with self.assertRaises(ytdlp.NoLiveChat):
+                ytdlp.fetch_live_chat(self.cfg, "abcDEF12345")
+
+    def test_returns_the_file_and_the_channel(self):
+        def fake_run(args, timeout):
+            target = Path(args[args.index("-o") + 1] + ".live_chat.json")
+            target.write_text(chat_line("m1", "0", [{"text": "x"}]), encoding="utf-8")
+            return "UCowner\n"
+
+        with mock.patch.object(ytdlp, "_run", side_effect=fake_run):
+            path, owner = ytdlp.fetch_live_chat(self.cfg, "abcDEF12345")
+        self.assertTrue(path.is_file())
+        self.assertEqual(owner, "UCowner")
+
+    def test_a_strange_id_never_reaches_the_command(self):
+        with mock.patch.object(ytdlp, "_run") as run:
+            with self.assertRaises(ytdlp.DownloadError):
+                ytdlp.fetch_live_chat(self.cfg, "../../etc")
+        run.assert_not_called()
 
 
 if __name__ == "__main__":
