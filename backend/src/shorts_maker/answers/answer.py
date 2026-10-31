@@ -29,14 +29,13 @@
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 
 import psycopg
 from psycopg.types.json import Jsonb
 
 from .. import config, standards
 from ..pipeline import cutting, ranking, render
-from . import clusters, judge, retrieval, routing
+from . import clusters, judge, proposals, retrieval, routing
 
 # judge 를 동시에 몇 개까지. 🔴 "워커 1개" 규약(jobs.py)과 충돌하지 않는다 — 그 규약은 CPU 를
 # 다 먹는 영상 처리·STT 가 겹치지 말라는 것이고, 이건 짧은 HTTP 요청 셋이다.
@@ -47,11 +46,8 @@ class AnswerError(RuntimeError):
     pass
 
 
-@dataclass
-class Scored:
-    candidate: object
-    parts: list
-    verdict: judge.Verdict
+# 두 엔진이 같은 모양을 낸다 — judge 모듈에 둔다(proposals 가 answer 를 import 하면 순환이다).
+Scored = judge.Scored
 
 
 def _pick(scored: list[Scored]) -> Scored:
@@ -181,7 +177,34 @@ def _run_inside(
         segments = [s for s in everything if s["idx"] in chosen]
     conn.commit()
 
-    # ③ 후보 3개 제안 (LLM 1회)
+    # ③~⑤ 후보 만들기 + 판정 — 엔진이 둘이다(config SHORTS_ANSWER_ENGINE).
+    # 🔴 jev 엔진도 rank 경로("핵심만 30초")는 gemini 로 간다 — 이유는 proposals 머리 주석.
+    if cfg.answer_engine == "jev" and decision.route == routing.RETRIEVAL:
+        proposal = proposals.propose(
+            conn, cfg, question, segments, standard, source_id=source_id, run_id=run_id
+        )
+        if not proposal.answerable:
+            return _unanswerable(
+                conn, cluster["id"], run_id, proposal.reason,
+                _suggest(conn, cfg, cluster, everything, run_id),
+            )
+        return _save(
+            conn, cluster, run_id, decision, proposal.scored, proposal.judge_ms,
+            proposal.reason, proposal.summary,
+        )
+    return _gemini_candidates(
+        conn, cfg, cluster, source, run_id, question, decision, segments, everything, standard
+    )
+
+
+def _gemini_candidates(
+    conn: psycopg.Connection, cfg: config.Config, cluster: dict, source, run_id: int, question: str,
+    decision, segments: list[dict], everything: list[dict], standard: str | None,
+) -> dict:
+    """gemini 엔진 — rank(Gemini)가 후보 N 개를 계획하고 judge(Gemini)가 하나씩 판정한다."""
+    source_id = cluster["source_id"]
+
+    # ③ 후보 N개 제안 (LLM 1회)
     plan, lines = ranking.plan_answer(
         conn, cfg, question, segments, source["context"], source_id=source_id, run_id=run_id,
         standard=standard,
@@ -248,6 +271,14 @@ def _run_inside(
         Scored(candidate, parts, judged.verdict)
         for (candidate, parts), judged in zip(prepared, results)
     ]
+    return _save(conn, cluster, run_id, decision, scored, total_ms, plan.reason, {"engine": "gemini"})
+
+
+def _save(
+    conn: psycopg.Connection, cluster: dict, run_id: int, decision, scored: list, judge_ms: int,
+    reason: str, summary: dict,
+) -> dict:
+    """두 엔진이 같은 곳에서 끝난다 — 후보를 대사와 함께 남기고 REVIEW 로 멈춘다."""
     recommended = _pick(scored)
 
     # ⑥ 후보를 **대사와 함께** 남기고 멈춘다. 🔴 여기서 컷·렌더를 하지 않는다 —
@@ -275,11 +306,11 @@ def _run_inside(
         (
             Jsonb({
                 "answerable": True,
-                "reason": plan.reason,
+                "reason": reason,
                 "route": decision.route,
                 "candidates": len(scored),
-                "judgeMs": total_ms,
-            }),
+                "judgeMs": judge_ms,
+            } | summary),
             run_id,
         ),
     )
@@ -292,7 +323,7 @@ def _run_inside(
         "runId": run_id,
         "route": decision.route,
         "candidates": saved,
-        "judgeMs": total_ms,
+        "judgeMs": judge_ms,
     }
 
 

@@ -41,7 +41,11 @@ class AnswerTestCase(DbTestCase):
         super().setUp()
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.cfg = dataclasses.replace(make_config(Path(self._tmp.name)), teaser_max_sec=30.0)
+        # 🔴 이 파일은 gemini 엔진의 배선을 본다(rank 계획 → judge N 번). jev 엔진은 test_proposals.py.
+        self.cfg = dataclasses.replace(
+            make_config(Path(self._tmp.name)), teaser_max_sec=30.0, answer_engine="gemini",
+            answer_candidates=3,
+        )
 
         self.source_id = self.conn.execute(
             "insert into sources (title, content_type, path, fingerprint, status, published, context)"

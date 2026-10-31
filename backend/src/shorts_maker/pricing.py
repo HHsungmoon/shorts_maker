@@ -25,19 +25,31 @@ def billed_output_of(call: dict) -> int:
     return int(call.get("output_tokens") or 0) + int(call.get("thinking_tokens") or 0)
 
 
+def is_jev(call: dict) -> bool:
+    """Jev 호출인가. 🔴 단계 이름이 아니라 **모델 이름**으로 가른다 — `judge` 는 두 엔진이 같이 쓴다."""
+    return str(call.get("model") or "").startswith("jev-")
+
+
 def estimate(calls: list[dict], cfg: config.Config) -> dict:
+    """🔴 Jev 행은 Jev 단가로 센다(입력만, 출력 무료). Gemini 단가로 세면 Jev 판정 수십 회가 Gemini
+    수십 회처럼 보여 "Jev 로 바꿨더니 비싸졌다" 는 거짓 숫자가 나온다."""
+    gemini_calls = [c for c in calls if not is_jev(c)]
+    jev_calls = [c for c in calls if is_jev(c)]
     input_tokens = sum(c.get("input_tokens") or 0 for c in calls)
     output_tokens = sum(c.get("output_tokens") or 0 for c in calls)
     thinking_tokens = sum(c.get("thinking_tokens") or 0 for c in calls)
-    billed_output = sum(billed_output_of(c) for c in calls)
+    billed_output = sum(billed_output_of(c) for c in gemini_calls)
+    jev_input = sum(c.get("input_tokens") or 0 for c in jev_calls)
 
     usd = (
-        input_tokens / 1_000_000 * cfg.price_input_usd_per_1m
+        (input_tokens - jev_input) / 1_000_000 * cfg.price_input_usd_per_1m
         + billed_output / 1_000_000 * cfg.price_output_usd_per_1m
+        + jev_input / 1_000_000 * cfg.price_jev_input_usd_per_1m
     )
     llm_calls = [c for c in calls if c.get("model") and (c.get("input_tokens") or 0) > 0]
     return {
         "llmCalls": len(llm_calls),
+        "jevCalls": sum(1 for c in llm_calls if is_jev(c)),
         "inputTokens": input_tokens,
         "outputTokens": output_tokens,
         "thinkingTokens": thinking_tokens,
@@ -47,7 +59,9 @@ def estimate(calls: list[dict], cfg: config.Config) -> dict:
         "rate": {
             "inputUsdPer1M": cfg.price_input_usd_per_1m,
             "outputUsdPer1M": cfg.price_output_usd_per_1m,
+            "jevInputUsdPer1M": cfg.price_jev_input_usd_per_1m,
             "usdKrw": cfg.usd_krw,
             "model": cfg.gemini_model,
+            "jevModel": cfg.jev_model,
         },
     }

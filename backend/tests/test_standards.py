@@ -10,12 +10,13 @@
 """
 
 import inspect
+import json
 import unittest
 
 import psycopg
 
 from shorts_maker import standards
-from shorts_maker.answers import judge, routing
+from shorts_maker.answers import judge, proposals, routing
 from shorts_maker.pipeline import cutting, overview, ranking, segmentation
 
 from .support import DbTestCase
@@ -122,6 +123,13 @@ class WhereItGoesTest(unittest.TestCase):
         self.assertIn(MARK, prompt)
         self.assertIn("score 에만", prompt)
 
+    def test_the_jev_judge_carries_it_in_the_quality_question_only(self):
+        """🔴 Jev 판정기는 질문이 나뉘어 있어 **구조가 경계다** — 두 관문 질문은 기준을 아예 못 본다."""
+        questions = judge.jev_questions(MARK)
+        self.assertIn(MARK, questions["quality"]["instructions"])
+        for gate in ("standalone", "answers"):
+            self.assertNotIn(MARK, json.dumps(questions[gate], ensure_ascii=False))
+
     def test_the_criteria_rank_puts_the_standard_before_this_runs_criteria(self):
         # 공통이 먼저, 이번 기준이 뒤 — 부딪히면 뒤의 구체적인 요청이 이긴다고 머리에 적혀 있다.
         prompt = ranking.build_prompt(self.SEGMENTS, None, "이번 기준 [이번표식]", MARK)
@@ -141,6 +149,12 @@ class WhereItGoesTest(unittest.TestCase):
         self.assertNotIn("standard", inspect.signature(routing.build_prompt).parameters)
         self.assertNotIn("standard", inspect.signature(routing.decide).parameters)
 
+    def test_jev_answer_location_cannot_take_a_standard(self):
+        """🔴 jev 엔진의 위치 찾기도 "어디에 답이 있나" 다 — routing 과 같은 경계."""
+        self.assertNotIn("standard", inspect.signature(proposals.locate_request).parameters)
+        state, questions, _ = proposals.locate_request("질문", self.LINES)
+        self.assertNotIn("관리자", json.dumps([state, questions], ensure_ascii=False))
+
     def test_the_overview_draft_cannot_take_a_standard(self):
         """🔴 영상 개요는 "이 영상이 무엇인가" 라는 **사실**이다(프롬프트 3층).
 
@@ -158,6 +172,7 @@ class WhereItGoesTest(unittest.TestCase):
         self.assertNotIn(header, ranking.build_prompt(self.SEGMENTS, None, None))
         self.assertNotIn(header, ranking.build_answer_prompt("질문", self.LINES, 30.0, None))
         self.assertNotIn(header, cutting.build_prompt(self.UTTERANCES, "설명", None))
+        self.assertEqual(judge.jev_questions(None), judge.JEV_QUESTIONS)
         self.assertNotIn(header, judge.build_prompt("질문", ["대사"]))
 
 

@@ -5,6 +5,7 @@
 """
 
 import unittest
+from pathlib import Path
 
 from shorts_maker import pricing
 
@@ -61,6 +62,26 @@ class EstimateTest(unittest.TestCase):
         result = pricing.estimate([{"stage": "render", "model": None}], self.cfg)
         self.assertEqual(result["usd"], 0.0)
         self.assertEqual(result["llmCalls"], 0)
+
+    def test_jev_calls_are_billed_at_the_jev_input_rate_only(self):
+        # 🔴 Gemini 단가로 세면 Jev 판정 수십 회가 Gemini 수십 회처럼 보인다. 출력은 무료다.
+        cfg = make_config(Path(self._dir.name), price_input_usd_per_1m=1.0, price_output_usd_per_1m=10.0,
+                          price_jev_input_usd_per_1m=0.05, usd_krw=1000.0)
+        result = pricing.estimate(
+            [{"stage": "judge", "model": "jev-1.14.0", "input_tokens": 1_000_000, "output_tokens": 1_000_000}],
+            cfg,
+        )
+        self.assertAlmostEqual(result["usd"], 0.05)
+        self.assertEqual(result["jevCalls"], 1)
+
+    def test_a_mix_bills_each_engine_at_its_own_rate(self):
+        cfg = make_config(Path(self._dir.name), price_input_usd_per_1m=1.0, price_output_usd_per_1m=10.0,
+                          price_jev_input_usd_per_1m=0.05, usd_krw=1000.0)
+        result = pricing.estimate([
+            {"stage": "classify", "model": "gemini-3.6-flash", "input_tokens": 1_000_000, "output_tokens": 0},
+            {"stage": "locate", "model": "jev-1.14.0", "input_tokens": 1_000_000, "output_tokens": 50},
+        ], cfg)
+        self.assertAlmostEqual(result["usd"], 1.05)
 
 
 if __name__ == "__main__":
