@@ -91,11 +91,30 @@ class RangesTest(unittest.TestCase):
     def test_a_start_pointing_back_is_never_offered(self):
         lines = [
             line(0, "취업률이 높습니다."),
-            line(1, "그래서 인문계열도 마찬가지입니다."),
+            line(1, "아까 말한 인문계열도 마찬가지입니다."),
             line(2, "유지취업률도 1위입니다."),
         ]
         starts = {start for start, _ in proposals.ranges_around(2, lines, 40.0)}
         self.assertNotIn(1, starts)
+        self.assertIn(0, starts)
+
+    def test_a_start_with_a_connective_is_offered(self):
+        # 🔴 실측(원티드 AI 강연): 정답 시작점이 "그래서 요거를 디딤돌이라 하는데…" 였다. 강연 말투는 줄마다
+        # 접속어가 붙어 그것까지 막으면 핵심 줄만 남는다. 어색함은 판정이 자립 확률로 매긴다.
+        lines = [
+            line(0, "회색이 없어지는 개념입니다."),
+            line(1, "그래서 디딤돌을 생략하면 성능이 떨어집니다."),
+            line(2, "메타 에이전트가 없어도 똑같이 떨어집니다."),
+        ]
+        starts = {start for start, _ in proposals.ranges_around(2, lines, 40.0)}
+        self.assertIn(1, starts)
+
+    def test_the_search_for_a_start_is_bounded_by_seconds_not_lines(self):
+        # 🔴 발화가 2초씩 짧으면 6줄이 12초다. 그 안에 좋은 시작점이 없어도 예산 안이면 더 거슬러 찾는다.
+        lines = [line(0, "처음부터 설명합니다.", length=2.0)] + [
+            line(n, f"{n}번째 설명이 이어지고", length=2.0) for n in range(1, 10)
+        ] + [line(10, "답은 이것입니다.", length=2.0)]
+        starts = {start for start, _ in proposals.ranges_around(10, lines, 40.0)}
         self.assertIn(0, starts)
 
     def test_a_start_mid_sentence_is_never_offered(self):

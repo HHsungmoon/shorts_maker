@@ -51,10 +51,9 @@ ANCHOR_GAP_LINES = 3
 # 구간 Noul 이 0.1~0.2 인 곳의 줄은 무게가 1등의 1/10 안팎이었다.
 ANCHOR_FLOOR = 0.25
 
-# 핵심 줄에서 시작점을 몇 줄까지 거슬러 찾을까 / 끝점을 몇 줄까지 내려가 찾을까.
-# 실측(서강대 45줄): 발화 하나가 평균 5.8초라 60초 예산이면 10줄 안팎이다(앞 6 + 뒤 8 이면 넉넉하다). 앞은 맥락(전제를 세우는 문장),
-# 뒤는 답의 나머지가 들어갈 자리라 뒤를 조금 더 본다.
-MAX_BACK_LINES = 6
+# 끝점을 핵심 줄에서 몇 줄까지 내려가 찾을까. 실측(서강대 45줄): 발화 하나가 평균 5.8초라 60초 예산이면
+# 10줄 안팎이다. 뒤는 답의 나머지가 들어갈 자리다.
+# 🔴 시작점은 줄 수로 묶지 않는다 — **예산(초) 안이면 끝까지 거슬러 찾는다**(ranges_around).
 MAX_FWD_LINES = 8
 # 핵심 줄 하나에서 시작점·끝점 후보를 각각 몇 개까지. 3 × 4 = 12 범위가 상한이다.
 STARTS_PER_ANCHOR = 3
@@ -214,8 +213,8 @@ def anchors_of(located: Located, lines: list[dict], limit: int = ANCHORS) -> lis
 def ranges_around(anchor: int, lines: list[dict], budget_sec: float) -> list[tuple[int, int]]:
     """핵심 줄 하나 둘레에서 자를 수 있는 (시작, 끝) 범위. 순수 함수.
 
-    시작점: 앞을 가리키지 않고(cutting.needs_lead_in) 앞 발화가 문장을 끝낸 줄 — cutting.lead_in 이
-    시작점을 당길 때 쓰는 "좋은 시작점" 과 같은 정의다. 이어진 발화의 첫 줄도 좋은 시작점이다.
+    시작점: 앞을 가리키지 않고(cutting.points_back) 앞 발화가 문장을 끝낸 줄. cutting.lead_in 의
+    "좋은 시작점" 보다 무르다 — 접속어로 시작해도 된다. 이어진 발화의 첫 줄도 좋은 시작점이다.
     끝점: 문장을 끝내는 줄(cutting.ends_sentence), 또는 이어진 발화의 마지막 줄.
 
     🔴 **구간 경계는 넘는다. 끊긴 곳은 넘지 않는다.** 범위는 같은 청크의 발화 번호가 1씩 이어지는 동안만
@@ -236,10 +235,21 @@ def ranges_around(anchor: int, lines: list[dict], budget_sec: float) -> list[tup
     while _continues(by_line[last], by_line.get(last + 1)):
         last += 1
 
+    # 🔴 시작점은 **초로** 거슬러 찾는다. 처음엔 6줄로 묶었다. 실측(2026-10-31, 원티드 AI 강연 "메타 에이전트가
+    # 없으면 성능이 어떻게 되나요?"): 발화가 2~5초로 짧아 6줄이 20초 남짓이었고, 그 안의 줄은 전부
+    # "그래서·근데" 로 시작하거나 앞 줄이 "~알 수 있고" 로 이어졌다. 시작점이 핵심 줄 "똑같이 성능이 많이
+    # 떨어집니다." 하나뿐이라 무엇이 떨어지는지가 빠진 후보만 나왔다(자립 0.11). 말 빠르기는 영상마다 달라서
+    # 줄 수로는 맥락이 들어갈 시간을 정할 수 없다.
     starts: list[int] = []
-    for n in range(anchor, max(first, anchor - MAX_BACK_LINES) - 1, -1):
+    for n in range(anchor, first - 1, -1):
+        if by_line[anchor]["end_sec"] - by_line[n]["start_sec"] > budget_sec:
+            break
         line = by_line[n]
-        if cutting.needs_lead_in(line["text"]):
+        # 🔴 접속어("그래서·근데")로 시작하는 줄은 시작점으로 둔다 — 막는 것은 앞을 가리키는 말뿐이다
+        # (cutting.points_back). 같은 실측에서 정답 시작점이 "그래서 요거를 디딤돌이라 하는데…" 였다.
+        # 강연 말투는 줄마다 "그래서·근데" 가 붙어 다 막으면 고를 자리가 남지 않는다. 어색함은 판정이
+        # 앞 대사(before_clip)와 함께 보고 자립 확률로 매긴다.
+        if cutting.points_back(line["text"]):
             continue
         if n == first or cutting.ends_sentence(by_line[n - 1]["text"]):
             starts.append(n)

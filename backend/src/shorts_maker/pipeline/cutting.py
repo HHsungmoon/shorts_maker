@@ -242,7 +242,7 @@ class PartSpec:
 #
 # 프롬프트에는 이미 "지시대명사로 시작하지 않는다" 가 있었고 지켜지지 않았다. 그래서 규약대로
 # **모델에게 다시 부탁하는 대신 코드가 고친다**(make_shorts §12).
-LEAD_IN_MARKERS = (
+LEAD_IN_POINTERS = (
     # 앞의 것을 가리키는 말 — 선행사가 클립 밖에 있으면 뜻이 통하지 않는다
     "이런", "그런", "저런", "이러한", "그러한",
     "이렇게", "그렇게", "저렇게",
@@ -250,10 +250,13 @@ LEAD_IN_MARKERS = (
     "여기", "거기",
     # 앞에서 이미 말했다고 명시하는 말
     "아까", "앞서", "방금", "말씀드린", "말씀드렸", "설명드린",
+)
+LEAD_IN_CONNECTIVES = (
     # 이어 말하는 접속 — 문장 자체는 서지만 이야기 중간에서 시작한 티가 난다
     "그래서", "그러니까", "그러면", "그럼", "그리고", "그런데", "근데",
     "또한", "이어서", "다음으로", "마지막으로", "결국",
 )
+LEAD_IN_MARKERS = LEAD_IN_POINTERS + LEAD_IN_CONNECTIVES
 
 # 🔴 **첫머리만 본다.** 클립 한복판에 지시어가 나오는 건 정상이다 — 그때는 선행사가 클립 안에 있다.
 # 앞에서 이만큼만 훑는 이유가 그것이고, 실측 사례의 "저희는 이런 서비스들을" 은 4자째에서 걸린다.
@@ -276,6 +279,17 @@ def needs_lead_in(text: str) -> bool:
     """이 발화로 클립을 시작하면 앞 맥락이 필요한가."""
     head = (text or "").strip()[:LEAD_IN_SCAN_CHARS]
     return any(marker in head for marker in LEAD_IN_MARKERS)
+
+
+def points_back(text: str) -> bool:
+    """첫머리가 **앞의 것을 가리키는가** — 접속어("그래서·근데")는 세지 않는다.
+
+    🔴 needs_lead_in 보다 무른 기준이다. 접속어로 시작하는 발화는 이야기 중간에서 시작한 티는 나도
+    뜻은 선다 — 무엇을 가리키는지 모르는 "이런·아까" 와는 다르다. 후보를 **여럿 만들어 판정에 맡기는**
+    쪽(answers/proposals)이 이 기준을 쓴다. 하나만 고치는 lead_in 은 그대로 needs_lead_in 을 쓴다.
+    """
+    head = (text or "").strip()[:LEAD_IN_SCAN_CHARS]
+    return any(marker in head for marker in LEAD_IN_POINTERS)
 
 
 def ends_sentence(text: str) -> bool:
