@@ -81,6 +81,8 @@ def make_config(root: Path, **overrides) -> config.Config:
         # 실제 .env 의 키가 테스트로 새어들지 않게 한다.
         gemini_api_key="",
         jev_api_key="",
+        youtube_client_id="",
+        youtube_client_secret="",
         api_token="",
         database_url=TEST_URL,
         work_dir=root / "work",

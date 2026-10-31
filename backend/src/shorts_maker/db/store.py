@@ -27,7 +27,7 @@ TABLES = (
     "sources", "chunks", "utterances", "segments", "runs", "run_candidates",
     "clips", "clip_parts", "clip_reviews",
     "stage_calls", "question_clusters", "questions", "question_likes", "embeddings", "viewer_events",
-    "admin_standards",
+    "admin_standards", "youtube_channel", "clip_uploads",
 )
 
 

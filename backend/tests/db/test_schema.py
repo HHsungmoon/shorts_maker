@@ -188,6 +188,7 @@ class StageCallTest(SchemaTestCase):
     STAGES = (
         "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
         "caption", "embed", "retrieve", "cluster", "judge", "classify", "locate", "download", "preview",
+        "upload",
     )
 
     def test_rejects_unknown_stage(self):
@@ -468,6 +469,47 @@ class ViewerEventTest(SchemaTestCase):
         self.assertIsNotNone(row)
         self.assertIsNone(row["source_id"])
         self.assertEqual(row["payload"], {"position_sec": 812})
+
+class YoutubeUploadTest(SchemaTestCase):
+    """유튜브 업로드(마이그레이션 013, tease §7-5)."""
+
+    def test_only_one_channel_can_be_connected(self):
+        # 🔴 둘이 연결돼 있으면 "어디로 올라가나" 가 화면마다 달라진다.
+        self.conn.execute("insert into youtube_channel (refresh_token, scopes) values ('r', 's')")
+        self.expect_integrity_error("insert into youtube_channel (id, refresh_token, scopes) values (2, 'r', 's')")
+
+    def test_rejects_unknown_privacy(self):
+        _, _, segment_id, run_id = self.insert_chain()
+        clip_id = self.insert_clip(run_id, segment_id)
+        self.expect_integrity_error(
+            "insert into clip_uploads (clip_id, title, privacy) values (%s, 't', 'friends')", (clip_id,)
+        )
+
+    def test_rejects_unknown_status(self):
+        _, _, segment_id, run_id = self.insert_chain()
+        clip_id = self.insert_clip(run_id, segment_id)
+        self.expect_integrity_error(
+            "insert into clip_uploads (clip_id, title, privacy, status) values (%s, 't', 'private', 'SENT')", (clip_id,)
+        )
+
+    def test_done_needs_the_video_id(self):
+        # 올라갔다고 적었는데 어디인지 모르면 그 영상을 다시 찾을 길이 없다.
+        _, _, segment_id, run_id = self.insert_chain()
+        clip_id = self.insert_clip(run_id, segment_id)
+        self.expect_integrity_error(
+            "insert into clip_uploads (clip_id, title, privacy, status) values (%s, 't', 'private', 'DONE')", (clip_id,)
+        )
+
+    def test_deleting_the_clip_keeps_the_upload_record(self):
+        _, _, segment_id, run_id = self.insert_chain()
+        clip_id = self.insert_clip(run_id, segment_id)
+        self.conn.execute(
+            "insert into clip_uploads (clip_id, title, privacy, status, youtube_video_id)"
+            " values (%s, 't', 'public', 'DONE', 'vid')", (clip_id,)
+        )
+        self.conn.execute("delete from clips where id = %s", (clip_id,))
+        row = self.conn.execute("select clip_id, youtube_video_id from clip_uploads").fetchone()
+        self.assertEqual((row["clip_id"], row["youtube_video_id"]), (None, "vid"))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,10 @@ DEFAULTS = {
     "SHORTS_JEV_TIMEOUT_SEC": "15",
     # 공식 가격(docs.typesafe.ai/models, 2026-10-31): 입력 $0.042/1M, **출력은 무료**. Early Access 라 바뀔 수 있다.
     "SHORTS_PRICE_JEV_INPUT_USD_PER_1M": "0.042",
+    # 유튜브 OAuth 의 돌아올 주소(tease §7-5). 🔴 Google Cloud 콘솔의 "승인된 리디렉션 URI" 와 **글자 하나까지**
+    # 같아야 한다 — 다르면 동의 화면이 redirect_uri_mismatch 로 막힌다. 호스트도 맞춰야 한다: 스튜디오를
+    # 127.0.0.1 로 열어 두고 localhost 로 돌아오면 세션 쿠키가 따라오지 않아 콜백이 401 이 된다(쿠키는 호스트별).
+    "SHORTS_YOUTUBE_REDIRECT_URI": "http://localhost:8100/api/youtube/callback",
     "SHORTS_STORE_PROMPTS": "1",
     "SHORTS_RETRIEVAL_TOP_K": "5",
     "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
@@ -190,6 +194,11 @@ class Config:
     jev_model: str = "jev-1.14.0"
     jev_timeout_sec: float = 15.0
     price_jev_input_usd_per_1m: float = 0.042
+    # 유튜브 업로드(tease §7-5). 앱의 자격 증명이다 — 채널의 것(refresh token)은 DB 에 있다.
+    # 🔴 시크릿은 로그·응답에 싣지 않는다. 비어 있으면 [채널 연결] 이 400 으로 이유를 말한다.
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_redirect_uri: str = "http://localhost:8100/api/youtube/callback"
 
     # ---- DB 에 저장되는 파일 경로 ------------------------------------------------
     # 🔴 DB 에는 **상대경로**를 넣는다. 원본은 source_dir 기준, 파생물(청크·클립)은 work_dir 기준.
@@ -287,6 +296,9 @@ def load() -> Config:
         jev_model=get("SHORTS_JEV_MODEL"),
         jev_timeout_sec=max(1.0, float(get("SHORTS_JEV_TIMEOUT_SEC"))),
         price_jev_input_usd_per_1m=float(get("SHORTS_PRICE_JEV_INPUT_USD_PER_1M")),
+        youtube_client_id=os.environ.get("SHORTS_YOUTUBE_CLIENT_ID", "").strip(),
+        youtube_client_secret=os.environ.get("SHORTS_YOUTUBE_CLIENT_SECRET", "").strip(),
+        youtube_redirect_uri=get("SHORTS_YOUTUBE_REDIRECT_URI").strip(),
     )
 
 
