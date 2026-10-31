@@ -29,7 +29,8 @@ from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, livechat, report, suggest
 from . import auth, deps, prompt_catalog, youtube
 from ..pipeline import (
-    cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt, upload,
+    captions, cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
+    transcript_diff, transcripts, upload,
 )
 from ..db import store
 from .deps import connect, require_auth, rows, submit
@@ -140,7 +141,21 @@ def get_source(source_id: int) -> dict:
                from stage_calls where source_id = %s order by id desc""",
             (source_id,),
         )
+        # 대사 두 층(tease §5-1). 화면이 버튼(자막 다시 가져오기 · 음성 인식 · 이 대사로 쓰기)과 비교 칸을 고른다.
+        spans = rows(
+            conn,
+            "select start_sec, end_sec, model, language, created_at from stt_spans where source_id = %s order by start_sec",
+            (source_id,),
+        )
+        left = stt.remaining(conn, source_id)
         return {
+            "transcripts": transcripts.counts(conn, source_id),
+            "stt": {
+                "spans": spans,
+                "heardSec": round(sum(s["end_sec"] - s["start_sec"] for s in spans), 1),
+                # 🔴 0 이면 음성 인식은 끝났다 — 같은 오디오는 다시 듣지 않는다.
+                "remainingSec": round(sum(r["end"] - r["start"] for r in left), 1),
+            },
             # 🔴 긴 작업이 도는 중인지. 화면이 "다시 추출" 을 잠그는 근거다 — 전사 중에 청크를
             # 지우면 그 전사가 외래키 위반으로 죽는다(2026-09-06에 당했다).
             "busy": store.source_is_busy(conn, source_id),
@@ -191,7 +206,7 @@ class SttIn(BaseModel):
     model: str | None = None
     initialPrompt: str | None = None
     language: str | None = None
-    force: bool = False
+    # 🔴 force 는 없다 — 같은 오디오는 한 번만 듣는다(tease §5-1, 2026-11-01).
 
 
 class ChunkIn(BaseModel):
@@ -432,14 +447,19 @@ def add_chunks(source_id: int, body: ChunkIn) -> dict:
 
 @router.post("/sources/{source_id}/stt")
 def run_stt(source_id: int, body: SttIn) -> dict:
-    """영상 전체를 전사한다. 청크가 여럿이면 순서대로 — 화면에는 하나의 작업으로 보인다."""
+    """**아직 안 들은 범위**를 전사한다. 범위가 여럿이면 순서대로 — 화면에는 하나의 작업으로 보인다.
+
+    🔴 같은 오디오는 한 번뿐이다(tease §5-1). 다 들었으면 큐에 넣기 전에 409 — 기다린 뒤에 알면 늦다.
+    도는 중에 또 누르면 잡 큐가 409 로 거절한다(워커 하나), CLI 와 겹치면 source_lock 이 막는다.
+    """
     language = _language(body.language)
+    with connect() as conn:
+        if not stt.remaining(conn, source_id):
+            raise HTTPException(409, "이 원본은 음성 인식을 이미 했습니다 — 같은 오디오는 다시 돌리지 않습니다")
 
     def work() -> dict:
         with connect() as conn:
-            results = stt.run_for_source(
-                conn, deps.cfg, source_id, body.model, body.force, body.initialPrompt, language
-            )
+            results = stt.run_for_source(conn, deps.cfg, source_id, body.model, body.initialPrompt, language)
         return {
             "chunks": len(results),
             "utterances": sum(len(r.rows) for r in results),
@@ -448,6 +468,50 @@ def run_stt(source_id: int, body: SttIn) -> dict:
         }
 
     return submit("stt", f"source {source_id}", work)
+
+
+@router.post("/sources/{source_id}/captions")
+def import_captions(source_id: int) -> dict:
+    """유튜브 자막을 받아 쓰는 대사로 삼는다(tease §5-1). 🔴 기본 경로 — 음성 인식은 위의 `/stt` 다.
+
+    음성 인식 대사는 건드리지 않는다(따로 보관된다) — 그래서 덮어쓰기 확인(force)이 없다.
+    """
+
+    def work() -> dict:
+        with connect() as conn:
+            return captions.run_for_source(conn, deps.cfg, source_id)
+
+    return submit("caption", f"source {source_id}", work)
+
+
+@router.get("/sources/{source_id}/transcript-diff")
+def transcript_diff_view(source_id: int) -> dict:
+    """자막 ↔ 음성 인식 비교. 음성 인식이 들은 범위 안에서만 맞댄다. 계산만 한다(31분에 0.1초, 2026-11-01)."""
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        return transcript_diff.for_source(conn, source_id)
+
+
+class TranscriptIn(BaseModel):
+    origin: str
+
+
+@router.post("/sources/{source_id}/transcript")
+def use_transcript(source_id: int, body: TranscriptIn) -> dict:
+    """[이 대사로 쓰기] — 보관한 대사 하나를 쓰는 대사로 옮겨 담는다. 다시 받거나 다시 듣지 않는다.
+
+    잡 큐에 넣지 않는다 — 옮겨 담기는 1초가 안 걸린다. 🔴 대신 원본 락을 잡는다: 음성 인식이 도는 중에
+    바꾸면 그 전사가 넣는 발화와 섞인다. 잠겨 있으면 409.
+    """
+    with connect() as conn:
+        try:
+            result = transcripts.switch(conn, source_id, body.origin)
+        except transcripts.TranscriptError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except store.SourceBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+    return result
 
 
 @router.post("/sources/{source_id}/segment")

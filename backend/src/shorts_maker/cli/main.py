@@ -9,7 +9,7 @@ import psycopg
 from .. import config, doctor
 from ..adapters import ffmpeg, gemini
 from ..answers import clusters, demo, embeddings, suggest
-from ..pipeline import cutting, ingest, ranking, render, segmentation, stt
+from ..pipeline import captions, cutting, ingest, ranking, render, segmentation, stt, transcripts
 from ..db import store
 
 
@@ -122,22 +122,27 @@ def _cmd_chunk_list(cfg: config.Config, source_id: int | None) -> int:
 
 
 def _cmd_stt_run(cfg: config.Config, args) -> int:
+    # 🔴 같은 오디오는 한 번뿐이다(tease §5-1) — 다 들었으면 SttError 로 한 줄 안내하고 끝난다. --force 는 없다.
     with store.connect(cfg.database_url) as conn:
-        results = stt.run_for_source(
-            conn, cfg, args.source_id, args.model, args.force, args.prompt, args.language
-        )
-        total = conn.execute(
-            """select count(*) as n from utterances u join chunks c on c.id = u.chunk_id
-               where c.source_id = %s""",
-            (args.source_id,),
-        ).fetchone()["n"]
+        results = stt.run_for_source(conn, cfg, args.source_id, args.model, args.prompt, args.language)
     if not results:
-        print(f"이미 전사돼 있다 (발화 {total}개) — 다시 하려면 --force")
+        print(f"source {args.source_id} · 들을 범위가 없다")
         return 0
     seconds = sum(r.transcribe_ms for r in results) / 1000
-    print(f"source {args.source_id} · {results[0].model} · 조각 {len(results)}개")
-    print(f"  발화   {total}개")
+    print(f"source {args.source_id} · {results[0].model} · 범위 {len(results)}개")
+    print(f"  발화   {sum(len(r.rows) for r in results)}개 (transcripts 의 whisper 에 보관)")
     print(f"  전사   {seconds:.0f}초")
+    return 0
+
+
+def _cmd_caption_run(cfg: config.Config, args) -> int:
+    with store.connect(cfg.database_url) as conn:
+        result = captions.run_for_source(conn, cfg, args.source_id)
+    print(f"source {args.source_id} · 유튜브 자막({result['language']})")
+    print(f"  발화   영상 전체 {result['captions']}개 중 분석 범위 {result['utterances']}개 (단어 {result['words']}개)")
+    print(f"  뺀 것  군말 {result['fillers']} · 소리 표시 {result['sounds']} · 범위 밖 발화 {result['outside']}")
+    print(f"  교정   {result['fixed']}곳")
+    print(f"  번호   구간 {result['remapped_segments']}개 · 클립 조각 {result['remapped_clip_parts']}개를 시각으로 다시 맞춤")
     return 0
 
 
@@ -391,12 +396,16 @@ def main(argv: list[str] | None = None) -> int:
     chunk_list = chunk_sub.add_parser("list", help="청크 목록")
     chunk_list.add_argument("source_id", type=int, nargs="?")
 
-    stt_parser = sub.add_parser("stt", help="음성 인식 (문서 §4-[1])")
+    caption_parser = sub.add_parser("caption", help="유튜브 자막으로 대사 만들기 — 기본 경로 (tease §5-1)")
+    caption_sub = caption_parser.add_subparsers(dest="caption_command", required=True)
+    caption_run = caption_sub.add_parser("run", help="자막을 받아 쓰는 대사로 삼는다 (청크가 먼저. 음성 인식 대사는 그대로 남는다)")
+    caption_run.add_argument("source_id", type=int)
+
+    stt_parser = sub.add_parser("stt", help="음성 인식 — 자막이 없을 때 (문서 §4-[1])")
     stt_sub = stt_parser.add_subparsers(dest="stt_command", required=True)
-    stt_run = stt_sub.add_parser("run", help="영상 전체를 전사한다 (조각을 순서대로)")
+    stt_run = stt_sub.add_parser("run", help="아직 안 들은 범위를 전사한다 (같은 오디오는 한 번뿐)")
     stt_run.add_argument("source_id", type=int)
     stt_run.add_argument("--model", help="whisper 모델 (기본: SHORTS_WHISPER_MODEL)")
-    stt_run.add_argument("--force", action="store_true", help="기존 발화를 지우고 다시 한다")
     stt_run.add_argument("--prompt", help="도메인 어휘를 물려준다 (고유명사 교정용, 짧게)")
     stt_run.add_argument("--language", help="ko/en/ja/zh. 비우면 원본 설정, 원본도 없으면 자동 감지")
     stt_show = stt_sub.add_parser("show", help="전사 결과를 본다")
@@ -498,6 +507,8 @@ def main(argv: list[str] | None = None) -> int:
         ffmpeg.FfmpegError,
         gemini.GeminiError,
         stt.SttError,
+        captions.CaptionError,
+        transcripts.TranscriptError,
         segmentation.SegmentationError,
         ranking.RankingError,
         cutting.CuttingError,
@@ -749,6 +760,9 @@ def _dispatch(parser: argparse.ArgumentParser, cfg: config.Config, args) -> int:
             return _cmd_tease_reset(cfg, args)
     if args.command == "render":
         return _cmd_render(cfg, args)
+    if args.command == "caption":
+        if args.caption_command == "run":
+            return _cmd_caption_run(cfg, args)
     if args.command == "stt":
         if args.stt_command == "run":
             return _cmd_stt_run(cfg, args)
