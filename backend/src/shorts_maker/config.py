@@ -43,7 +43,11 @@ DEFAULTS = {
     # 조각마다 "무엇에 대한 답인지" 를 세우는 한 문장이 필요해서 **조합은 단일 컷보다 구조적으로
     # 더 든다.** 예산이 한 덩어리 기준으로 잡혀 있으면 조각이 늘수록 각 조각이 맥락을 잃는다.
     # 30초는 단일 컷에 맞춘 값이었다. 숏폼 길이로도 40초는 여전히 짧은 쪽이다.
-    "SHORTS_TEASER_MAX_SEC": "40",
+    #
+    # 🔴 40 → 60 으로 올렸다(2026-10-31). 같은 이유가 Jev 엔진에서 다시 나왔다 — 서강대 "취업률 및 계열별
+    # 취업 현황" 에서 "취업률 1등" 35초 + "인문계열도 똑같이 높은 취업률" 20초 = 55초라 조합이 지어지지
+    # 않아 질문의 뒤 절반이 빠졌다. 60초는 쇼츠 상한이기도 하다.
+    "SHORTS_TEASER_MAX_SEC": "60",
     # 🔴 청크 하나의 최대 길이(초). **메모리 상한이지 취향이 아니다** — whisper 는 전사 길이에 비례해
     # 메모리를 쓴다. 실측(2026-09-06): 30분 청크가 1.4GB, 95분을 한 번에 돌리자 컨테이너 한도
     # 2.93GB 를 넘겨 OOM 으로 죽었다. 기본 30분(1800초)이면 small 기준 1.4GB 안쪽이다.
@@ -54,10 +58,27 @@ DEFAULTS = {
     # 🔴 프롬프트와 원본 응답을 stage_calls 에 남기는가. 판정이 이상할 때 **모델이 무엇을 보고
     # 무엇을 답했는지**를 화면에서 확인하는 유일한 길이다(마이그레이션 005). 끄면 그 확인을
     # 하려고 같은 호출을 다시 해야 하고, 무료 등급에서는 그 재현이 할당량을 깎는다.
-    # 답하기가 낼 후보 수. 🔴 **하나 늘 때마다 judge 호출이 하나 는다** — 3이면 답변당 5회,
-    # 5면 7회다(무료 등급은 하루 수십 회). 늘리면 고를 것이 많아지지만 크리에이터가 읽을 것도
-    # 그만큼 늘어난다. 셋은 서로 뚜렷이 다른 방식(단일·조합·짧은 컷)이라 그 위는 변주에 가깝다.
-    "SHORTS_ANSWER_CANDIDATES": "3",
+    # 답하기가 크리에이터에게 내놓을 후보 수.
+    # 🔴 3 → 5 (2026-10-31). 3 이었던 이유는 Gemini judge 호출 수였다(3이면 답변당 LLM 5회, 5면 7회,
+    # 무료 등급은 하루 수십 회). jev 엔진에서는 판정이 Jev 라 그 제약이 없다 — 후보는 넉넉히 판정하고
+    # 코드가 겹치지 않는 상위 N 개를 고른다(answers/proposals.py). gemini 엔진으로 되돌리면 이 값이
+    # 다시 Gemini 호출 수가 된다(rank 가 N 개를 내고 judge 가 N 번 돈다).
+    "SHORTS_ANSWER_CANDIDATES": "5",
+    # 답하기에서 후보를 누가 만들고 판정하나.
+    #   jev    — 코드가 자를 수 있는 범위를 전부 뽑고 Jev 가 판정한다. LLM 은 경로 판정(classify) 1회뿐
+    #   gemini — rank(Gemini)가 후보 N 개를 계획하고 judge(Gemini)가 N 번 판정한다(2026-10 까지의 경로)
+    # 🔴 gemini 를 지우지 않고 남기는 이유: Jev 는 한국어 정확도가 영어보다 낮다고 공식 문서가 적는다
+    # (docs.typesafe.ai/models#language-support). 같은 질문을 두 엔진으로 돌려 비교할 수 있어야 한다.
+    "SHORTS_ANSWER_ENGINE": "jev",
+    # Jev(TypeSafe System One). 🔴 **버전을 고정한다** — 별칭(jev-latest)은 새 릴리스가 나오면 조용히
+    # 옮겨 가고, 합격선(proposals.PASS)은 한 버전에 맞춰 잡은 값이다(docs.typesafe.ai/models#aliases).
+    "SHORTS_JEV_MODEL": "jev-1.14.0",
+    # 한 요청의 제한 시간(초). 판정 하나는 실측 229ms(2026-10-31, 한국어 대사 1개 + 질문 3개)이고
+    # 『Jev 따라하기』 09-3 의 P99 는 네 번 모두 1초 아래였다. 위치 찾기(locate)는 대사 수백 줄을
+    # 한 번에 보내 더 걸릴 수 있어 넉넉히 잡는다 — 못 받으면 그 답하기가 실패로 끝난다.
+    "SHORTS_JEV_TIMEOUT_SEC": "15",
+    # 공식 가격(docs.typesafe.ai/models, 2026-10-31): 입력 $0.042/1M, **출력은 무료**. Early Access 라 바뀔 수 있다.
+    "SHORTS_PRICE_JEV_INPUT_USD_PER_1M": "0.042",
     "SHORTS_STORE_PROMPTS": "1",
     "SHORTS_RETRIEVAL_TOP_K": "5",
     "SHORTS_RETRIEVAL_MIN_SIM": "0.5",
@@ -162,6 +183,12 @@ class Config:
     source_dir: Path
     # 🔴 기본값이 있는 필드라 맨 뒤다(dataclass 규칙). 서버만 이 값을 쓴다 — CLI·테스트는 기본 8.
     db_pool_max: int = 8
+    # Jev. 기본값을 두는 이유는 위와 같다(dataclass 규칙) — 값은 load() 가 늘 채운다.
+    answer_engine: str = "jev"
+    jev_api_key: str = ""
+    jev_model: str = "jev-1.14.0"
+    jev_timeout_sec: float = 15.0
+    price_jev_input_usd_per_1m: float = 0.042
 
     # ---- DB 에 저장되는 파일 경로 ------------------------------------------------
     # 🔴 DB 에는 **상대경로**를 넣는다. 원본은 source_dir 기준, 파생물(청크·클립)은 work_dir 기준.
@@ -254,4 +281,21 @@ def load() -> Config:
         db_pool_max=max(1, int(get("SHORTS_DB_POOL_MAX"))),
         work_dir=_resolve(get("SHORTS_WORK_DIR")),
         source_dir=_resolve(get("SHORTS_SOURCE_DIR")),
+        answer_engine=_engine(get("SHORTS_ANSWER_ENGINE")),
+        jev_api_key=os.environ.get("JEV_API_KEY", ""),
+        jev_model=get("SHORTS_JEV_MODEL"),
+        jev_timeout_sec=max(1.0, float(get("SHORTS_JEV_TIMEOUT_SEC"))),
+        price_jev_input_usd_per_1m=float(get("SHORTS_PRICE_JEV_INPUT_USD_PER_1M")),
     )
+
+
+ANSWER_ENGINES = ("jev", "gemini")
+
+
+def _engine(value: str) -> str:
+    """🔴 오타를 기동 시점에 막는다. 모르는 값을 조용히 기본값으로 바꾸면 "gemini 로 돌렸다" 고
+    믿은 비교가 실제로는 jev 끼리의 비교가 된다."""
+    engine = value.strip().lower()
+    if engine not in ANSWER_ENGINES:
+        raise ValueError(f"SHORTS_ANSWER_ENGINE 은 {'/'.join(ANSWER_ENGINES)} 중 하나다: {value!r}")
+    return engine
