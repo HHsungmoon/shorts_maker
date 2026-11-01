@@ -218,6 +218,11 @@ def serve() -> None:
             "update clip_uploads set status = 'FAILED', finished_at = now(),"
             " error = '재기동으로 중단됨 — 채널에 올라갔는지 확인하세요' where status = 'UPLOADING'"
         )
+        # 댓글 답글(answers/replies.py)도 같다. 요청이 나간 뒤 죽었으면 답글은 달려 있을 수 있다.
+        conn.execute(
+            "update question_replies set status = 'FAILED', finished_at = now(),"
+            " error = '재기동으로 중단됨 — 유튜브에 답글이 달렸는지 확인하세요' where status = 'POSTING'"
+        )
         # 클러스터의 IN_PROGRESS 도 같은 이유로 죽은 것이다 — 크리에이터가 다시 [답하기] 를 누를 수 있게 되돌린다.
         clusters.reopen_stuck(conn)
         conn.commit()

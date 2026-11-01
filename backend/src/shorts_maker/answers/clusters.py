@@ -22,7 +22,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from .. import config
-from ..adapters import gemini
+from ..adapters import gemini, youtube
 from . import embeddings
 
 # 🔴 상태 전이는 **여기 한 곳**에서만 한다(D7). `update question_clusters set status = ...` 를 다른
@@ -128,13 +128,24 @@ def demand(conn: psycopg.Connection, source_id: int) -> list[dict]:
 
 
 def questions_of(conn: psycopg.Connection, cluster_id: int) -> list[dict]:
+    """묶음의 질문 원문 + 좋아요 수 + 유튜브 댓글이면 거기 단 최근 답글(tease §7-5)."""
     rows = conn.execute(
-        """select q.id, q.text, q.created_at, q.origin, q.asked_at_sec, count(l.id) as likes
+        """select q.id, q.text, q.created_at, q.origin, q.asked_at_sec, count(l.id) as likes,
+                  (select jsonb_build_object('status', r.status, 'video_id', r.video_id,
+                                             'youtube_comment_id', r.youtube_comment_id, 'error', r.error)
+                     from question_replies r where r.question_id = q.id order by r.id desc limit 1) as reply
            from questions q left join question_likes l on l.question_id = q.id
            where q.cluster_id = %s group by q.id order by likes desc, q.id""",
         (cluster_id,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    for question in out:
+        reply = question["reply"]
+        if reply is not None:
+            # 🔴 주소는 어댑터에서만 짓는다(youtube.comment_url).
+            comment_id = reply.pop("youtube_comment_id")
+            reply["url"] = youtube.comment_url(reply.pop("video_id"), comment_id) if comment_id else None
+    return out
 
 
 def clip_of(conn: psycopg.Connection, cluster_id: int) -> dict | None:
