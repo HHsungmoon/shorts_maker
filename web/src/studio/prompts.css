@@ -73,6 +73,17 @@
 	background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
+/* 시청자 반응 요약 관점 — 이 화면에서 고친다. 관리자 기준과 다른 글이라 색을 가른다. */
+.pr-slot--reaction {
+	color: var(--warn-ink);
+	background: var(--warn-bg);
+}
+
+.pr-badge--reaction {
+	color: var(--warn-ink);
+	border-color: var(--warn-line);
+}
+
 /* 3층 — 영상 준비 탭에서 고친다. */
 .pr-slot--context {
 	color: var(--accent);

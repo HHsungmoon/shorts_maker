@@ -27,6 +27,28 @@ export const STAGE_LABEL: Record<string, string> = {
 	answer: "질문에 답하기",
 	upload: "유튜브 업로드",
 	livechat: "채팅에서 질문 가져오기",
+	comment: "댓글 가져오기",
+	reaction: "시청자 반응 요약",
+};
+
+/**
+ * 끝난 뒤 결과를 한 줄로 알려 줄 잡. 대부분의 잡은 화면이 다시 읽으면 결과가 보이지만, 가져오기는
+ * "몇 개 중 몇 개가 질문이 됐나" 와 "이 영상엔 답글을 못 단다" 가 화면 어디에도 안 남는다.
+ */
+const JOB_SUMMARY: Record<string, (result: Record<string, unknown>) => string> = {
+	comment: (r) => {
+		const parts = [`댓글 ${r.comments}개에서 질문 ${r.inserted}개를 새로 가져왔습니다`];
+		if (Number(r.already) > 0) parts.push(`이미 있던 ${r.already}개는 건너뜀`);
+		// 질문이 아닌 댓글은 리포트의 "시청자 반응" 으로 간다(tease §3-6). 어디로 갔는지 말해 둔다.
+		if (Number(r.reviews) > 0) parts.push(`감상 ${r.reviews}개는 리포트의 시청자 반응으로`);
+		if (Number(r.withdrawn) > 0) parts.push(`감상으로 바뀐 ${r.withdrawn}개는 질문에서 뺌`);
+		if (r.truncated) parts.push("댓글이 많아 최근 1,000개만 봤습니다");
+		const summary = parts.join(" · ");
+		// 🔴 답글은 영상 주인 채널로만 단다(answers/replies.py). 숏폼까지 만든 뒤에야 알게 하지 않는다.
+		return r.ownChannel === false
+			? `${summary}. 이 영상은 연결된 채널의 영상이 아니라 답글은 달 수 없습니다.`
+			: `${summary}.`;
+	},
 };
 
 export interface StudioJob {
@@ -77,6 +99,10 @@ export function useStudioJob(): StudioJob {
 				if (next.status === "DONE" || next.status === "FAILED") {
 					setReloadToken((n) => n + 1);
 					setError(next.error);
+					const summarize = JOB_SUMMARY[next.kind];
+					if (next.status === "DONE" && summarize && next.result && typeof next.result === "object") {
+						setNotice(summarize(next.result as Record<string, unknown>));
+					}
 				}
 			} catch (e: unknown) {
 				setError(e instanceof Error ? e.message : String(e));

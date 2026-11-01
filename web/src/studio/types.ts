@@ -198,6 +198,8 @@ export interface YoutubeChannel {
 	channel_title: string | null;
 	scopes: string;
 	connected_at: string;
+	/** 댓글 권한(youtube.force-ssl)을 받았나. 거짓이면 댓글 가져오기·답글이 "다시 연결" 을 안내한다(2026-11-01). */
+	can_comment: boolean;
 }
 
 export interface YoutubeState {
@@ -372,12 +374,45 @@ export interface ShortsClusterQuestion {
 	id: number;
 	text: string;
 	created_at: string;
-	/** 어디서 왔나(tease §3-5). `live_chat` 은 끝난 라이브의 채팅 다시보기에서 가져온 것이다. */
-	origin: "page" | "live_chat";
+	/**
+	 * 어디서 왔나(tease §3-5). `live_chat` 은 끝난 라이브의 채팅 다시보기, `comment` 는 유튜브 댓글에서
+	 * 가져온 것이다.
+	 */
+	origin: "page" | "live_chat" | "comment";
 	/** 채팅이 달린 영상 안의 초. 우리 페이지 질문은 null. */
 	asked_at_sec: number | null;
 	// SQL 이 센 좋아요 수(question_likes 조인). 서버가 계산해 주므로 화면에서 다시 세지 않는다.
 	likes: number;
+	/** 유튜브 댓글이면 거기 단 가장 최근 답글(tease §7-5). 묶인 질문에만 온다 — 미분류 목록엔 없다. */
+	reply?: QuestionReplyState | null;
+}
+
+/** 질문 줄에 붙는 답글 상태. 주소는 서버가 짓는다(adapters/youtube.comment_url). */
+export interface QuestionReplyState {
+	status: "POSTING" | "DONE" | "FAILED";
+	url: string | null;
+	error: string | null;
+}
+
+/** 답글 기록 한 줄(question_replies). */
+export interface QuestionReply extends QuestionReplyState {
+	id: number;
+	text: string;
+	created_at: string;
+	finished_at: string | null;
+}
+
+/** 답글 입력란을 열 때 받는 것. 네트워크 없이 서버가 아는 것만 담는다 — 영상 주인 확인은 보낼 때 한다. */
+export interface ReplyDraft {
+	question: { id: number; text: string };
+	/** 초안 — 숏폼 제목 · 원본 시각 · (비공개가 아니면) Shorts 주소. 사람이 고친 뒤 보낸다. */
+	text: string;
+	clip: { id: number; title: string | null; parts: { start_sec: number; end_sec: number }[]; shorts_url: string | null } | null;
+	/** 누구 이름으로 달리나. */
+	channel: YoutubeChannel | null;
+	reply: QuestionReply | null;
+	/** 못 다는 이유. null 이면 달 수 있다. */
+	blocked: string | null;
 }
 
 /** 묶인 질문 그룹 = 숏폼 하나의 작업 단위(tease §3-2). `question_clusters` 행 그대로에 수요가 붙는다. */
@@ -544,7 +579,51 @@ export interface ShortsReport {
 	waiting: ShortsReportQuestion[];
 	declined: ShortsReportQuestion[];
 	answered: ShortsReportAnswered[];
+	/** 유튜브 감상 댓글과 AI 요약(tease §3-6). 댓글을 한 번도 안 가져왔으면 total 0. */
+	reactions: ShortsReactions;
 	cost: ShortsReportCost;
+}
+
+/** 시청자 반응 — 감상 댓글 원문 전부와 최신 AI 요약. */
+export interface ShortsReactions {
+	/** 받은 댓글(영상 주인 글 제외). */
+	total: number;
+	/** 그중 질문 갈래로 간 것. 질문 탭에서 다룬다. */
+	questions: number;
+	/** 감상 갈래, 오래된 것부터. 요약이 있어도 원문을 전부 보인다. */
+	reviews: ShortsReview[];
+	fetchedAt: string | null;
+	summary: ShortsReactionSummary | null;
+}
+
+export interface ShortsReview {
+	id: number;
+	text: string;
+	publishedAt: string | null;
+}
+
+export type ShortsReactionKind = "positive" | "concern" | "request";
+
+export interface ShortsReactionTheme {
+	kind: ShortsReactionKind;
+	/** 좋았던 점 · 아쉬운 점 · 바라는 것 */
+	label: string;
+	title: string;
+	detail: string;
+	/** 근거 댓글 id(ShortsReview.id). 🔴 개수는 이 길이다 — 모델이 말한 숫자가 아니다. */
+	comments: number[];
+	count: number;
+}
+
+export interface ShortsReactionSummary {
+	id: number;
+	overview: string;
+	themes: ShortsReactionTheme[];
+	/** 요약할 때 본 감상 수. */
+	reviews: number;
+	createdAt: string;
+	/** 요약 뒤 댓글을 다시 가져와 감상 수가 바뀌었다. 자동으로 다시 요약하지 않는다. */
+	stale: boolean;
 }
 
 export interface ShortsReportQuestion {
@@ -586,7 +665,7 @@ export interface ShortsReportCost {
 // ---------------------------------------------------------------- 프롬프트 (GET /api/prompts)
 
 /** 프롬프트 층. 1층 규칙은 코드라 고칠 수 없고 보기만 한다. */
-export type PromptLayerKey = "rule" | "standard" | "context" | "request" | "auto";
+export type PromptLayerKey = "rule" | "standard" | "reaction" | "context" | "request" | "auto";
 
 export interface PromptLayer {
 	key: PromptLayerKey;
@@ -610,6 +689,8 @@ export interface PromptStage {
 	why: string;
 	/** 🔴 원문에 관리자 기준 칸이 있는가. 따로 적은 표시가 아니라 원문에서 판단한 값이다. */
 	usesStandard: boolean;
+	/** 원문에 시청자 반응 요약 관점 칸이 있는가. */
+	usesReaction: boolean;
 	parts: PromptPart[];
 }
 
@@ -623,4 +704,6 @@ export interface PromptCatalog {
 	layers: PromptLayer[];
 	stages: PromptStage[];
 	standard: PromptStandard;
+	/** 시청자 반응 요약 관점(tease §3-6). 관리자 기준과 다른 글이다. */
+	reaction: PromptStandard;
 }

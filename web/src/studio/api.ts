@@ -2,6 +2,8 @@ import { request } from "../shared/client";
 import type {
 	PromptCatalog,
 	PromptStandard,
+	QuestionReply,
+	ReplyDraft,
 	ShortsClip,
 	ShortsCluster,
 	ShortsClusterList,
@@ -254,6 +256,32 @@ export function importLiveChat(sourceId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/live-chat`, { method: "POST" });
 }
 
+/**
+ * 유튜브 댓글에서 질문 꼴만 가져온다(tease §3-5, 2026-11-01). 잡이다. 몇 번 눌러도 같다 — 서버가 댓글 id 로
+ * 중복을 막는다. 채널이 연결돼 있고 댓글 권한을 받았어야 한다(아니면 409 가 이유를 말한다).
+ */
+export function importComments(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/comments`, { method: "POST" });
+}
+
+/** [AI 요약] — 감상 댓글을 Gemini 1회로 요약한다. 잡이다. 감상이 없으면 409. */
+export function summarizeReactions(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/reactions/summary`, { method: "POST" });
+}
+
+/** 댓글 질문에 달 답글 초안과 지금 상태(tease §7-5). */
+export function fetchReplyDraft(questionId: number): Promise<ReplyDraft> {
+	return request<ReplyDraft>(`/api/questions/${questionId}/reply`);
+}
+
+/**
+ * 그 댓글에 답글을 단다. **잡이 아니다** — 몇 초면 끝나 바로 결과가 온다. 🔴 실패해도 다시 보내지 않는다
+ * (응답만 잃었으면 같은 답글이 둘 달린다) — 서버가 FAILED 로 남기고, 사람이 유튜브에서 확인한 뒤 다시 누른다.
+ */
+export function postReply(questionId: number, text: string): Promise<QuestionReply> {
+	return request<QuestionReply>(`/api/questions/${questionId}/reply`, { method: "POST", body: { text } });
+}
+
 export function fetchClusters(sourceId: number): Promise<ShortsClusterList> {
 	return request<ShortsClusterList>(`/api/sources/${sourceId}/clusters`);
 }
@@ -327,6 +355,11 @@ export function fetchPrompts(): Promise<PromptCatalog> {
  */
 export function saveStandard(body: string): Promise<PromptStandard> {
 	return request<PromptStandard>("/api/prompts/standard", { method: "PUT", body: { body } });
+}
+
+/** 시청자 반응 요약 관점 저장(tease §3-6). 관리자 기준과 같이 덧붙이지만 요약에만 들어간다. */
+export function saveReactionGuide(body: string): Promise<PromptStandard> {
+	return request<PromptStandard>("/api/prompts/reaction", { method: "PUT", body: { body } });
 }
 
 /** 영상 개요. 🔴 이미 나눈 구간에는 반영되지 않는다. */

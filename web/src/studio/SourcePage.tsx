@@ -61,6 +61,8 @@ export interface SourceView {
 	submit: (start: () => Promise<ShortsJob>) => void;
 	act: (run: () => Promise<unknown>) => void;
 	reload: () => void;
+	/** 잡이 끝날 때마다 올라간다. 페이지가 안 들고 있는 값을 탭이 직접 읽을 때(리포트) deps 로 쓴다. */
+	reloadToken: number;
 	/** 오른쪽 아래 미니 플레이어로 원본을 이 초부터 튼다. 후보가 원본 어디서 왔는지 확인하는 길이다. */
 	playAt: (sec: number) => void;
 
@@ -239,6 +241,7 @@ export function SourcePage() {
 		submit,
 		act,
 		reload,
+		reloadToken,
 		playAt,
 		chunks,
 		hasChunks,

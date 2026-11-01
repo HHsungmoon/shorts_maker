@@ -81,6 +81,13 @@ export function YoutubeConnect({
 			>
 				▶ {channel.channel_title ?? "유튜브 연결됨"}
 			</span>
+			{/* 댓글 기능(2026-11-01) 전에 연결했거나 동의 화면에서 댓글 권한을 풀었다. 업로드는 되고 댓글 가져오기·
+			    답글만 막힌다 — 무엇을 하면 되는지를 채널 이름 옆에서 바로 말한다. */}
+			{!channel.can_comment && (
+				<span className="sm-yt-channel__warn" title="끊기 → 유튜브 연결 → 동의 화면의 권한을 모두 체크">
+					댓글 권한 없음 · 다시 연결 필요
+				</span>
+			)}
 			<button type="button" className="sm-yt-channel__off" onClick={disconnect}>
 				끊기
 			</button>

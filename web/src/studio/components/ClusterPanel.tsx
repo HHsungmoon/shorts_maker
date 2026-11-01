@@ -5,12 +5,14 @@ import {
 	answerCluster,
 	buildCandidate,
 	clipUrl,
+	importComments,
 	importLiveChat,
 	patchCluster,
 	publishClip,
 } from "../api";
 import { useAuth } from "../AuthContext";
 import { ClipVideo } from "./ClipVideo";
+import { CommentReplies } from "./CommentReplies";
 import { time } from "../../shared/format";
 import type {
 	ShortsCandidate,
@@ -22,7 +24,10 @@ import type {
 } from "../types";
 import "../clusters.css";
 
-/** 질문 한 줄 — 채팅에서 가져온 것은 언제 물었는지를 붙인다. 우리 페이지 질문과 섞여 보이므로 출처가 보여야 한다. */
+/**
+ * 질문 한 줄 — 채팅에서 가져온 것은 언제 물었는지를, 댓글에서 가져온 것은 답글을 달았는지를 붙인다.
+ * 우리 페이지 질문과 섞여 보이므로 출처가 보여야 한다.
+ */
 function QuestionLine({ question }: { question: ShortsClusterQuestion }) {
 	return (
 		<li>
@@ -31,7 +36,20 @@ function QuestionLine({ question }: { question: ShortsClusterQuestion }) {
 					채팅{question.asked_at_sec !== null && ` ${time(question.asked_at_sec)}`}
 				</span>
 			)}
+			{question.origin === "comment" && (
+				<span className="sm-qorigin" title="유튜브 댓글에서 가져온 질문">
+					댓글
+				</span>
+			)}
 			{question.text} <span className="sm-meta">· 좋아요 {question.likes}</span>
+			{question.reply?.status === "DONE" && question.reply.url && (
+				<>
+					{" "}
+					<a className="sm-meta" href={question.reply.url} target="_blank" rel="noreferrer">
+						· 답글 달림 ↗
+					</a>
+				</>
+			)}
 		</li>
 	);
 }
@@ -235,6 +253,17 @@ export function ClusterPanel({
 					>
 						채팅에서 질문 가져오기
 					</button>
+					{/* 연결된 채널의 댓글 권한이 필요하다. 없으면 서버가 409 로 "다시 연결" 을 말한다 — 홈의 채널
+					    표시에도 같은 안내가 있다. 숨기지 않는다: 왜 없는지 알 길이 없어진다. */}
+					<button
+						type="button"
+						className="button button--small"
+						disabled={busy}
+						title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : "유튜브 댓글을 가져옵니다. 질문 꼴은 여기로, 나머지 감상은 리포트의 시청자 반응으로 갑니다"}
+						onClick={() => onJob(() => importComments(sourceId))}
+					>
+						댓글에서 질문 가져오기
+					</button>
 					<button
 						type="button"
 						className="button button--small"
@@ -358,6 +387,7 @@ export function ClusterPanel({
 								onSave={() => save(current.id)}
 								onJob={onJob}
 								onAct={(run) => act(current.id, run)}
+								onChanged={onChanged}
 								duration={duration}
 								onPlay={onPlay}
 							/>
@@ -389,6 +419,8 @@ interface ClusterDetailProps {
 	onSave: () => void;
 	onJob: (start: () => Promise<ShortsJob>) => void;
 	onAct: (run: () => Promise<unknown>) => void;
+	/** 잡도 onAct 도 아닌 변경(댓글 답글) 뒤 목록을 다시 읽는다. */
+	onChanged: () => void;
 	duration: number;
 	onPlay: (sec: number) => void;
 }
@@ -411,6 +443,7 @@ function ClusterDetail({
 	onSave,
 	onJob,
 	onAct,
+	onChanged,
 	duration,
 	onPlay,
 }: ClusterDetailProps) {
@@ -558,6 +591,14 @@ function ClusterDetail({
 							onDecline={() => onAct(() => patchCluster(cluster.id, { status: "DECLINED" }))}
 						/>
 					</section>
+				)}
+
+				{/* 숏폼이 생긴 뒤에만 — 답글은 그 숏폼(원본의 그 시각)을 가리키는 글이다(tease §7-5). */}
+				{showClip && (
+					<CommentReplies
+						questions={cluster.questions.filter((q) => q.origin === "comment")}
+						onChanged={onChanged}
+					/>
 				)}
 
 				{/* 후보는 만든 뒤에도 남겨 둔다 — 다른 후보로 바꿔 볼 수 있어야 한다. */}

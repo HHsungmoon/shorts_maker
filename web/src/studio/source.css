@@ -2012,3 +2012,113 @@
 	color: var(--text-muted);
 	font-style: italic;
 }
+
+/* ---------------------------------------------------------------- 시청자 반응 (리포트, tease §3-6) */
+
+.sm-reactions {
+	margin-top: 18px;
+}
+
+.sm-reactions__top {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.sm-reactions__summary {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 4px;
+}
+
+.sm-reactions__overview {
+	margin: 0;
+	font-size: 16px;
+	line-height: 1.7;
+}
+
+.sm-reactions__stale {
+	margin: 0;
+	padding: 8px 12px;
+	font-size: 14px;
+	background: var(--warn-bg);
+	border: 1px solid var(--warn-line);
+	border-radius: 8px;
+	color: var(--warn-ink);
+}
+
+.sm-reactions__themes {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-reactions__theme {
+	padding: 10px 14px;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+}
+
+.sm-reactions__title {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 6px;
+	margin: 0;
+	font-weight: 600;
+}
+
+.sm-reactions__detail {
+	margin: 4px 0 0;
+	font-size: 15px;
+	line-height: 1.6;
+}
+
+/* 종류 딱지. 글자가 뜻을 말하고 색은 거든다. */
+.sm-reactions__tag {
+	padding: 1px 8px;
+	font-size: 12px;
+	font-weight: 600;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--text-muted);
+}
+
+.sm-reactions__tag--positive {
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+	color: var(--accent);
+}
+
+.sm-reactions__tag--concern {
+	background: var(--danger-soft);
+	border-color: var(--danger-line);
+	color: var(--danger-ink);
+}
+
+.sm-reactions__tag--request {
+	background: var(--warn-bg);
+	border-color: var(--warn-line);
+	color: var(--warn-ink);
+}
+
+.sm-reactions__all > summary {
+	cursor: pointer;
+	font-size: 14px;
+	color: var(--text-muted);
+}
+
+.sm-reactions__list {
+	margin: 8px 0 0;
+	padding-left: 28px;
+	font-size: 15px;
+	line-height: 1.7;
+}
+
+.sm-reactions__list li + li {
+	margin-top: 4px;
+}

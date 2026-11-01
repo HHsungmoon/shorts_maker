@@ -709,3 +709,60 @@
 	font-weight: 600;
 	vertical-align: 1px;
 }
+
+/* 유튜브 댓글에 답글(tease §7-5) ------------------------------------------- */
+
+.sm-replies {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-replies__item {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sm-replies__row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.sm-replies__text {
+	flex: 1;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.sm-replies__done {
+	font-size: 13px;
+	white-space: nowrap;
+}
+
+.sm-replies__composer {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sm-replies__input {
+	min-height: 90px;
+	font-size: 14px;
+	line-height: 1.5;
+	resize: vertical;
+}
+
+/* 못 다는 이유 · 지난번 실패. 오류 상자만큼 세지 않게 — 정상적인 안내일 때가 많다. */
+.sm-replies__warn {
+	margin: 0;
+	font-size: 13px;
+	color: var(--text-muted);
+}

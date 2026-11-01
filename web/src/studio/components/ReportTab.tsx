@@ -4,6 +4,7 @@ import { fetchReport } from "../api";
 import { useAsync } from "../../shared/useAsync";
 import type { ShortsReport, ShortsReportQuestion } from "../types";
 import type { SourceView } from "../SourcePage";
+import { ReactionsSection, reactionsText } from "./ReactionsSection";
 
 /**
  * 회차 리포트 — **이 설명회가 답하지 않은 것**.
@@ -22,7 +23,8 @@ import type { SourceView } from "../SourcePage";
 export function ReportTab({ view }: { view: SourceView }) {
 	const { sourceId } = view;
 	const report = useAsync<ShortsReport>(
-		() => fetchReport(sourceId), [sourceId], { keepPrevious: true, subject: sourceId },
+		// reloadToken — [AI 요약] 잡이 끝나면 다시 읽는다.
+		() => fetchReport(sourceId), [sourceId, view.reloadToken], { keepPrevious: true, subject: sourceId },
 	);
 	const [copied, setCopied] = useState(false);
 
@@ -180,6 +182,9 @@ export function ReportTab({ view }: { view: SourceView }) {
 					</section>
 				</div>
 			</div>
+
+			{/* 시청자 반응(tease §3-6) — 질문이 아닌 유튜브 댓글. 원문이 길어 두 칸 아래 전체 폭에 둔다. */}
+			<ReactionsSection view={view} reactions={data.reactions} />
 		</div>
 	);
 }
@@ -383,5 +388,6 @@ function asText(data: ShortsReport): string {
 		`  질문 하나당 ${cost.perQuestionKrw === null ? "-" : won(cost.perQuestionKrw)}`,
 		`  ${cost.note}`,
 	);
+	lines.push(...reactionsText(data.reactions));
 	return lines.join("\n");
 }
