@@ -1,12 +1,13 @@
-"""유튜브 API — 채널 연결과 Shorts 업로드(tease §7-5, 2026-10-31). **인증 필요.**
+"""유튜브 API — 채널 연결 · Shorts 업로드 · 댓글 질문과 답글(tease §3-5 · §7-5). **인증 필요.**
 
 🔴 이 라우터는 **스튜디오 라우터의 하위 라우터**다. `studio.py` 가 `router.include_router(youtube.router)`
 로 붙이고, 그때 스튜디오 라우터의 `/api` 접두사와 `require_auth` 가 이 라우트들에 함께 붙는다. 그래서
 여기에는 접두사도 인증도 적지 않는다. 🔴 앱(`server.py`)에 **직접** 붙이면 인증 없이 열린다 —
 `tests/http/test_api_auth.py` 가 `/api` 밖 라우트를, `tests/http/test_youtube.py` 가 이 라우터의 소속을 본다.
 
-도메인 로직은 없다. 무엇을 저장하고 언제 거절하나는 `pipeline/youtube_channel.py`(연결) 와
-`pipeline/upload.py`(업로드) 가 정하고, 여기는 HTTP 로 옮기기만 한다.
+도메인 로직은 없다. 무엇을 저장하고 언제 거절하나는 `pipeline/youtube_channel.py`(연결) ·
+`pipeline/upload.py`(업로드) · `answers/comments.py`(댓글 → 질문) · `answers/replies.py`(답글) 가 정하고,
+여기는 HTTP 로 옮기기만 한다.
 
 🔴 콜백은 **GET 인데 행동이다**(토큰을 저장한다). Google 이 브라우저를 GET 으로 돌려보내니 메서드를
 바꿀 수 없고, 그래서 `deps.SAFE_METHODS` 로 갈리지 않는다. 구간 미리보기처럼 그 자리에서 막는다 —
@@ -23,6 +24,8 @@ from pydantic import BaseModel, Field
 
 from . import auth, deps
 from .deps import connect, submit
+from ..adapters import youtube as youtube_api
+from ..answers import comments, replies
 from ..pipeline import upload, youtube_channel
 
 # 🔴 접두사·의존성을 두지 않는다(모듈 머리 주석). 스튜디오 라우터에 붙는 순간 둘 다 생긴다.
@@ -144,3 +147,65 @@ def youtube_upload(clip_id: int, body: YoutubeUploadIn) -> dict:
             return upload.run(conn, deps.cfg, clip_id, title, description, privacy)
 
     return submit("upload", f"clip {clip_id}", work)
+
+
+# ---------------------------------------------------------------- 댓글 → 질문 · 답글 (2026-11-01)
+
+class ReplyIn(BaseModel):
+    """답글 본문. 입력란에서 사람이 고친 뒤의 것이다. 정확한 상한은 `replies.check_text` 가 본다."""
+
+    text: str = Field(max_length=20000)
+
+
+@router.post("/sources/{source_id}/comments")
+def import_comments(source_id: int) -> dict:
+    """**[댓글에서 질문 가져오기]** — 유튜브 댓글에서 질문 꼴만 골라 넣는다(tease §3-5). 잡이다.
+
+    채널 연결 · 댓글 권한은 큐에 넣기 **전에** 본다 — 큐에서 실패하면 사람은 한참 뒤에야 이유를 안다.
+    """
+    with connect() as conn:
+        source = conn.execute("select youtube_id from sources where id = %s", (source_id,)).fetchone()
+        if source is None:
+            raise HTTPException(404, "source not found")
+        if not source["youtube_id"]:
+            raise HTTPException(409, "유튜브 영상 id 가 없는 원본입니다. 영상 준비 탭에서 유튜브 주소를 먼저 넣어 주세요")
+        try:
+            youtube_channel.comment_access(conn, deps.cfg)
+        except youtube_channel.NoCommentAccess as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def work() -> dict:
+        with connect() as conn:
+            return comments.import_comments(conn, deps.cfg, source_id)
+
+    return submit("comment", f"source {source_id}", work)
+
+
+@router.get("/questions/{question_id}/reply")
+def reply_draft(question_id: int) -> dict:
+    """답글 입력란에 채울 초안 · 누구 이름으로 달리나 · 이미 단 답글 · 못 다는 이유. 네트워크를 쓰지 않는다."""
+    with connect() as conn:
+        try:
+            return replies.draft(conn, deps.cfg, question_id)
+        except replies.QuestionNotFound as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/questions/{question_id}/reply")
+def reply_post(question_id: int, body: ReplyIn) -> dict:
+    """그 댓글에 답글을 단다. **잡이 아니다** — 요청 두세 번(몇 초)이라 바로 결과를 돌려준다.
+
+    🔴 사람이 누를 때만 온다. 이 요청 하나가 답글 하나에 대한 동의다(III.I.2). 실패해도 다시 보내지 않는다.
+    """
+    with connect() as conn:
+        try:
+            return replies.post(conn, deps.cfg, question_id, body.text)
+        except replies.QuestionNotFound as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except replies.InvalidText as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (replies.NotReady, youtube_api.ReconnectNeeded) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except youtube_api.YoutubeError as exc:
+            # 유튜브가 거절했거나 닿지 못했다. 이유는 어댑터가 사람 말로 옮겨 뒀다.
+            raise HTTPException(502, str(exc)) from exc

@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
-from ..answers import answer, clusters, events, livechat, report, suggest
+from ..answers import answer, clusters, events, livechat, reactions, report, suggest
 from . import auth, deps, prompt_catalog, youtube
 from ..pipeline import (
     captions, cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
@@ -696,6 +696,27 @@ def source_report(source_id: int) -> dict:
             raise HTTPException(404, str(exc)) from exc
 
 
+@router.post("/sources/{source_id}/reactions/summary")
+def summarize_reactions(source_id: int) -> dict:
+    """**[AI 요약]** — 감상 댓글을 Gemini 1회로 묶음별 요약한다(tease §3-6). 잡이다.
+
+    감상이 0개면 큐에 넣기 **전에** 거절한다 — 부를 것이 없는데 잡을 만들면 Gemini 를 부르지 않아도 "실패" 가 쌓인다.
+    """
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        if conn.execute(
+            "select 1 from source_comments where source_id = %s and kind = 'review' limit 1", (source_id,)
+        ).fetchone() is None:
+            raise HTTPException(409, "감상 댓글이 없습니다. 질문 탭에서 [댓글에서 질문 가져오기] 를 먼저 눌러 주세요")
+
+    def work() -> dict:
+        with connect() as conn:
+            return reactions.summarize(conn, deps.cfg, source_id)
+
+    return submit("reaction", f"source {source_id}", work)
+
+
 @router.patch("/clusters/{cluster_id}")
 def patch_cluster(cluster_id: int, body: ClusterPatchIn) -> dict:
     """대표 문장을 고치거나 상태를 바꾼다.
@@ -852,6 +873,21 @@ def put_standard(body: StandardIn) -> dict:
     with connect() as conn:
         try:
             row = standards.save(conn, body.body)
+        except standards.StandardError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        conn.commit()
+    return {"body": row["body"], "updatedAt": row["created_at"], "maxChars": standards.MAX_CHARS}
+
+
+@router.put("/prompts/reaction")
+def put_reaction_guide(body: StandardIn) -> dict:
+    """시청자 반응 **요약 관점**을 저장한다(tease §3-6). 관리자 기준과 같은 테이블에 덧붙이되 종류가 다르다.
+
+    🔴 이 글은 요약에만 들어가고 클립 쪽(순위·자르기·후보·판정)에는 들어가지 않는다. 다음 [AI 요약] 부터 반영된다.
+    """
+    with connect() as conn:
+        try:
+            row = standards.save(conn, body.body, standards.REACTION)
         except standards.StandardError as exc:
             raise HTTPException(422, str(exc)) from exc
         conn.commit()

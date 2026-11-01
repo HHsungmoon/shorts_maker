@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from shorts_maker import standards
-from shorts_maker.answers import judge, routing
+from shorts_maker.answers import judge, reactions, routing
 from shorts_maker.db import store
 from shorts_maker.http import deps, prompt_catalog, server
 from shorts_maker.pipeline import cutting, ranking, segmentation
@@ -37,7 +37,7 @@ class CatalogTest(unittest.TestCase):
         live = {
             "segment": segmentation.PROMPT_TEMPLATE, "rank": ranking.FIXED_PROMPT,
             "cut": cutting.PROMPT_TEMPLATE, "select": routing.PROMPT,
-            "answer": ranking.ANSWER_PROMPT, "judge": judge.PROMPT,
+            "answer": ranking.ANSWER_PROMPT, "judge": judge.PROMPT, "reaction": reactions.PROMPT,
         }
         for stage in prompt_catalog.STAGES:
             with self.subTest(stage=stage["key"]):
@@ -48,7 +48,7 @@ class CatalogTest(unittest.TestCase):
         found = {s["key"]: s["usesStandard"] for s in prompt_catalog.stages()}
         self.assertEqual(found, {
             "segment": False, "rank": True, "cut": True,
-            "select": False, "answer": True, "judge": True,
+            "select": False, "answer": True, "judge": True, "reaction": False,
         })
 
     def test_the_parts_rebuild_the_template_exactly(self):
@@ -69,10 +69,14 @@ class CatalogTest(unittest.TestCase):
         explained = {layer["key"] for layer in prompt_catalog.LAYERS}
         self.assertTrue(set(prompt_catalog.LAYER_OF.values()) <= explained)
 
-    def test_only_the_standard_and_context_layers_are_editable(self):
-        # 🔴 1층은 보여주기만 한다.
+    def test_only_the_standard_reaction_and_context_layers_are_editable(self):
+        # 🔴 1층은 보여주기만 한다. 요약 관점(tease §3-6)은 2026-11-01 에 더해졌다.
         editable = {layer["key"] for layer in prompt_catalog.LAYERS if layer["editable"]}
-        self.assertEqual(editable, {"standard", "context"})
+        self.assertEqual(editable, {"standard", "reaction", "context"})
+
+    def test_only_the_reaction_summary_takes_the_guide(self):
+        found = {s["key"] for s in prompt_catalog.stages() if s["usesReaction"]}
+        self.assertEqual(found, {"reaction"})
 
 
 class ApiTestCase(unittest.TestCase):
@@ -91,8 +95,9 @@ class PromptsApiTest(ApiTestCase):
     def test_the_list_carries_every_stage_and_the_standard(self):
         body = self.client.get("/api/prompts").json()
         self.assertEqual([s["key"] for s in body["stages"]],
-                         ["segment", "rank", "cut", "select", "answer", "judge"])
+                         ["segment", "rank", "cut", "select", "answer", "judge", "reaction"])
         self.assertEqual(body["standard"]["body"], "")
+        self.assertEqual(body["reaction"]["body"], "")
         self.assertEqual(body["standard"]["maxChars"], standards.MAX_CHARS)
 
     def test_saving_a_standard_shows_up_in_the_list(self):
@@ -120,6 +125,41 @@ class PromptsApiTest(ApiTestCase):
         self.client.put("/api/prompts/standard", json={"body": ""})
         with store.connect(self.url) as conn:
             self.assertIsNone(standards.load(conn))
+
+
+class ReactionGuideApiTest(ApiTestCase):
+    """시청자 반응 요약 관점(tease §3-6). 🔴 관리자 기준과 같은 테이블이지만 섞이지 않는다."""
+
+    def test_saving_the_guide_shows_up_and_leaves_the_standard_alone(self):
+        self.client.put("/api/prompts/standard", json={"body": "기준"})
+        saved = self.client.put("/api/prompts/reaction", json={"body": "채용 과정 불만을 따로 모은다"})
+        self.assertEqual(saved.status_code, 200, saved.text)
+        body = self.client.get("/api/prompts").json()
+        self.assertEqual((body["standard"]["body"], body["reaction"]["body"]), ("기준", "채용 과정 불만을 따로 모은다"))
+        with store.connect(self.url) as conn:
+            self.assertEqual(standards.load(conn), "기준")
+            self.assertEqual(standards.load(conn, standards.REACTION), "채용 과정 불만을 따로 모은다")
+
+    def test_the_reaction_stage_uses_the_guide_and_not_the_standard(self):
+        stage = next(s for s in self.client.get("/api/prompts").json()["stages"] if s["key"] == "reaction")
+        self.assertEqual((stage["usesReaction"], stage["usesStandard"]), (True, False))
+
+    def test_a_guide_over_the_cap_is_refused(self):
+        response = self.client.put("/api/prompts/reaction", json={"body": "가" * (standards.MAX_CHARS + 1)})
+        self.assertEqual(response.status_code, 422)
+
+    def test_summarizing_without_reviews_is_refused_before_the_queue(self):
+        # 부를 것이 없는데 잡을 만들지 않는다.
+        with store.connect(self.url) as conn:
+            source_id = conn.execute(
+                "insert into sources (title, content_type, path, fingerprint, status)"
+                " values ('강연', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE') returning id"
+            ).fetchone()["id"]
+            conn.commit()
+        response = self.client.post(f"/api/sources/{source_id}/reactions/summary")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("감상 댓글이 없습니다", response.json()["detail"])
+        self.assertEqual(self.client.post("/api/sources/9999/reactions/summary").status_code, 404)
 
 
 class SourceContextApiTest(ApiTestCase):

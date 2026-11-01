@@ -1,4 +1,4 @@
-"""유튜브 채널 연결 · 업로드 API(`http/youtube.py`) — 경계(tease §7-5).
+"""유튜브 채널 연결 · 업로드 · 댓글 API(`http/youtube.py`) — 경계(tease §3-5 · §7-5).
 
 🔴 지키는 것: ① 콜백은 GET 인데 행동이라 메서드로 안 갈린다 — state 와 역할을 그 자리에서 본다
 ② refresh token 은 **어떤 응답에도** 실리지 않는다(보기 전용도 읽는다) ③ 스튜디오 주소의 호스트가
@@ -12,6 +12,7 @@ import urllib.parse
 from unittest import mock
 
 from shorts_maker.adapters import youtube
+from shorts_maker.answers import replies
 from shorts_maker.db import store
 from shorts_maker.http import deps, studio
 from shorts_maker.http import youtube as youtube_routes
@@ -221,6 +222,72 @@ class UploadRequestTest(YoutubeApiTestCase):
         self.login()
         response = self.client.post("/api/clips/9999/youtube", json={"title": "제목", "privacy": "private"})
         self.assertEqual(response.status_code, 404)
+
+
+class CommentApiTest(YoutubeApiTestCase):
+    """댓글 가져오기 · 답글(2026-11-01). 연결·권한은 큐에 넣기 **전에** 본다."""
+
+    def seed_question(self, origin: str = "comment") -> tuple[int, int]:
+        source_id, _ = self.seed_clip()
+        with store.connect(deps.cfg.database_url) as conn:
+            question_id = conn.execute(
+                "insert into questions (source_id, text, viewer_id, origin, external_id)"
+                " values (%s, '몇 번 보나요?', 'yt:1', %s, %s) returning id",
+                (source_id, origin, "c1" if origin != "page" else None),
+            ).fetchone()["id"]
+            conn.commit()
+        return source_id, question_id
+
+    def test_importing_without_a_channel_says_to_connect_first(self):
+        source_id, _ = self.seed_clip()
+        self.login()
+        response = self.client.post(f"/api/sources/{source_id}/comments")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("연결", response.json()["detail"])
+
+    def test_importing_with_an_upload_only_connection_says_to_reconnect(self):
+        source_id, _ = self.seed_clip()
+        self.connect_channel()
+        self.login()
+        response = self.client.post(f"/api/sources/{source_id}/comments")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("다시 연결", response.json()["detail"])
+
+    def test_importing_for_a_missing_source_is_404(self):
+        self.login()
+        self.assertEqual(self.client.post("/api/sources/9999/comments").status_code, 404)
+
+    def test_the_draft_says_why_a_page_question_cannot_be_replied_to(self):
+        _, question_id = self.seed_question(origin="page")
+        self.login(READONLY)
+        body = self.client.get(f"/api/questions/{question_id}/reply").json()
+        self.assertIn("유튜브 댓글", body["blocked"])
+        self.assertEqual(self.client.get("/api/questions/9999/reply").status_code, 404)
+
+    def test_readonly_cannot_reply(self):
+        _, question_id = self.seed_question()
+        self.login(READONLY)
+        with mock.patch.object(replies, "post") as post:
+            response = self.client.post(f"/api/questions/{question_id}/reply", json={"text": "답"})
+        self.assertEqual(response.status_code, 403)
+        post.assert_not_called()
+
+    def test_reply_failures_map_to_what_a_person_can_do(self):
+        _, question_id = self.seed_question()
+        self.login()
+        cases = (
+            (replies.InvalidText("답글을 입력하세요"), 422),
+            (replies.NotReady("이 영상은 연결된 채널의 영상이 아닙니다"), 409),
+            (youtube.ReconnectNeeded("다시 연결하세요"), 409),
+            (youtube.YoutubeError("유튜브에 닿지 못했다"), 502),
+            (replies.QuestionNotFound("question not found"), 404),
+        )
+        for error, status in cases:
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(replies, "post", side_effect=error):
+                    response = self.client.post(f"/api/questions/{question_id}/reply", json={"text": "답"})
+                self.assertEqual(response.status_code, status, response.text)
+                self.assertEqual(response.json()["detail"], str(error))
 
 
 if __name__ == "__main__":
