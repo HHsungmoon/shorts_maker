@@ -2122,3 +2122,46 @@
 .sm-reactions__list li + li {
 	margin-top: 4px;
 }
+
+/* ---------------------------------------------------------------- 유튜브 성과 탭 (tease §7-6) */
+
+.sm-ytstats__warn {
+	margin: 0;
+	padding: 8px 12px;
+	font-size: 14px;
+	background: var(--warn-bg);
+	border: 1px solid var(--warn-line);
+	border-radius: 8px;
+	color: var(--warn-ink);
+}
+
+.sm-ytstats__table td {
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.sm-ytstats__table td.sm-ytstats__title {
+	white-space: normal;
+	min-width: 240px;
+}
+
+.sm-ytstats__note {
+	display: block;
+	font-size: 13px;
+	color: var(--warn-ink);
+}
+
+/* 날짜별 조회 막대 — 칸이 좁아 길이로만 흐름을 말한다. 숫자는 title 에 있다. */
+.sm-ytstats__spark {
+	display: inline-flex;
+	align-items: flex-end;
+	gap: 2px;
+	height: 24px;
+	min-width: 40px;
+}
+
+.sm-ytstats__bar {
+	width: 5px;
+	background: var(--accent);
+	border-radius: 1px;
+}

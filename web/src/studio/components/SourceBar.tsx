@@ -115,6 +115,11 @@ export function SourceBar({
 				<NavLink to={`/studio/sources/${sourceId}/clips`} className={tabClass}>
 					공개
 				</NavLink>
+				{/* 유튜브에 올린 숏폼의 성과(tease §7-6). 🔴 공개 탭의 퍼널(우리 시청자 페이지)과 따로 둔다 — 그 페이지는
+				    없어질 수 있다(2026-11-01). 올리는 곳(공개) 바로 뒤가 그 결과를 보는 자리다. */}
+				<NavLink to={`/studio/sources/${sourceId}/youtube`} className={tabClass}>
+					유튜브 성과
+				</NavLink>
 				{/* 🔴 리포트는 **가져가는 것**이고 기록은 내부용이다. 앞에 둔다. */}
 				<NavLink to={`/studio/sources/${sourceId}/report`} className={tabClass}>
 					리포트

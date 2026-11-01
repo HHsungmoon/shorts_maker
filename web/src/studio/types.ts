@@ -200,6 +200,8 @@ export interface YoutubeChannel {
 	connected_at: string;
 	/** 댓글 권한(youtube.force-ssl)을 받았나. 거짓이면 댓글 가져오기·답글이 "다시 연결" 을 안내한다(2026-11-01). */
 	can_comment: boolean;
+	/** 성과(분석) 권한 둘(yt-analytics.readonly · youtube.readonly)을 받았나(2026-11-01, tease §7-6). */
+	can_analytics: boolean;
 }
 
 export interface YoutubeState {
@@ -706,4 +708,74 @@ export interface PromptCatalog {
 	standard: PromptStandard;
 	/** 시청자 반응 요약 관점(tease §3-6). 관리자 기준과 다른 글이다. */
 	reaction: PromptStandard;
+}
+
+
+// ---------------------------------------------------------------- 유튜브 성과 (GET /api/sources/{id}/youtube/stats)
+//
+// 🔴 우리 시청자 퍼널(ShortsInsights · viewer_events)과 **다른 타입**이다. 섞지 않는다 — 시청자 페이지는 없어질 수
+// 있다(사용자 결정 2026-11-01, tease §7-6).
+
+/** 숏폼 하나의 마지막으로 가져온 수치. 분석 값이 null 이면 "아직 처리 전" 이다(0 이 아니다). */
+export interface YoutubeShortStats {
+	/** 유튜브가 돌려줬나. 거짓이면 지웠거나 볼 수 없게 됐다. */
+	found: boolean;
+	/** 지금 공개 범위. 올릴 때 고른 값과 다를 수 있다. */
+	privacy: string | null;
+	// 지금 수치 — Data API, 바로 반영
+	viewCount: number | null;
+	likeCount: number | null;
+	commentCount: number | null;
+	// 분석 합계 — Analytics, 48~72시간 늦다
+	/** 🔴 재생이 시작될 때마다(다시 재생 포함) 센 조회. 2025-03-31 부터의 Shorts 방식. */
+	views: number | null;
+	/** 첫 프레임을 넘겨 본 조회. 예전 Shorts 조회 방식. */
+	engagedViews: number | null;
+	minutesWatched: number | null;
+	avgViewSec: number | null;
+	avgViewPct: number | null;
+	likes: number | null;
+	comments: number | null;
+	shares: number | null;
+	subscribersGained: number | null;
+	/** 분석이 이 날(태평양)까지다. */
+	analyticsThrough: string | null;
+	fetchedAt: string;
+}
+
+export interface YoutubeShort {
+	uploadId: number;
+	clipId: number | null;
+	title: string;
+	uploadedAt: string;
+	uploadedPrivacy: string;
+	videoId: string;
+	shortsUrl: string;
+	studioUrl: string;
+	/** 지금 연결된 채널이 아닌 곳에 올렸다 — 성과를 읽을 수 없다. */
+	otherChannel: boolean;
+	/** 한 번도 가져오지 않았으면 null. */
+	stats: YoutubeShortStats | null;
+	daily: { day: string; views: number | null; engagedViews: number | null }[];
+}
+
+export interface YoutubeStatsView {
+	shorts: YoutubeShort[];
+	/** 찾은 숏폼을 더한 것. 평균(길이·비율)은 더하지 않는다. */
+	totals: {
+		shorts: number;
+		viewCount: number | null;
+		likeCount: number | null;
+		commentCount: number | null;
+		views: number | null;
+		engagedViews: number | null;
+		minutesWatched: number | null;
+		likes: number | null;
+		comments: number | null;
+		shares: number | null;
+		subscribersGained: number | null;
+	} | null;
+	fetchedAt: string | null;
+	through: string | null;
+	channel: { connected: boolean; canAnalytics: boolean; channelTitle: string | null };
 }

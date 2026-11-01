@@ -22,6 +22,7 @@ import type {
 	TranscriptDiff,
 	TranscriptOrigin,
 	YoutubeState,
+	YoutubeStatsView,
 	YoutubeUploadDraft,
 	YoutubeUploadForm,
 } from "./types";
@@ -406,6 +407,16 @@ export function disconnectYoutube(): Promise<{ disconnected: boolean; revoked: b
 
 export function fetchYoutubeUploadForm(clipId: number): Promise<YoutubeUploadForm> {
 	return request<YoutubeUploadForm>(`/api/clips/${clipId}/youtube`);
+}
+
+/** 유튜브 성과 — 마지막으로 가져온 수치(tease §7-6). 🔴 서버가 유튜브를 부르지 않는다(DB 만 읽는다). */
+export function fetchYoutubeStats(sourceId: number): Promise<YoutubeStatsView> {
+	return request<YoutubeStatsView>(`/api/sources/${sourceId}/youtube/stats`);
+}
+
+/** [성과 가져오기] — 유튜브에서 다시 읽는다. 잡이다. 권한이 없거나 올린 숏폼이 없으면 409. */
+export function refreshYoutubeStats(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/youtube/stats`, { method: "POST" });
 }
 
 // 🔴 연결된 채널에 실제로 올라간다. 공개 범위는 사람이 고른 값을 그대로 보낸다 — 서버에 기본값이 없다.

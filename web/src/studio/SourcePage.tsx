@@ -6,6 +6,7 @@ import { LogTab } from "./components/LogTab";
 import { NewClipTab } from "./components/NewClipTab";
 import { PublishTab } from "./components/PublishTab";
 import { ReportTab } from "./components/ReportTab";
+import { YoutubeStatsTab } from "./components/YoutubeStatsTab";
 import { PrepareTab } from "./components/PrepareTab";
 import { QuestionsTab } from "./components/QuestionsTab";
 import { MiniPlayerDock, SourceBar } from "./components/SourceBar";
@@ -326,6 +327,7 @@ export function SourcePage() {
 					<Route path="prepare" element={<PrepareTab view={view} />} />
 					<Route path="make" element={<NewClipTab view={view} />} />
 					<Route path="clips" element={<PublishTab view={view} />} />
+					<Route path="youtube" element={<YoutubeStatsTab view={view} />} />
 					<Route path="report" element={<ReportTab view={view} />} />
 					<Route path="log" element={<LogTab view={view} />} />
 					{/* 주소를 손으로 고쳤을 때 탭만 있고 내용이 없는 화면을 만들지 않는다.

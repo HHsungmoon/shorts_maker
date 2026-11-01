@@ -29,6 +29,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	livechat: "채팅에서 질문 가져오기",
 	comment: "댓글 가져오기",
 	reaction: "시청자 반응 요약",
+	analytics: "유튜브 성과 가져오기",
 };
 
 /**
@@ -36,6 +37,14 @@ export const STAGE_LABEL: Record<string, string> = {
  * "몇 개 중 몇 개가 질문이 됐나" 와 "이 영상엔 답글을 못 단다" 가 화면 어디에도 안 남는다.
  */
 const JOB_SUMMARY: Record<string, (result: Record<string, unknown>) => string> = {
+	// 분석은 48~72시간 늦다. "왜 숫자가 비었지" 를 결과 한 줄이 먼저 말한다.
+	analytics: (r) => {
+		const parts = [`숏폼 ${r.refreshed}개의 성과를 가져왔습니다`];
+		parts.push(r.through ? `분석 수치는 ${r.through}(태평양 시간)까지` : "분석 수치는 아직 없습니다(유튜브가 2~3일 뒤에 냅니다)");
+		if (Number(r.missing) > 0) parts.push(`유튜브에서 찾지 못한 ${r.missing}개`);
+		if (Number(r.otherChannel) > 0) parts.push(`다른 채널에 올린 ${r.otherChannel}개는 건너뜀`);
+		return `${parts.join(" · ")}.`;
+	},
 	comment: (r) => {
 		const parts = [`댓글 ${r.comments}개에서 질문 ${r.inserted}개를 새로 가져왔습니다`];
 		if (Number(r.already) > 0) parts.push(`이미 있던 ${r.already}개는 건너뜀`);
