@@ -188,7 +188,7 @@ class StageCallTest(SchemaTestCase):
     STAGES = (
         "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
         "caption", "embed", "retrieve", "cluster", "judge", "classify", "locate", "download", "preview",
-        "upload", "livechat",
+        "upload", "livechat", "comment", "reply", "reaction",
     )
 
     def test_rejects_unknown_stage(self):
@@ -536,16 +536,25 @@ class QuestionOriginTest(SchemaTestCase):
         self.expect_integrity_error(sql, (source_id,))
 
     def test_unknown_origin_is_refused(self):
+        # comment 는 016 에서 들어왔다(유튜브 댓글).
         source_id = self.insert_source()
         self.expect_integrity_error(
             "insert into questions (source_id, text, viewer_id, origin, external_id)"
-            " values (%s, '질문?', 'v', 'comment', 'c1')",
+            " values (%s, '질문?', 'v', 'email', 'e1')",
             (source_id,),
         )
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_a_comment_question_carries_its_comment_id(self):
+        source_id = self.insert_source()
+        self.conn.execute(
+            "insert into questions (source_id, text, viewer_id, origin, external_id)"
+            " values (%s, '질문?', 'yt:1', 'comment', 'c1')",
+            (source_id,),
+        )
+        self.expect_integrity_error(
+            "insert into questions (source_id, text, viewer_id, origin) values (%s, '질문?', 'yt:1', 'comment')",
+            (source_id,),
+        )
 
 
 class TranscriptTablesTest(SchemaTestCase):
@@ -589,3 +598,34 @@ class TranscriptTablesTest(SchemaTestCase):
         self.conn.execute("delete from sources where id = %s", (source_id,))
         counts = store.row_counts(self.conn)
         self.assertEqual((counts["transcripts"], counts["stt_spans"]), (0, 0))
+
+
+class QuestionRepliesTest(SchemaTestCase):
+    """유튜브 댓글에 단 답글(마이그레이션 016, tease §7-5)."""
+
+    INSERT = """insert into question_replies (question_id, parent_comment_id, video_id, text, status, youtube_comment_id)
+                values (%s, %s, 'vid', '답', %s, %s)"""
+
+    def test_one_comment_gets_one_live_reply_but_failures_do_not_count(self):
+        # 🔴 같은 댓글에 두 번 달지 않는다. 실패한 것만 다시 달 수 있다.
+        question_id = self.insert_question(self.insert_source())
+        self.conn.execute(self.INSERT, (question_id, "c1", "FAILED", None))
+        self.conn.execute(self.INSERT, (question_id, "c1", "DONE", "c1.r1"))
+        self.expect_integrity_error(self.INSERT, (question_id, "c1", "POSTING", None))
+
+    def test_done_needs_the_reply_id(self):
+        question_id = self.insert_question(self.insert_source())
+        self.expect_integrity_error(self.INSERT, (question_id, "c1", "DONE", None))
+
+    def test_the_record_outlives_the_question(self):
+        # 유튜브의 답글은 원본을 지워도 남는다. 어디에 무엇을 달았는지는 남겨 둔다.
+        source_id = self.insert_source()
+        question_id = self.insert_question(source_id)
+        self.conn.execute(self.INSERT, (question_id, "c1", "DONE", "c1.r1"))
+        self.conn.execute("delete from sources where id = %s", (source_id,))
+        row = self.conn.execute("select question_id, youtube_comment_id from question_replies").fetchone()
+        self.assertEqual((row["question_id"], row["youtube_comment_id"]), (None, "c1.r1"))
+
+
+if __name__ == "__main__":
+    unittest.main()
