@@ -165,12 +165,17 @@ class IsQuestionTest(unittest.TestCase):
 
     def test_question_endings(self):
         for text in ("면접은 몇 번 보나요?", "신입도 지원할 수 있나요", "2부도 있을까요ㅎㅎ", "경력은 몇 년부터인가요~~",
-                     "무엇을 준비해야 합니까 😊", "좋은 영상 감사합니다. 혹시 자료도 받을 수 있을까요"):
+                     "무엇을 준비해야 합니까 😊", "좋은 영상 감사합니다. 혹시 자료도 받을 수 있을까요",
+                     "면접은 몇 번 보나요? 알려주시면 감사하겠습니다"):
             with self.subTest(text=text):
                 self.assertTrue(comments.is_question(text))
 
     def test_reviews(self):
         for text in ("어떻게 답변을 준비해야 할지 조금은 알겠어요", "이런 영상 더 올려주세요!", "좋으니까 계속 볼게요",
-                     "합격 팁 중 또 하나", "@작성자 맞나요?", ""):
+                     "합격 팁 중 또 하나", "@작성자 맞나요?", "",
+                     # 원본 4 실측(2026-11-01) — 글 가운데 물음표, 긴 의견 한복판의 반문.
+                     "왠지 모를 막막함?이 있었거든요. 이 영상은 따뜻해서 쭉 봤습니다 ㅠㅋㅋ",
+                     "수치화 함부로 하면 안됩니다. 왜 16%는 못했는지? 내부 기준이 있는지? 등 준비가 되어야합니다. "
+                     "시대가 변했습니다. 때로는 버려야 할 때도 있습니다."):
             with self.subTest(text=text):
                 self.assertFalse(comments.is_question(text))

@@ -58,8 +58,14 @@ QUESTION_END = re.compile(
 # 문장 끝에 흔히 붙는 꼬리 — 웃음·이모지·물결·마침표. 걷어 낸 뒤 어미를 본다("…볼까요ㅎㅎ", "…되나요~~").
 TAIL = re.compile(r"[\s.~!…ㅎㅋㅠㅜ^♡♥)\]\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]+$")
 
-# 문장 나누기. 물음표·마침표·느낌표·줄바꿈 뒤에서 끊는다.
-SENTENCE = re.compile(r"(?<=[?？.!。\n])")
+# 문장 나누기. 물음표·마침표·느낌표 **뒤에 공백이 올 때**와 줄바꿈에서 끊는다.
+# 🔴 공백을 요구하는 이유: "왠지 모를 막막함?이 있었거든요" 처럼 글 가운데 물음표가 감상에 흔하다(원본 4 실측).
+SENTENCE = re.compile(r"(?<=[?？.!。])\s+|\n+")
+
+# 질문인지 볼 문장 수 — **끝에서부터**. 질문 댓글은 "면접 몇 번 보나요? 알려주시면 감사하겠습니다" 처럼 질문 뒤에
+# 인사 한 줄이 붙는 정도다. 긴 의견 글 한복판의 반문("왜 16%는 못했는지? 몇 퍼센트부터 성과라고 칭할건지?")은
+# 질문이 아니라 주장이다(원본 4 실측 — 감상 28개 중 하나가 이걸로 질문이 됐다).
+LAST_SENTENCES = 2
 
 
 class CommentError(RuntimeError):
@@ -78,18 +84,17 @@ class _Said:
 
 
 def is_question(text: str) -> bool:
-    """문장 끝이 물음표나 의문형 어미인 문장이 하나라도 있나.
+    """**마지막 두 문장** 중 하나라도 끝이 물음표나 의문형 어미인가.
 
-    🔴 **끝만 본다.** "어떻게 준비해야 할지 조금은 알겠어요" 는 `어떻게` 가 있어도 감상이다(머리 주석의 실측).
+    🔴 **문장 끝만 본다.** "어떻게 준비해야 할지 조금은 알겠어요" 는 `어떻게` 가 있어도 감상이다(머리 주석의 실측).
+    🔴 **글 끝 쪽만 본다**(`LAST_SENTENCES`). 긴 글 가운데의 반문은 질문이 아니다.
     `@` 로 시작하면 다른 댓글을 부르는 말이라 질문으로 치지 않는다.
     """
     stripped = text.strip()
     if not stripped or stripped.startswith("@"):
         return False
-    for sentence in SENTENCE.split(stripped):
-        sentence = sentence.strip()
-        if not sentence:
-            continue
+    sentences = [one.strip() for one in SENTENCE.split(stripped) if one.strip()]
+    for sentence in sentences[-LAST_SENTENCES:]:
         if sentence.rstrip().endswith(("?", "？")):
             return True
         if QUESTION_END.search(TAIL.sub("", sentence)):
