@@ -9,7 +9,9 @@
   ① **이 영상이 답하지 않은 질문** — 수요 순. 판정이 남긴 **이유**를 함께 준다.
      "답할 구간 없음" 딱지만으로는 영상이 정말 안 다룬 건지 검색이 빗나간 건지 알 수 없다.
   ② **답한 질문** — 무엇이 숏폼이 됐는지. 발행 여부까지.
-  ③ **비용** — 🔴 **회차 준비와 질문 답변을 가른다.** 전사·분할은 영상당 한 번이고
+  ③ **시청자 반응** — 유튜브 감상 댓글 원문 전부와 AI 요약(tease §3-6, 2026-11-01, `answers/reactions.py`).
+     질문이 아닌 댓글도 "이 회차가 어떻게 받아들여졌나" 를 말한다 — 윗선에 보내는 산출물에 같이 실린다.
+  ④ **비용** — 🔴 **회차 준비와 질문 답변을 가른다.** 전사·분할은 영상당 한 번이고
      답변은 질문마다다. 하나로 합치면 "질문 하나에 얼마" 라는 숫자가 나오지 않는다.
 
 🔴 **기회손실 추정치는 넣지 않는다**(기획서 §07 "예상 이탈 지원자 약 18명"). 전환 표본이
@@ -19,7 +21,7 @@
 import psycopg
 
 from .. import config, pricing
-from . import clusters
+from . import clusters, reactions
 
 # 답하지 않은 것으로 세는 상태. 🔴 셋의 뜻이 다르므로 따로 담아 화면이 구분해 그린다.
 MISSING = "UNANSWERABLE"   # 찾아봤는데 이 영상에 없다
@@ -105,6 +107,7 @@ def build(conn: psycopg.Connection, cfg: config.Config, source_id: int) -> dict:
         "waiting": rows(WAITING),
         "declined": rows(DECLINED),
         "answered": answered,
+        "reactions": reactions.view(conn, source_id),
         "cost": cost_split(conn, cfg, source_id),
     }
 

@@ -60,32 +60,43 @@ SCORE_HEADER = (
 )
 
 
+# 프롬프트 화면에서 고치는 글의 종류(마이그레이션 017). 한 테이블에 두되 🔴 서로의 프롬프트에 섞지 않는다.
+#   standard = 관리자 기준(이 모듈 머리 주석의 2층)
+#   reaction = 시청자 반응 요약 관점(`answers/reactions.py`, tease §3-6). 클립 쪽 어디에도 안 들어간다
+STANDARD = "standard"
+REACTION = "reaction"
+KINDS = (STANDARD, REACTION)
+LABEL = {STANDARD: "기준", REACTION: "요약 관점"}
+
+
 class StandardError(ValueError):
     pass
 
 
-def latest(conn: psycopg.Connection) -> dict | None:
-    """최신 행(화면용). 한 번도 저장한 적 없으면 None."""
+def latest(conn: psycopg.Connection, kind: str = STANDARD) -> dict | None:
+    """그 종류의 최신 행(화면용). 한 번도 저장한 적 없으면 None."""
     row = conn.execute(
-        "select id, body, created_at from admin_standards order by id desc limit 1"
+        "select id, body, created_at from admin_standards where kind = %s order by id desc limit 1", (kind,)
     ).fetchone()
     return dict(row) if row else None
 
 
-def load(conn: psycopg.Connection) -> str | None:
-    """프롬프트에 넣을 기준. 없거나 비었으면 None."""
-    row = latest(conn)
+def load(conn: psycopg.Connection, kind: str = STANDARD) -> str | None:
+    """프롬프트에 넣을 글. 없거나 비었으면 None."""
+    row = latest(conn, kind)
     body = (row["body"] if row else "") or ""
     return body.strip() or None
 
 
-def save(conn: psycopg.Connection, body: str) -> dict:
-    """새 기준을 **덧붙인다**(append-only). 빈 글은 "기준 없음" 으로 저장된다. 커밋은 호출부가 한다."""
+def save(conn: psycopg.Connection, body: str, kind: str = STANDARD) -> dict:
+    """새 글을 **덧붙인다**(append-only). 빈 글은 "없음" 으로 저장된다. 커밋은 호출부가 한다."""
+    if kind not in KINDS:
+        raise StandardError(f"모르는 종류: {kind}")
     text = (body or "").strip()
     if len(text) > MAX_CHARS:
-        raise StandardError(f"기준은 {MAX_CHARS}자까지다 (지금 {len(text)}자)")
+        raise StandardError(f"{LABEL[kind]}은 {MAX_CHARS}자까지다 (지금 {len(text)}자)")
     row = conn.execute(
-        "insert into admin_standards (body) values (%s) returning id, body, created_at", (text,)
+        "insert into admin_standards (body, kind) values (%s, %s) returning id, body, created_at", (text, kind)
     ).fetchone()
     return dict(row)
 

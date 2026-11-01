@@ -16,7 +16,7 @@ import unittest
 import psycopg
 
 from shorts_maker import standards
-from shorts_maker.answers import judge, proposals, routing
+from shorts_maker.answers import judge, proposals, reactions, routing
 from shorts_maker.pipeline import cutting, overview, ranking, segmentation
 
 from .support import DbTestCase
@@ -70,6 +70,20 @@ class StoreTest(DbTestCase):
                 "insert into admin_standards (body) values (%s)", ("가" * (standards.MAX_CHARS + 1),)
             )
         self.conn.rollback()
+
+
+class KindTest(DbTestCase):
+    """🔴 요약 관점(reaction)과 관리자 기준(standard)은 한 테이블의 다른 글이다. 서로의 최신을 가리지 않는다."""
+
+    def test_the_two_kinds_do_not_shadow_each_other(self):
+        standards.save(self.conn, "기준")
+        standards.save(self.conn, "관점", standards.REACTION)
+        self.assertEqual(standards.load(self.conn), "기준")
+        self.assertEqual(standards.load(self.conn, standards.REACTION), "관점")
+
+    def test_an_unknown_kind_is_refused(self):
+        with self.assertRaises(standards.StandardError):
+            standards.save(self.conn, "글", "other")
 
 
 class BlockTest(unittest.TestCase):
@@ -163,6 +177,16 @@ class WhereItGoesTest(unittest.TestCase):
         """
         self.assertNotIn("standard", inspect.signature(overview.build_prompt).parameters)
         self.assertNotIn("관리자 기준", overview.build_prompt("제목", ["구간 요약"]))
+
+    def test_the_reaction_summary_cannot_take_a_standard(self):
+        """🔴 시청자 반응 요약은 리뷰를 읽는 자리다(tease §3-6). 클립 선호인 관리자 기준 대신 **요약 관점**이 들어간다.
+        거꾸로 요약 관점은 클립 쪽 어디에도 안 들어간다 — 클립 쪽 build_prompt 에 그 인자가 없다."""
+        self.assertNotIn("standard", inspect.signature(reactions.build_prompt).parameters)
+        reviews = [{"id": 1, "text": "좋았어요"}]
+        self.assertNotIn("관리자 기준", reactions.build_prompt(reviews, None, MARK))
+        self.assertIn(MARK, reactions.build_prompt(reviews, None, MARK))
+        for build in (ranking.build_prompt, ranking.build_answer_prompt, cutting.build_prompt, judge.build_prompt):
+            self.assertNotIn("guide", inspect.signature(build).parameters)
 
     # ---- 비었을 때 ----
 

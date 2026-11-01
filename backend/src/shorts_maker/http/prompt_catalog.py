@@ -20,7 +20,7 @@ import string
 import psycopg
 
 from .. import standards
-from ..answers import judge, routing
+from ..answers import judge, reactions, routing
 from ..pipeline import cutting, ranking, segmentation
 
 # 층. 화면이 이 순서로 설명한다.
@@ -29,6 +29,8 @@ LAYERS = [
      "note": "자립성 관문 · 출력 형식 · 번호 검증. 바꾸면 파싱이 깨질 수 있어 열지 않습니다"},
     {"key": "standard", "label": "2. 관리자 기준", "who": "관리자, 한 번", "editable": True,
      "note": "채널이 공통으로 좋게 보는 것. 선호일 뿐이라 보장이 필요한 규칙은 여기 두지 않습니다"},
+    {"key": "reaction", "label": "요약 관점", "who": "관리자, 한 번", "editable": True,
+     "note": "시청자 반응 요약에서 특히 보고 싶은 것. 요약에만 들어가고 클립 쪽에는 들어가지 않습니다"},
     {"key": "context", "label": "3. 영상 개요", "who": "영상마다", "editable": True,
      "note": "그 영상이 무엇인지. 영상 준비 탭에서 적습니다"},
     {"key": "request", "label": "4. 이번 요청", "who": "매번", "editable": False,
@@ -41,6 +43,8 @@ LAYERS = [
 # 정하지 않은 채 화면에 내보내지 않는다.
 LAYER_OF = {
     "standard_block": "standard",
+    "guide_block": "reaction",
+    "comments": "auto",
     "context_block": "context",
     "criteria_block": "request",
     "question": "request",
@@ -81,6 +85,9 @@ STAGES = [
     {"key": "judge", "name": "판정", "path": "질문 경로", "module": "answers/judge.py",
      "template": judge.PROMPT,
      "why": "점수에만 반영합니다. 자립·답변 두 관문은 고정입니다 — 섞이면 선호가 숨은 탈락 조건이 됩니다"},
+    {"key": "reaction", "name": "시청자 반응 요약", "path": "리포트", "module": "answers/reactions.py",
+     "template": reactions.PROMPT,
+     "why": "리뷰를 읽는 관점은 클립 선호와 다른 글입니다. 관리자 기준 대신 요약 관점이 들어갑니다"},
 ]
 
 
@@ -118,6 +125,7 @@ def stages() -> list[dict]:
             "module": stage["module"], "why": stage["why"],
             # 🔴 원문에서 판단한다. 따로 표시해 두면 화면과 실제가 어긋날 수 있다.
             "usesStandard": "standard_block" in slots(stage["template"]),
+            "usesReaction": "guide_block" in slots(stage["template"]),
             "parts": parts(stage["template"]),
         }
         for stage in STAGES
@@ -126,12 +134,19 @@ def stages() -> list[dict]:
 
 def build(conn: psycopg.Connection) -> dict:
     row = standards.latest(conn)
+    guide = standards.latest(conn, standards.REACTION)
     return {
         "layers": LAYERS,
         "stages": stages(),
         "standard": {
             "body": row["body"] if row else "",
             "updatedAt": row["created_at"] if row else None,
+            "maxChars": standards.MAX_CHARS,
+        },
+        # 시청자 반응 요약 관점(tease §3-6). 🔴 관리자 기준과 다른 글이다 — 섞지 않는다.
+        "reaction": {
+            "body": guide["body"] if guide else "",
+            "updatedAt": guide["created_at"] if guide else None,
             "maxChars": standards.MAX_CHARS,
         },
     }
