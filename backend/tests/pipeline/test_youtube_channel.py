@@ -106,6 +106,57 @@ class FinishTest(ChannelTestCase):
         self.assertIsNone(youtube_channel.channel(self.conn))
 
 
+FULL_GRANT = youtube.Grant(refresh_token="refresh-1", scopes=f"{youtube.UPLOAD_SCOPE} {youtube.COMMENT_SCOPE}")
+
+
+class CommentAccessTest(ChannelTestCase):
+    """댓글 기능(2026-11-01)은 댓글 권한을 받은 연결에서만 돈다. 업로드만 받은 연결은 "다시 연결" 을 안내한다."""
+
+    def test_a_connection_with_the_comment_scope_can_comment(self):
+        youtube_channel.save_channel(self.conn, FULL_GRANT)
+        self.assertTrue(youtube_channel.channel(self.conn)["can_comment"])
+        self.assertEqual(youtube_channel.comment_access(self.conn, self.cfg)["channel_id"], None)
+
+    def test_an_upload_only_connection_is_told_to_reconnect(self):
+        youtube_channel.save_channel(self.conn, GRANT)
+        self.assertFalse(youtube_channel.channel(self.conn)["can_comment"])
+        with self.assertRaises(youtube_channel.NoCommentAccess) as caught:
+            youtube_channel.comment_access(self.conn, self.cfg)
+        self.assertIn("다시 연결", str(caught.exception))
+
+    def test_no_connection_is_refused(self):
+        with self.assertRaises(youtube_channel.NoCommentAccess):
+            youtube_channel.comment_access(self.conn, self.cfg)
+
+
+class LearnChannelTest(ChannelTestCase):
+    """🔴 다시 연결하면 채널 이름이 빈다 — 답글 입력란이 "누구 이름으로 달리나" 를 말하려면 연결 직후 채워야 한다."""
+
+    def test_the_channel_name_is_filled_right_after_connecting(self):
+        with mock.patch.object(youtube, "exchange_code", return_value=FULL_GRANT), \
+                mock.patch.object(youtube, "access_token", return_value="access"), \
+                mock.patch.object(youtube, "my_channel", return_value=("UCme", "내 채널")) as mine:
+            youtube_channel.finish(self.conn, self.cfg, "code-1")
+        mine.assert_called_once_with("access")
+        found = youtube_channel.channel(self.conn)
+        self.assertEqual((found["channel_id"], found["channel_title"]), ("UCme", "내 채널"))
+
+    def test_an_upload_only_grant_does_not_call_the_channel_api(self):
+        # channels.list 는 댓글 범위로 부른다. 업로드 범위로 부르면 403 이다.
+        with mock.patch.object(youtube, "exchange_code", return_value=GRANT), \
+                mock.patch.object(youtube, "my_channel") as mine:
+            youtube_channel.finish(self.conn, self.cfg, "code-1")
+        mine.assert_not_called()
+
+    def test_a_failed_lookup_keeps_the_connection(self):
+        with mock.patch.object(youtube, "exchange_code", return_value=FULL_GRANT), \
+                mock.patch.object(youtube, "access_token", return_value="access"), \
+                mock.patch.object(youtube, "my_channel", side_effect=youtube.YoutubeError("500")):
+            youtube_channel.finish(self.conn, self.cfg, "code-1")
+        self.assertEqual(youtube_channel.refresh_token(self.conn), "refresh-1")
+        self.assertIsNone(youtube_channel.channel(self.conn)["channel_title"])
+
+
 class DisconnectTest(ChannelTestCase):
     def test_forgets_locally_even_when_google_does_not_answer(self):
         youtube_channel.save_channel(self.conn, GRANT)

@@ -1,8 +1,10 @@
-"""유튜브 어댑터 — 토큰과 업로드.
+"""유튜브 어댑터 — 토큰 · 업로드 · 댓글.
 
 🔴 여기서 지키는 건 셋이다. ① **업로드 권한 없이 연결되지 않는다** — 동의 화면에서 체크를 풀면 첫
 업로드에서야 403 이 난다. ② **만료는 "다시 연결하라" 로 읽힌다** — 테스트 상태 앱은 7일마다 일어난다.
 ③ **바이트 PUT 은 다시 보내지 않는다** — 응답만 잃은 경우 같은 영상이 채널에 둘 생긴다.
+댓글(2026-11-01): ④ 작성자 이름은 어댑터 밖으로 나가지 않는다 ⑤ 답글 POST 도 다시 보내지 않는다
+⑥ 범위가 모자라면 "다시 연결" 로 읽힌다.
 """
 
 import email.message
@@ -55,10 +57,10 @@ class YoutubeTestCase(unittest.TestCase):
 
 
 class AuthorizeUrlTest(YoutubeTestCase):
-    def test_asks_for_the_upload_scope_only_and_a_refresh_token(self):
+    def test_asks_for_upload_and_comments_only_and_a_refresh_token(self):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(youtube.authorize_url(self.cfg, "s1")).query)
-        # 🔴 개발자 정책 III.D.2 — 지금 쓰는 범위만.
-        self.assertEqual(query["scope"], [youtube.UPLOAD_SCOPE])
+        # 🔴 개발자 정책 III.D.2 — 지금 쓰는 범위만. 댓글(force-ssl)은 2026-11-01 부터 쓴다.
+        self.assertEqual(query["scope"], [f"{youtube.UPLOAD_SCOPE} {youtube.COMMENT_SCOPE}"])
         # refresh token 은 처음 동의할 때만 온다. 매번 동의 화면을 띄워 매번 받는다.
         self.assertEqual(query["access_type"], ["offline"])
         self.assertEqual(query["prompt"], ["consent"])
@@ -200,3 +202,109 @@ class RevokeTest(YoutubeTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _thread(comment_id: str, text: str, author: str | None, owner: str = "UCowner", video: str = "vid1") -> dict:
+    top = {"textDisplay": text, "authorDisplayName": "홍길동", "publishedAt": "2026-11-01T00:00:00Z"}
+    if author:
+        top["authorChannelId"] = {"value": author}
+    return {"id": comment_id, "snippet": {"channelId": owner, "videoId": video,
+                                          "topLevelComment": {"id": comment_id, "snippet": top}}}
+
+
+class CommentThreadsTest(YoutubeTestCase):
+    def test_reads_every_page_and_drops_author_names(self):
+        pages = [
+            _Response({"items": [_thread("c1", "첫 질문?", "UCa")], "nextPageToken": "p2"}),
+            _Response({"items": [_thread("c2", "둘째 질문?", "UCb"), _thread("c3", "", "UCc")]}),
+        ]
+        with mock.patch("urllib.request.urlopen", side_effect=pages) as urlopen:
+            comments, owner, truncated = youtube.comment_threads("token", "vid1", max_pages=5)
+        self.assertEqual([(c.id, c.text, c.author_channel_id) for c in comments],
+                         [("c1", "첫 질문?", "UCa"), ("c2", "둘째 질문?", "UCb")])
+        self.assertEqual((owner, truncated), ("UCowner", False))
+        # 🔴 이름은 실려 오지만 밖으로 나가지 않는다(tease §3-5).
+        self.assertNotIn("홍길동", repr(comments))
+        first, second = (call.args[0] for call in urlopen.call_args_list)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(first.full_url).query)
+        self.assertEqual((query["videoId"], query["textFormat"], query["part"]), (["vid1"], ["plainText"], ["snippet"]))
+        self.assertIn("pageToken=p2", second.full_url)
+        self.assertEqual(first.get_header("Authorization"), "Bearer token")
+
+    def test_stops_at_the_page_limit_and_says_so(self):
+        page = _Response({"items": [_thread("c1", "질문?", "UCa")], "nextPageToken": "more"})
+        with mock.patch("urllib.request.urlopen", return_value=page) as urlopen:
+            _, _, truncated = youtube.comment_threads("token", "vid1", max_pages=1)
+        self.assertTrue(truncated)
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_disabled_comments_say_so(self):
+        off = _http_error(403, {"error": {"code": 403, "message": "disabled", "errors": [{"reason": "commentsDisabled"}]}})
+        with mock.patch("urllib.request.urlopen", side_effect=[off]):
+            with self.assertRaises(youtube.YoutubeError) as caught:
+                youtube.comment_threads("token", "vid1", max_pages=1)
+        self.assertIn("댓글이 꺼져", str(caught.exception))
+
+    def test_a_token_without_the_comment_scope_asks_to_reconnect(self):
+        scope = _http_error(403, {"error": {"code": 403, "message": "Request had insufficient authentication scopes.",
+                                            "errors": [{"reason": "insufficientPermissions"}]}})
+        with mock.patch("urllib.request.urlopen", side_effect=[scope]):
+            with self.assertRaises(youtube.ReconnectNeeded) as caught:
+                youtube.comment_threads("token", "vid1", max_pages=1)
+        self.assertIn("다시 연결", str(caught.exception))
+
+    def test_a_read_is_retried_on_a_hiccup(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[_http_error(503, {}), _Response({"items": []})]) as urlopen:
+            self.assertEqual(youtube.comment_threads("token", "vid1", max_pages=1), ([], None, False))
+        self.assertEqual(urlopen.call_count, 2)
+
+
+class CommentThreadTest(YoutubeTestCase):
+    def test_reads_the_video_owner_of_one_thread(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Response({"items": [_thread("c1", "질문?", "UCa")]})):
+            thread = youtube.comment_thread("token", "c1")
+        self.assertEqual((thread.id, thread.video_id, thread.channel_id), ("c1", "vid1", "UCowner"))
+
+    def test_a_deleted_comment_reads_as_none(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Response({"items": []})):
+            self.assertIsNone(youtube.comment_thread("token", "gone"))
+
+
+class MyChannelTest(YoutubeTestCase):
+    def test_reads_id_and_title(self):
+        payload = {"items": [{"id": "UCme", "snippet": {"title": "내 채널"}}]}
+        with mock.patch("urllib.request.urlopen", return_value=_Response(payload)) as urlopen:
+            self.assertEqual(youtube.my_channel("token"), ("UCme", "내 채널"))
+        self.assertIn("mine=true", urlopen.call_args.args[0].full_url)
+
+    def test_an_account_without_a_channel_reads_as_none(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Response({"items": []})):
+            self.assertIsNone(youtube.my_channel("token"))
+
+
+class ReplyTest(YoutubeTestCase):
+    def test_posts_a_reply_under_the_parent(self):
+        with mock.patch("urllib.request.urlopen", return_value=_Response({"id": "c1.r1", "snippet": {}})) as urlopen:
+            self.assertEqual(youtube.reply("token", "c1", "12:34부터 답이 나와요")["id"], "c1.r1")
+        sent = urlopen.call_args.args[0]
+        self.assertEqual(sent.get_method(), "POST")
+        self.assertIn("/comments?part=snippet", sent.full_url)
+        self.assertEqual(json.loads(sent.data)["snippet"], {"parentId": "c1", "textOriginal": "12:34부터 답이 나와요"})
+
+    def test_a_reply_is_not_sent_twice(self):
+        # 🔴 응답만 잃고 실제로는 달렸을 수 있다. 다시 보내면 같은 답글이 둘 달린다.
+        with mock.patch("urllib.request.urlopen", side_effect=[urllib.error.URLError("reset"), _Response({"id": "x"})]) as urlopen:
+            with self.assertRaises(youtube.YoutubeError) as caught:
+                youtube.reply("token", "c1", "답")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertIn("확인", str(caught.exception))
+
+    def test_a_server_error_is_not_retried_either(self):
+        with mock.patch("urllib.request.urlopen", side_effect=[_http_error(503, {}), _Response({"id": "x"})]) as urlopen:
+            with self.assertRaises(youtube.YoutubeError):
+                youtube.reply("token", "c1", "답")
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_the_comment_url_points_at_the_reply(self):
+        self.assertEqual(youtube.comment_url("vid1", "c1.r1"), "https://www.youtube.com/watch?v=vid1&lc=c1.r1")
+

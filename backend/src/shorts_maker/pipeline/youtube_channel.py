@@ -1,7 +1,7 @@
 """유튜브 채널 연결 — 어느 채널에 올리나(tease §7-5, 2026-10-31).
 
-연결은 스튜디오 전체에 하나다(`youtube_channel` 한 행). 업로드(`pipeline/upload.py`)가 이 연결의 토큰을
-쓰고, 나중에 붙일 댓글 답글 · 자막 가져오기도 같은 토큰을 쓴다 — 그래서 업로드 모듈에서 떼어 뒀다.
+연결은 스튜디오 전체에 하나다(`youtube_channel` 한 행). 업로드(`pipeline/upload.py`) · 댓글 가져오기
+(`answers/comments.py`) · 답글(`answers/replies.py`)이 이 연결의 토큰을 쓴다 — 그래서 업로드 모듈에서 떼어 뒀다.
 Google 과 말하는 일은 `adapters/youtube.py` 가 하고, 여기는 **무엇을 저장하고 언제 거절하나**를 정한다.
 
 OAuth 웹 흐름: `start`(동의 화면 주소) → Google 동의 화면 → `finish`(code 를 토큰으로 바꿔 저장) → 홈.
@@ -10,6 +10,7 @@ OAuth 웹 흐름: `start`(동의 화면 주소) → Google 동의 화면 → `fi
 에는 싣지 않고, 토큰이 필요한 쪽은 `refresh_token()` 으로 따로 읽는다.
 """
 
+import logging
 import secrets
 import threading
 import time
@@ -33,6 +34,10 @@ class ChannelError(RuntimeError):
     """사람이 고칠 수 있는 이유로 연결할 수 없다(설정 없음 · 호스트 다름 · Google 이 거절). 메시지를 그대로 보인다."""
 
 
+class NoCommentAccess(ChannelError):
+    """댓글 기능을 쓸 수 없다 — 연결이 없거나, 연결할 때 댓글 권한을 받지 못했다. 사람이 할 일을 말한다."""
+
+
 def configured(cfg: config.Config) -> bool:
     """앱 자격 증명(.env 의 OAuth 클라이언트 ID·시크릿)이 있나. 채널이 연결됐는지와는 다른 질문이다."""
     return youtube.configured(cfg)
@@ -41,11 +46,33 @@ def configured(cfg: config.Config) -> bool:
 # ---------------------------------------------------------------- 저장
 
 def channel(conn: psycopg.Connection) -> dict | None:
-    """연결된 채널. 🔴 refresh token 은 싣지 않는다 — 이 값은 API 응답으로 나간다."""
+    """연결된 채널. 🔴 refresh token 은 싣지 않는다 — 이 값은 API 응답으로 나간다.
+
+    `can_comment` — 댓글 권한을 받았나. 댓글 기능 전에 연결했거나 동의 화면에서 그 권한을 풀었으면 거짓이고,
+    화면은 "다시 연결" 을 안내한다.
+    """
     row = conn.execute(
         "select channel_id, channel_title, scopes, connected_at from youtube_channel where id = 1"
     ).fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    found = dict(row)
+    found["can_comment"] = youtube.COMMENT_SCOPE in found["scopes"].split()
+    return found
+
+
+def comment_access(conn: psycopg.Connection, cfg: config.Config) -> dict:
+    """댓글 기능을 띄우기 **전에** 막을 것을 막는다(네트워크 없음). 쓸 수 있으면 연결된 채널을 돌려준다."""
+    if not configured(cfg):
+        raise NoCommentAccess("SHORTS_YOUTUBE_CLIENT_ID · SHORTS_YOUTUBE_CLIENT_SECRET 이 .env 에 없습니다")
+    found = channel(conn)
+    if found is None:
+        raise NoCommentAccess("유튜브 채널이 연결돼 있지 않습니다. 스튜디오 홈에서 먼저 연결하세요")
+    if not found["can_comment"]:
+        raise NoCommentAccess(
+            "연결할 때 댓글 권한을 받지 못했습니다. 스튜디오 홈에서 유튜브를 끊고 다시 연결한 뒤, 동의 화면의 권한을 모두 체크하세요"
+        )
+    return found
 
 
 def refresh_token(conn: psycopg.Connection) -> str | None:
@@ -121,6 +148,24 @@ def finish(conn: psycopg.Connection, cfg: config.Config, code: str) -> None:
         # 업로드 범위를 체크하지 않았거나 code 가 만료됐다. 저장하지 않는다.
         raise ChannelError(str(exc)) from exc
     save_channel(conn, grant)
+    learn_channel(conn, cfg, grant)
+
+
+def learn_channel(conn: psycopg.Connection, cfg: config.Config, grant: youtube.Grant) -> None:
+    """연결 직후 채널 id·이름을 채운다 — 댓글 권한이 있을 때만(`channels.list` 는 그 범위로 부른다).
+
+    🔴 답글 입력란이 "누구 이름으로 달리나" 를 말해야 하는데, 다시 연결하면 `save_channel` 이 이름을 비운다.
+    실패해도 연결은 그대로 둔다 — 이름은 첫 업로드·답글 응답에서도 채워진다.
+    """
+    if youtube.COMMENT_SCOPE not in grant.scopes.split():
+        return
+    try:
+        mine = youtube.my_channel(youtube.access_token(cfg, grant.refresh_token))
+    except youtube.YoutubeError as exc:
+        logging.warning("YouTube channel lookup after connect failed: %s", exc)
+        return
+    if mine is not None:
+        note_channel(conn, *mine)
 
 
 def disconnect(conn: psycopg.Connection) -> dict:
