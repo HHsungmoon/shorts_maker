@@ -57,10 +57,12 @@ class YoutubeTestCase(unittest.TestCase):
 
 
 class AuthorizeUrlTest(YoutubeTestCase):
-    def test_asks_for_upload_and_comments_only_and_a_refresh_token(self):
+    def test_asks_only_for_the_scopes_in_use_and_a_refresh_token(self):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(youtube.authorize_url(self.cfg, "s1")).query)
-        # 🔴 개발자 정책 III.D.2 — 지금 쓰는 범위만. 댓글(force-ssl)은 2026-11-01 부터 쓴다.
-        self.assertEqual(query["scope"], [f"{youtube.UPLOAD_SCOPE} {youtube.COMMENT_SCOPE}"])
+        # 🔴 개발자 정책 III.D.2 — 지금 쓰는 범위만. 댓글(force-ssl) · 성과(분석 + 읽기)는 2026-11-01 부터 쓴다.
+        self.assertEqual(query["scope"], [" ".join([
+            youtube.UPLOAD_SCOPE, youtube.COMMENT_SCOPE, youtube.ANALYTICS_SCOPE, youtube.READONLY_SCOPE,
+        ])])
         # refresh token 은 처음 동의할 때만 온다. 매번 동의 화면을 띄워 매번 받는다.
         self.assertEqual(query["access_type"], ["offline"])
         self.assertEqual(query["prompt"], ["consent"])
@@ -308,3 +310,82 @@ class ReplyTest(YoutubeTestCase):
     def test_the_comment_url_points_at_the_reply(self):
         self.assertEqual(youtube.comment_url("vid1", "c1.r1"), "https://www.youtube.com/watch?v=vid1&lc=c1.r1")
 
+
+
+
+class VideoStatsTest(YoutubeTestCase):
+    def test_reads_counts_and_privacy_and_leaves_out_what_youtube_did_not_return(self):
+        payload = {"items": [
+            {"id": "v1", "statistics": {"viewCount": "120", "likeCount": "7", "commentCount": "2"},
+             "status": {"privacyStatus": "unlisted"}},
+            # 좋아요 수를 숨긴 영상은 키 자체가 없다.
+            {"id": "v2", "statistics": {"viewCount": "3"}, "status": {"privacyStatus": "public"}},
+        ]}
+        with mock.patch("urllib.request.urlopen", return_value=_Response(payload)) as urlopen:
+            found = youtube.video_stats("token", ["v1", "v2", "gone"])
+        self.assertEqual(found["v1"], youtube.VideoStats(120, 7, 2, "unlisted"))
+        self.assertEqual(found["v2"], youtube.VideoStats(3, None, None, "public"))
+        self.assertNotIn("gone", found)
+        sent = urllib.parse.parse_qs(urllib.parse.urlsplit(urlopen.call_args.args[0].full_url).query)
+        self.assertEqual((sent["part"], sent["id"]), (["statistics,status"], ["v1,v2,gone"]))
+
+    def test_more_than_fifty_ids_are_split(self):
+        ids = [f"v{n}" for n in range(51)]
+        with mock.patch("urllib.request.urlopen", side_effect=[_Response({"items": []}), _Response({"items": []})]) as urlopen:
+            youtube.video_stats("token", ids)
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_no_ids_means_no_call(self):
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            self.assertEqual(youtube.video_stats("token", []), {})
+        urlopen.assert_not_called()
+
+
+class AnalyticsReportTest(YoutubeTestCase):
+    def test_rows_are_named_by_the_column_headers(self):
+        payload = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": [
+                {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                {"name": "averageViewPercentage", "columnType": "METRIC", "dataType": "FLOAT"},
+            ],
+            "rows": [["2026-10-31", 12, 81.5], ["2026-11-01", 3, 70.0]],
+        }
+        with mock.patch("urllib.request.urlopen", return_value=_Response(payload)) as urlopen:
+            rows = youtube.analytics_report(
+                "token", "2026-10-31", "2026-11-01", ("views", "averageViewPercentage"),
+                dimensions="day", filters="video==v1", sort="day",
+            )
+        self.assertEqual(rows[0], {"day": "2026-10-31", "views": 12, "averageViewPercentage": 81.5})
+        sent = urlopen.call_args.args[0]
+        self.assertTrue(sent.full_url.startswith(youtube.ANALYTICS_URL))
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(sent.full_url).query)
+        self.assertEqual(query["ids"], ["channel==MINE"])
+        self.assertEqual(query["filters"], ["video==v1"])
+        self.assertEqual(query["metrics"], ["views,averageViewPercentage"])
+        self.assertEqual(sent.headers["Authorization"], "Bearer token")
+
+    def test_no_processed_days_is_an_empty_list(self):
+        # 🔴 처리가 끝난 날이 없으면 rows 가 아예 없다(48~72시간 지연). 오류가 아니다.
+        with mock.patch("urllib.request.urlopen", return_value=_Response({"columnHeaders": [{"name": "views"}]})):
+            self.assertEqual(youtube.analytics_report("token", "2026-11-01", "2026-11-01", ("views",)), [])
+
+    def test_a_disabled_api_says_what_to_turn_on(self):
+        # Analytics API 는 Data API 와 따로 켠다 — 성과 기능을 처음 쓸 때 반드시 만난다.
+        disabled = _http_error(403, {"error": {
+            "code": 403, "message": "YouTube Analytics API has not been used in project 1 before or it is disabled.",
+            "status": "PERMISSION_DENIED", "details": [{"reason": "SERVICE_DISABLED"}],
+        }})
+        with mock.patch("urllib.request.urlopen", side_effect=[disabled]):
+            with self.assertRaises(youtube.YoutubeError) as caught:
+                youtube.analytics_report("token", "2026-11-01", "2026-11-01", ("views",))
+        self.assertIn("YouTube Analytics API", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, youtube.ReconnectNeeded)
+
+    def test_a_missing_scope_asks_to_reconnect(self):
+        scope = _http_error(403, {"error": {"code": 403, "message": "Request had insufficient authentication scopes.",
+                                            "errors": [{"reason": "insufficientPermissions"}]}})
+        with mock.patch("urllib.request.urlopen", side_effect=[scope]):
+            with self.assertRaises(youtube.ReconnectNeeded):
+                youtube.analytics_report("token", "2026-11-01", "2026-11-01", ("views",))

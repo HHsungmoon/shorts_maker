@@ -1,14 +1,15 @@
-"""유튜브 — OAuth 토큰 · 영상 업로드 · 댓글(tease §7-5, 2026-10-31 · 댓글 2026-11-01).
+"""유튜브 — OAuth 토큰 · 영상 업로드 · 댓글 · 성과(tease §7-5 · §7-6, 2026-10-31 · 댓글/성과 2026-11-01).
 
 하는 일: 동의 화면 주소 만들기 · code 를 토큰으로 바꾸기 · refresh token 으로 access token 받기 ·
 영상 올리기(resumable 업로드 두 단계: 세션 열기 → 바이트 PUT) · 댓글 읽기(`commentThreads.list`) ·
-답글 달기(`comments.insert`) · 연결된 채널 알아보기(`channels.list?mine=true`).
+답글 달기(`comments.insert`) · 연결된 채널 알아보기(`channels.list?mine=true`) ·
+올린 영상의 지금 수치(`videos.list`)와 분석(YouTube Analytics API `reports.query`).
 
 🔴 **SDK(google-api-python-client)를 쓰지 않는다.** 위 넷이 POST/PUT 몇 번이고, SDK 를 써도 런타임
 동작은 같다 — 규약상 "코드가 줄어든다" 는 채택 근거가 아니다. jev.py 처럼 stdlib urllib 로 직접 부른다.
 
-🔴 범위는 `youtube.upload` · `youtube.force-ssl`(댓글, 2026-11-01) 둘이다. 개발자 정책 III.D.2 — 지금 쓰는
-범위만 요청한다. 댓글 쓰기(`comments.insert`)는 force-ssl 하나만 받는다 — 더 좁은 범위가 없다. 업로드 권한은
+🔴 범위는 `youtube.upload` · `youtube.force-ssl`(댓글, 2026-11-01) · `yt-analytics.readonly`+`youtube.readonly`
+(성과, 2026-11-01)다. 개발자 정책 III.D.2 — 지금 쓰는 범위만 요청한다. 댓글 쓰기(`comments.insert`)는 force-ssl 하나만 받는다 — 더 좁은 범위가 없다. 업로드 권한은
 필수, 댓글 권한은 선택이다: 동의 화면에서 댓글만 풀면 연결은 되고 댓글 기능이 "다시 연결" 을 안내한다.
 
 근거가 된 공식 문서(2026-10-15 갱신본): videos.insert 는 2026-06 부터 전용 버킷 하루 100건·건당 1,
@@ -32,11 +33,19 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 API_URL = "https://www.googleapis.com/youtube/v3"
+# 🔴 Data API 와 **다른 서비스**다. Cloud 콘솔에서 "YouTube Analytics API" 를 따로 사용 설정해야 한다(tease §7-6).
+ANALYTICS_URL = "https://youtubeanalytics.googleapis.com/v2/reports"
 
 UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 # 댓글 읽기·쓰기 · 채널 알아보기. 넓은 범위다(영상·댓글·자막 관리) — 쓰는 곳은 그 셋뿐이다(tease §7-5).
 COMMENT_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
-SCOPES = (UPLOAD_SCOPE, COMMENT_SCOPE)
+# 성과(Analytics). 🔴 `reports.query` 문서의 범위 표는 `yt-analytics.readonly` 를, 같은 문서 머리 공지는
+# "이제 `youtube.readonly` 접근이 필요하다" 를 적는다(2026-11-01 확인). 어느 하나로 충분한지 문서가 말하지 않아
+# 둘 다 요청한다. TODO: 실제 호출로 하나만 남겨도 되는지 확인하고 줄인다(III.D.2).
+ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+READONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+ANALYTICS_SCOPES = (ANALYTICS_SCOPE, READONLY_SCOPE)
+SCOPES = (UPLOAD_SCOPE, COMMENT_SCOPE, *ANALYTICS_SCOPES)
 
 # 토큰 요청은 몇백 ms 다. 업로드 세션 열기도 메타데이터 POST 하나라 짧다.
 TOKEN_TIMEOUT_SEC = 15.0
@@ -225,6 +234,13 @@ def _open_session(token: str, size: int, metadata: dict) -> str:
     return location
 
 
+# Cloud 프로젝트에서 그 API 를 안 켰다. 🔴 Analytics API 는 Data API 와 따로 켠다 — 성과 기능을 처음 쓸 때 반드시 난다.
+SERVICE_DISABLED_HINT = (
+    "Cloud 콘솔에서 이 API 를 사용 설정하지 않았다. API 및 서비스 → 라이브러리 → 'YouTube Analytics API' → 사용."
+    " 켠 뒤 몇 분 걸릴 수 있다"
+)
+
+
 # 유튜브가 돌려주는 이유(error.errors[].reason) 가운데 사람이 할 일이 있는 것. 원문은 뒤에 그대로 붙인다 —
 # 번역은 추측이고 진짜 원인은 원문에 있다(ytdlp.py 와 같은 판단).
 REASONS = {
@@ -241,6 +257,8 @@ REASONS = {
     "commentThreadNotFound": "그 댓글이 유튜브에 없다. 지워졌을 수 있다",
     "parentCommentNotFound": "답글을 달 댓글이 유튜브에 없다. 지워졌을 수 있다",
     "ineligibleAccount": "이 계정으로는 댓글을 쓸 수 없다. 유튜브에서 채널 상태를 확인하세요",
+    # ---- 성과(2026-11-01)
+    "accessNotConfigured": SERVICE_DISABLED_HINT,
 }
 
 # 🔴 범위가 모자라다(동의 화면에서 댓글 권한을 풀었거나, 댓글 기능 전에 연결했다). 403 이지만 사람이 할 일은
@@ -264,6 +282,9 @@ def _api_error(exc: urllib.error.HTTPError) -> YoutubeError:
             f" 체크하세요 ({message})"
         )
     hint = REASONS.get(reason)
+    # 새 오류 형식(google.rpc)은 errors[] 대신 details[].reason 에 SERVICE_DISABLED 를 싣는다. 문구로도 본다.
+    if hint is None and exc.code == 403 and ("SERVICE_DISABLED" in detail or "has not been used in project" in message):
+        hint = SERVICE_DISABLED_HINT
     # 🔴 401 이라고 다 만료가 아니다. 채널 없는 계정(youtubeSignupRequired)도 401 인데, 그걸 "다시 연결하라" 로
     # 읽히면 사람은 같은 계정으로 계속 다시 연결한다. 이유를 아는 것은 이유를 먼저 말한다.
     if exc.code == 401 and hint is None:
@@ -395,9 +416,83 @@ def comment_url(video_id: str, comment_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}&lc={comment_id}"
 
 
+# ---------------------------------------------------------------- 성과 (2026-11-01, tease §7-6)
+
+# videos.list 의 id 상한(API 문서). 넘으면 나눠 부른다 — 부를 때마다 1 unit.
+VIDEO_IDS_PER_CALL = 50
+
+
+@dataclass(frozen=True)
+class VideoStats:
+    """올린 영상의 지금 수치. 🔴 좋아요·댓글 수는 영상 설정에 따라 숨겨져 None 일 수 있다."""
+
+    view_count: int | None
+    like_count: int | None
+    comment_count: int | None
+    privacy: str | None
+
+
+def video_stats(token: str, video_ids: list[str]) -> dict[str, VideoStats]:
+    """영상 id → 지금 수치. 🔴 돌려주지 않은 id 는 **결과에 없다** — 지웠거나 볼 수 없게 된 영상이다."""
+    found: dict[str, VideoStats] = {}
+    for start in range(0, len(video_ids), VIDEO_IDS_PER_CALL):
+        batch = video_ids[start:start + VIDEO_IDS_PER_CALL]
+        payload = _api_get(token, "videos", {"part": "statistics,status", "id": ",".join(batch),
+                                             "maxResults": str(VIDEO_IDS_PER_CALL)})
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            stats = item.get("statistics") or {}
+            found[str(item["id"])] = VideoStats(
+                view_count=_count(stats.get("viewCount")),
+                like_count=_count(stats.get("likeCount")),
+                comment_count=_count(stats.get("commentCount")),
+                privacy=(item.get("status") or {}).get("privacyStatus"),
+            )
+    return found
+
+
+def _count(value) -> int | None:
+    # Data API 는 수를 문자열로 준다("123"). 숨긴 값은 키 자체가 없다.
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def analytics_report(
+    token: str, start: str, end: str, metrics: tuple[str, ...], *,
+    dimensions: str | None = None, filters: str | None = None, sort: str | None = None,
+) -> list[dict]:
+    """YouTube Analytics `reports.query` — 연결된 채널(`channel==MINE`)의 보고서를 행(dict) 목록으로.
+
+    날짜는 `YYYY-MM-DD`(태평양 시간의 날). 🔴 처리가 끝난 날까지만 온다(48~72시간) — 행이 없으면 빈 목록이다
+    (응답에 `rows` 자체가 없다). 열 이름은 `columnHeaders` 에서 읽는다 — 순서는 차원 다음 지표다.
+    """
+    params = {"ids": "channel==MINE", "startDate": start, "endDate": end, "metrics": ",".join(metrics)}
+    if dimensions:
+        params["dimensions"] = dimensions
+    if filters:
+        params["filters"] = filters
+    if sort:
+        params["sort"] = sort
+    payload = _get_json(f"{ANALYTICS_URL}?{urllib.parse.urlencode(params)}", token)
+    names = [str(h.get("name")) for h in payload.get("columnHeaders") or [] if isinstance(h, dict)]
+    rows = []
+    for row in payload.get("rows") or []:
+        if not isinstance(row, list) or len(row) != len(names):
+            raise YoutubeError(f"분석 응답의 행이 열 이름과 맞지 않는다: {names} / {row!r}"[:300])
+        rows.append(dict(zip(names, row)))
+    return rows
+
+
 def _api_get(token: str, resource: str, params: dict) -> dict:
-    """Data API GET. 아무것도 만들지 않으니 일시 오류(429·5xx)에 다시 부른다."""
-    url = f"{API_URL}/{resource}?{urllib.parse.urlencode(params)}"
+    """Data API GET."""
+    return _get_json(f"{API_URL}/{resource}?{urllib.parse.urlencode(params)}", token)
+
+
+def _get_json(url: str, token: str) -> dict:
+    """Google API GET. 아무것도 만들지 않으니 일시 오류(429·5xx)에 다시 부른다."""
     for attempt in range(1, MAX_ATTEMPTS + 1):
         request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
         try:
