@@ -129,6 +129,29 @@ class CommentAccessTest(ChannelTestCase):
             youtube_channel.comment_access(self.conn, self.cfg)
 
 
+class AnalyticsAccessTest(ChannelTestCase):
+    """성과(tease §7-6) — 분석 권한 둘을 다 받은 연결에서만. 막는 것은 네트워크 전이다."""
+
+    ALL = " ".join(youtube.SCOPES)
+
+    def test_a_connection_with_both_analytics_scopes_can_read(self):
+        youtube_channel.save_channel(self.conn, youtube.Grant(refresh_token="r", scopes=self.ALL))
+        self.assertTrue(youtube_channel.channel(self.conn)["can_analytics"])
+        self.assertIsNotNone(youtube_channel.analytics_access(self.conn, self.cfg))
+
+    def test_a_connection_from_before_is_told_to_reconnect(self):
+        scopes = f"{youtube.UPLOAD_SCOPE} {youtube.COMMENT_SCOPE} {youtube.ANALYTICS_SCOPE}"
+        youtube_channel.save_channel(self.conn, youtube.Grant(refresh_token="r", scopes=scopes))
+        self.assertFalse(youtube_channel.channel(self.conn)["can_analytics"])
+        with self.assertRaises(youtube_channel.NoAnalyticsAccess) as caught:
+            youtube_channel.analytics_access(self.conn, self.cfg)
+        self.assertIn("다시 연결", str(caught.exception))
+
+    def test_no_connection_is_refused(self):
+        with self.assertRaises(youtube_channel.NoAnalyticsAccess):
+            youtube_channel.analytics_access(self.conn, self.cfg)
+
+
 class LearnChannelTest(ChannelTestCase):
     """🔴 다시 연결하면 채널 이름이 빈다 — 답글 입력란이 "누구 이름으로 달리나" 를 말하려면 연결 직후 채워야 한다."""
 
@@ -166,6 +189,24 @@ class DisconnectTest(ChannelTestCase):
         self.assertEqual(result, {"disconnected": True, "revoked": False})
         revoke.assert_called_once_with("refresh-1")
         self.assertIsNone(youtube_channel.channel(self.conn))
+
+    def test_disconnecting_deletes_the_stats_youtube_gave_us(self):
+        # 🔴 III.D.2 — 끊으면 그 채널이 준 데이터를 지운다(tease §7-6). 올린 기록은 우리 것이라 남긴다.
+        youtube_channel.save_channel(self.conn, GRANT)
+        upload_id = self.conn.execute(
+            "insert into clip_uploads (title, privacy, status, youtube_video_id) values ('t', 'private', 'DONE', 'v1')"
+            " returning id"
+        ).fetchone()["id"]
+        self.conn.execute("insert into short_stats (upload_id, found, views) values (%s, true, 5)", (upload_id,))
+        self.conn.execute("insert into short_stats_daily (upload_id, day, views) values (%s, '2026-11-01', 5)", (upload_id,))
+        self.conn.commit()
+        with mock.patch.object(youtube, "revoke", return_value=True):
+            youtube_channel.disconnect(self.conn)
+        counts = self.conn.execute(
+            "select (select count(*) from short_stats) as s, (select count(*) from short_stats_daily) as d,"
+            " (select count(*) from clip_uploads) as u"
+        ).fetchone()
+        self.assertEqual((counts["s"], counts["d"], counts["u"]), (0, 0, 1))
 
     def test_nothing_to_disconnect_calls_nobody(self):
         with mock.patch.object(youtube, "revoke") as revoke:

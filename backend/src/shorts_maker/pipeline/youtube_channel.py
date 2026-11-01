@@ -1,7 +1,7 @@
 """유튜브 채널 연결 — 어느 채널에 올리나(tease §7-5, 2026-10-31).
 
 연결은 스튜디오 전체에 하나다(`youtube_channel` 한 행). 업로드(`pipeline/upload.py`) · 댓글 가져오기
-(`answers/comments.py`) · 답글(`answers/replies.py`)이 이 연결의 토큰을 쓴다 — 그래서 업로드 모듈에서 떼어 뒀다.
+(`answers/comments.py`) · 답글(`answers/replies.py`) · 성과(`pipeline/youtube_stats.py`)가 이 연결의 토큰을 쓴다 — 그래서 업로드 모듈에서 떼어 뒀다.
 Google 과 말하는 일은 `adapters/youtube.py` 가 하고, 여기는 **무엇을 저장하고 언제 거절하나**를 정한다.
 
 OAuth 웹 흐름: `start`(동의 화면 주소) → Google 동의 화면 → `finish`(code 를 토큰으로 바꿔 저장) → 홈.
@@ -38,6 +38,10 @@ class NoCommentAccess(ChannelError):
     """댓글 기능을 쓸 수 없다 — 연결이 없거나, 연결할 때 댓글 권한을 받지 못했다. 사람이 할 일을 말한다."""
 
 
+class NoAnalyticsAccess(ChannelError):
+    """성과를 읽을 수 없다 — 연결이 없거나, 연결할 때 분석 권한을 받지 못했다(tease §7-6). 사람이 할 일을 말한다."""
+
+
 def configured(cfg: config.Config) -> bool:
     """앱 자격 증명(.env 의 OAuth 클라이언트 ID·시크릿)이 있나. 채널이 연결됐는지와는 다른 질문이다."""
     return youtube.configured(cfg)
@@ -49,7 +53,7 @@ def channel(conn: psycopg.Connection) -> dict | None:
     """연결된 채널. 🔴 refresh token 은 싣지 않는다 — 이 값은 API 응답으로 나간다.
 
     `can_comment` — 댓글 권한을 받았나. 댓글 기능 전에 연결했거나 동의 화면에서 그 권한을 풀었으면 거짓이고,
-    화면은 "다시 연결" 을 안내한다.
+    화면은 "다시 연결" 을 안내한다. `can_analytics` — 성과(분석) 권한 둘을 다 받았나. 같은 판단이다.
     """
     row = conn.execute(
         "select channel_id, channel_title, scopes, connected_at from youtube_channel where id = 1"
@@ -57,7 +61,9 @@ def channel(conn: psycopg.Connection) -> dict | None:
     if row is None:
         return None
     found = dict(row)
-    found["can_comment"] = youtube.COMMENT_SCOPE in found["scopes"].split()
+    granted = found["scopes"].split()
+    found["can_comment"] = youtube.COMMENT_SCOPE in granted
+    found["can_analytics"] = all(scope in granted for scope in youtube.ANALYTICS_SCOPES)
     return found
 
 
@@ -71,6 +77,24 @@ def comment_access(conn: psycopg.Connection, cfg: config.Config) -> dict:
     if not found["can_comment"]:
         raise NoCommentAccess(
             "연결할 때 댓글 권한을 받지 못했습니다. 스튜디오 홈에서 유튜브를 끊고 다시 연결한 뒤, 동의 화면의 권한을 모두 체크하세요"
+        )
+    return found
+
+
+def analytics_access(conn: psycopg.Connection, cfg: config.Config) -> dict:
+    """성과 가져오기를 띄우기 **전에** 막을 것을 막는다(네트워크 없음). 쓸 수 있으면 연결된 채널을 돌려준다.
+
+    🔴 여기서 못 보는 것: Cloud 콘솔에서 YouTube Analytics API 를 켰는지. 그건 첫 호출의 403 이 알려 주고,
+    어댑터가 그 할 일을 말한다(`youtube.SERVICE_DISABLED_HINT`).
+    """
+    if not configured(cfg):
+        raise NoAnalyticsAccess("SHORTS_YOUTUBE_CLIENT_ID · SHORTS_YOUTUBE_CLIENT_SECRET 이 .env 에 없습니다")
+    found = channel(conn)
+    if found is None:
+        raise NoAnalyticsAccess("유튜브 채널이 연결돼 있지 않습니다. 스튜디오 홈에서 먼저 연결하세요")
+    if not found["can_analytics"]:
+        raise NoAnalyticsAccess(
+            "연결할 때 성과(분석) 권한을 받지 못했습니다. 스튜디오 홈에서 유튜브를 끊고 다시 연결한 뒤, 동의 화면의 권한을 모두 체크하세요"
         )
     return found
 
@@ -152,12 +176,13 @@ def finish(conn: psycopg.Connection, cfg: config.Config, code: str) -> None:
 
 
 def learn_channel(conn: psycopg.Connection, cfg: config.Config, grant: youtube.Grant) -> None:
-    """연결 직후 채널 id·이름을 채운다 — 댓글 권한이 있을 때만(`channels.list` 는 그 범위로 부른다).
+    """연결 직후 채널 id·이름을 채운다 — 댓글이나 읽기 권한이 있을 때만(`channels.list` 는 그 범위로 부른다).
 
     🔴 답글 입력란이 "누구 이름으로 달리나" 를 말해야 하는데, 다시 연결하면 `save_channel` 이 이름을 비운다.
     실패해도 연결은 그대로 둔다 — 이름은 첫 업로드·답글 응답에서도 채워진다.
     """
-    if youtube.COMMENT_SCOPE not in grant.scopes.split():
+    granted = grant.scopes.split()
+    if youtube.COMMENT_SCOPE not in granted and youtube.READONLY_SCOPE not in granted:
         return
     try:
         mine = youtube.my_channel(youtube.access_token(cfg, grant.refresh_token))
@@ -171,10 +196,13 @@ def learn_channel(conn: psycopg.Connection, cfg: config.Config, grant: youtube.G
 def disconnect(conn: psycopg.Connection) -> dict:
     """연결을 끊는다. 토큰을 지우고 Google 쪽 권한도 거둔다(실패해도 지우기는 한다).
 
-    개발자 정책 III.D.2: 앱 안에서 연결을 끊으면 그 데이터를 지운다. 올린 기록(clip_uploads)은 남긴다 —
-    영상은 채널에 그대로 있고, 어디에 무엇을 올렸는지는 우리가 알아야 한다.
+    개발자 정책 III.D.2: 앱 안에서 연결을 끊으면 그 데이터를 지운다. 🔴 그래서 유튜브에서 받아 온 성과
+    (`short_stats` · `short_stats_daily`, tease §7-6)도 지운다 — 그 채널이 우리에게 준 데이터다. 올린 기록(clip_uploads)은
+    남긴다 — 영상은 채널에 그대로 있고, 어디에 무엇을 올렸는지는 우리가 알아야 한다.
     """
     token = forget_channel(conn)
+    conn.execute("delete from short_stats_daily")
+    conn.execute("delete from short_stats")
     # 🔴 거두기(네트워크) 앞에서 커밋한다. Google 이 늦거나 실패해도 우리 쪽 삭제는 이미 끝나 있어야 한다.
     conn.commit()
     revoked = youtube.revoke(token) if token else False

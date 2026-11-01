@@ -160,5 +160,7 @@ class RunTest(UploadTestCase):
              mock.patch.object(youtube, "upload", return_value={"id": "vid7", "snippet": {}}):
             upload.run(self.conn, self.cfg, self.clip_id, "제목", "", "unlisted")
         self.conn.execute("delete from clips")
-        row = self.conn.execute("select clip_id, youtube_video_id, title from clip_uploads").fetchone()
+        row = self.conn.execute("select clip_id, source_id, youtube_video_id, title from clip_uploads").fetchone()
         self.assertEqual((row["clip_id"], row["youtube_video_id"], row["title"]), (None, "vid7", "제목"))
+        # 어느 회차의 숏폼인지도 남는다(마이그레이션 018) — 영상 페이지의 유튜브 성과 탭이 이걸로 모은다.
+        self.assertEqual(row["source_id"], self.source_id)

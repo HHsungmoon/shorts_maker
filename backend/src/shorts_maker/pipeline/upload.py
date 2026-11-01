@@ -148,9 +148,11 @@ def run(
     clip = check_ready(conn, cfg, clip_id)
     refresh_token = youtube_channel.refresh_token(conn)
     path = cfg.work_file(clip["path"])
+    # source_id 를 함께 적는다(마이그레이션 018) — 클립이 "다시 추출" 로 지워져도 어느 회차의 숏폼인지 남아
+    # 영상 페이지의 유튜브 성과 탭(tease §7-6)이 모을 수 있다.
     upload_id = conn.execute(
-        "insert into clip_uploads (clip_id, title, privacy) values (%s, %s, %s) returning id",
-        (clip_id, title, privacy),
+        "insert into clip_uploads (clip_id, source_id, title, privacy) values (%s, %s, %s, %s) returning id",
+        (clip_id, clip["source_id"], title, privacy),
     ).fetchone()["id"]
     # 🔴 네트워크 앞에서 트랜잭션을 끊는다(규약). UPLOADING 행이 먼저 보여야 화면이 "올리는 중" 을 그린다.
     conn.commit()
@@ -204,10 +206,16 @@ def _view(row: dict) -> dict:
     `studio_url` 은 '관련 동영상'을 원본으로 지정하는 자리다 — API 로는 못 단다(모듈 머리 주석).
     """
     view = dict(row)
-    video_id = view["youtube_video_id"]
-    view["shorts_url"] = f"https://youtube.com/shorts/{video_id}" if video_id else None
-    view["studio_url"] = f"https://studio.youtube.com/video/{video_id}/edit" if video_id else None
+    view.update(links(view["youtube_video_id"]))
     return view
+
+
+def links(video_id: str | None) -> dict:
+    """그 영상으로 가는 두 주소 — 보기(`shorts_url`) · 스튜디오 편집(`studio_url`). 성과 탭(youtube_stats)도 이걸 쓴다."""
+    return {
+        "shorts_url": f"https://youtube.com/shorts/{video_id}" if video_id else None,
+        "studio_url": f"https://studio.youtube.com/video/{video_id}/edit" if video_id else None,
+    }
 
 
 def _clip(conn: psycopg.Connection, clip_id: int) -> dict:
