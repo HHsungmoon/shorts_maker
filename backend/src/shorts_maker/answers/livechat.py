@@ -14,6 +14,7 @@ import collections
 import hashlib
 import re
 import time
+from typing import Protocol, TypeVar
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -47,15 +48,34 @@ def viewer_id(author_id: str) -> str:
     return "yt:" + hashlib.sha256(author_id.encode()).hexdigest()[:16]
 
 
-def pick(messages: list[ytdlp.ChatMessage]) -> tuple[list[ytdlp.ChatMessage], dict[str, int]]:
-    """질문으로 들일 메시지와, 뺀 것의 이유별 개수. 순서는 채팅 순서 그대로다."""
+class Said(Protocol):
+    """거르기가 보는 것 — 누가 · 무엇을 · 운영 쪽인가. 채팅 메시지와 댓글(answers/comments.py)이 같이 쓴다."""
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def author_id(self) -> str: ...
+
+    @property
+    def staff(self) -> bool: ...
+
+
+S = TypeVar("S", bound=Said)
+
+
+def pick(messages: list[S], shape: bool = True) -> tuple[list[S], dict[str, int]]:
+    """질문으로 들일 메시지와, 뺀 것의 이유별 개수. 순서는 받은 순서 그대로다.
+
+    `shape=False` 면 질문 꼴(`QUESTION`)은 보지 않는다 — 댓글은 더 좁은 자기 규칙(`comments.is_question`)으로 이미 골랐다.
+    """
     repeats: collections.Counter[str] = collections.Counter()
     for author, count in collections.Counter((m.author_id, m.text) for m in messages).items():
         if count > 1:
             repeats[author[0]] += count
     announcers = {author for author, count in repeats.items() if count >= ANNOUNCER_REPEATS}
 
-    kept: list[ytdlp.ChatMessage] = []
+    kept: list[S] = []
     skipped: collections.Counter[str] = collections.Counter()
     seen: set[tuple[str, str]] = set()
     for message in messages:
@@ -72,7 +92,7 @@ def pick(messages: list[ytdlp.ChatMessage]) -> tuple[list[ytdlp.ChatMessage], di
             reason = "short"
         elif ME_TOO.match(text):
             reason = "me_too"
-        elif not QUESTION.search(text):
+        elif shape and not QUESTION.search(text):
             reason = "not_question"
         elif (message.author_id, text) in seen:
             # 답이 없자 같은 질문을 또 쓴 것. 한 사람의 한 질문이다.
