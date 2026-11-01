@@ -1,4 +1,4 @@
-"""유튜브 API — 채널 연결 · Shorts 업로드 · 댓글 질문과 답글(tease §3-5 · §7-5). **인증 필요.**
+"""유튜브 API — 채널 연결 · Shorts 업로드 · 댓글 질문과 답글 · 성과(tease §3-5 · §7-5 · §7-6). **인증 필요.**
 
 🔴 이 라우터는 **스튜디오 라우터의 하위 라우터**다. `studio.py` 가 `router.include_router(youtube.router)`
 로 붙이고, 그때 스튜디오 라우터의 `/api` 접두사와 `require_auth` 가 이 라우트들에 함께 붙는다. 그래서
@@ -6,7 +6,8 @@
 `tests/http/test_api_auth.py` 가 `/api` 밖 라우트를, `tests/http/test_youtube.py` 가 이 라우터의 소속을 본다.
 
 도메인 로직은 없다. 무엇을 저장하고 언제 거절하나는 `pipeline/youtube_channel.py`(연결) ·
-`pipeline/upload.py`(업로드) · `answers/comments.py`(댓글 → 질문) · `answers/replies.py`(답글) 가 정하고,
+`pipeline/upload.py`(업로드) · `answers/comments.py`(댓글 → 질문) · `answers/replies.py`(답글) ·
+`pipeline/youtube_stats.py`(성과) 가 정하고,
 여기는 HTTP 로 옮기기만 한다.
 
 🔴 콜백은 **GET 인데 행동이다**(토큰을 저장한다). Google 이 브라우저를 GET 으로 돌려보내니 메서드를
@@ -26,7 +27,7 @@ from . import auth, deps
 from .deps import connect, submit
 from ..adapters import youtube as youtube_api
 from ..answers import comments, replies
-from ..pipeline import upload, youtube_channel
+from ..pipeline import upload, youtube_channel, youtube_stats
 
 # 🔴 접두사·의존성을 두지 않는다(모듈 머리 주석). 스튜디오 라우터에 붙는 순간 둘 다 생긴다.
 router = APIRouter()
@@ -209,3 +210,39 @@ def reply_post(question_id: int, body: ReplyIn) -> dict:
         except youtube_api.YoutubeError as exc:
             # 유튜브가 거절했거나 닿지 못했다. 이유는 어댑터가 사람 말로 옮겨 뒀다.
             raise HTTPException(502, str(exc)) from exc
+
+
+# ---------------------------------------------------------------- 성과 (2026-11-01, tease §7-6)
+
+@router.get("/sources/{source_id}/youtube/stats")
+def youtube_stats_view(source_id: int) -> dict:
+    """[유튜브 성과] 탭 — 마지막으로 가져온 수치. 🔴 DB 만 읽는다(유튜브를 부르지 않는다) — 보기 전용도 연다.
+
+    🔴 우리 시청자 퍼널(`/insights`)과 다른 엔드포인트다. 섞지 않는다(시청자 페이지는 없어질 수 있다).
+    """
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        return youtube_stats.view(conn, source_id)
+
+
+@router.post("/sources/{source_id}/youtube/stats")
+def youtube_stats_refresh(source_id: int) -> dict:
+    """**[성과 가져오기]** — 이 원본에서 올린 숏폼의 성과를 유튜브에서 다시 읽는다. 잡이다.
+
+    연결 · 분석 권한 · 올린 숏폼이 있는지는 큐에 넣기 **전에** 본다. Cloud 콘솔에서 Analytics API 를 켰는지는
+    여기서 알 수 없다 — 잡의 첫 호출이 403 으로 알려 주고, 그 할 일이 잡 오류로 보인다.
+    """
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        try:
+            youtube_stats.check_ready(conn, deps.cfg, source_id)
+        except youtube_stats.StatsError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def work() -> dict:
+        with connect() as conn:
+            return youtube_stats.refresh(conn, deps.cfg, source_id)
+
+    return submit("analytics", f"source {source_id}", work)

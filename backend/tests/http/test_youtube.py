@@ -292,3 +292,41 @@ class CommentApiTest(YoutubeApiTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatsApiTest(YoutubeApiTestCase):
+    """유튜브 성과(tease §7-6). GET 은 DB 만 읽고 POST 가 잡을 띄운다 — 막을 것은 큐에 넣기 **전에**."""
+
+    def test_the_tab_reads_without_calling_youtube_even_for_readonly(self):
+        source_id, _ = self.seed_clip()
+        self.login(READONLY)
+        with mock.patch.object(youtube, "analytics_report") as analytics, \
+                mock.patch.object(youtube, "video_stats") as stats:
+            body = self.client.get(f"/api/sources/{source_id}/youtube/stats").json()
+        analytics.assert_not_called()
+        stats.assert_not_called()
+        self.assertEqual((body["shorts"], body["totals"]), ([], None))
+        self.assertEqual(self.client.get("/api/sources/9999/youtube/stats").status_code, 404)
+
+    def test_refreshing_with_an_upload_only_connection_says_to_reconnect(self):
+        source_id, _ = self.seed_clip()
+        self.connect_channel()
+        self.login()
+        response = self.client.post(f"/api/sources/{source_id}/youtube/stats")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("다시 연결", response.json()["detail"])
+
+    def test_refreshing_without_any_upload_is_refused(self):
+        source_id, _ = self.seed_clip()
+        with store.connect(deps.cfg.database_url) as conn:
+            youtube_channel.save_channel(conn, youtube.Grant(refresh_token=SECRET_REFRESH, scopes=" ".join(youtube.SCOPES)))
+            conn.commit()
+        self.login()
+        response = self.client.post(f"/api/sources/{source_id}/youtube/stats")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("올린 숏폼이 없습니다", response.json()["detail"])
+
+    def test_readonly_cannot_refresh(self):
+        source_id, _ = self.seed_clip()
+        self.login(READONLY)
+        self.assertEqual(self.client.post(f"/api/sources/{source_id}/youtube/stats").status_code, 403)
