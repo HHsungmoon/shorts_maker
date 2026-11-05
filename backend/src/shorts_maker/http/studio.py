@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from .. import pricing, standards
 from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, livechat, reactions, report, suggest
-from . import auth, deps, prompt_catalog, youtube
+from . import auth, deps, layouts, prompt_catalog, youtube
 from ..pipeline import (
     captions, cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
     transcript_diff, transcripts, upload,
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 # 🔴 하위 라우터는 **이 라우터에** 붙인다. 붙이는 순간 `/api` 접두사와 `require_auth` 가 그 라우트들에
 # 복사돼 들어온다 — 앱(server.py)에 따로 붙이면 둘 다 빠진다. 하위 라우터 쪽에는 접두사·인증을 적지 않는다.
 router.include_router(youtube.router)  # 채널 연결 · Shorts 업로드(tease §7-5)
+router.include_router(layouts.router)  # 숏폼 편집 — 템플릿 · 시리즈 · 클립 편집 명세(tease §5-10)
 
 
 # ---------------------------------------------------------------- 조회
