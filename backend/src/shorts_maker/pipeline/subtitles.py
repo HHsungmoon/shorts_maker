@@ -118,9 +118,12 @@ def to_ass(
     font: str = DEFAULT_FONT,
     font_size: int = DEFAULT_FONT_SIZE,
     margin_v: int = DEFAULT_MARGIN_V,
+    alignment: int = 8,
 ) -> str:
     # Alignment 8 = 상단 중앙. MarginV 는 위쪽 여백이라, 영상 아래 블러 영역에서 시작해
     # 아래로 자란다 — 두 줄이 돼도 영상을 가리지 않는다.
+    # 카드 렌더(tease §5-10)는 Alignment 2(하단 중앙)로 부른다 — 자막이 **칸 안 아래쪽**에 앉고, MarginV 는
+    # 프레임 아래끝에서 칸 아래끝까지 + 여백이다. 두 줄이 되면 위로 자라 칸 안에 머문다.
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -130,7 +133,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H90000000,-1,0,0,0,100,100,0,0,1,4,2,8,60,60,{margin_v},1
+Style: Default,{font},{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H90000000,-1,0,0,0,100,100,0,0,1,4,2,{alignment},60,60,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text

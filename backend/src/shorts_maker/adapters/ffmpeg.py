@@ -298,3 +298,113 @@ def render_parts(
         dst,
     ]
     _run(args, timeout=1800)
+
+
+def video_size(src: str) -> tuple[int, int]:
+    """원본 영상의 (폭, 높이). 편집 화면의 창은 이 크기에 대한 비율이라 렌더와 미리보기가 같은 값을 써야 한다.
+
+    🔴 회전 메타데이터(휴대폰 세로 영상)는 보지 않는다 — 원본은 유튜브에서 받은 가로 영상이다. 세로 원본이
+    들어오면 폭 · 높이가 뒤바뀐 채 계산된다(TODO: side_data 의 rotation 을 읽는다).
+    """
+    for stream in probe(src).get("streams") or []:
+        if stream.get("codec_type") == "video" and stream.get("width") and stream.get("height"):
+            return int(stream["width"]), int(stream["height"])
+    raise FfmpegError(f"영상 스트림이 없다: {src}")
+
+
+def _hex(color: str) -> str:
+    # lavfi color 는 "#RRGGBB" 도 받지만 필터 그래프 안에서 # 이 주석처럼 읽히는 빌드가 있다 — 0x 로 쓴다.
+    return "0x" + color.lstrip("#")
+
+
+def render_still(
+    dst: str, ass_path: str, background: str, overlay: dict | None = None, binary: str = "ffmpeg"
+) -> None:
+    """바탕색 한 장 위에 ASS 글자를 그리고(배지 이미지가 있으면 얹어) PNG 한 장으로 쓴다 — 카드의 글자 층.
+
+    🔴 색이 바래지 않게 두 가지를 지킨다(2026-11-05 실측 — #FFFFFF 가 #FDFDFD, #FFD400 이 #EBC610 으로 나왔다).
+    ① 바탕은 `-f lavfi -i color` 입력이 아니라 **그래프 안의** color 소스로 rgb24 에서 바로 만든다. 입력으로 두면
+    yuv 로 만들어진 뒤 rgb 로 돌아오며 범위가 깎인다. ② ASS 머리에 `YCbCr Matrix: None`(card.build_ass) — 없으면
+    libass 가 TV 범위(16–235)로 색을 옮긴다.
+    """
+    args = [binary, "-nostdin", "-y"]
+    chain = f"color=c={_hex(background)}:s=1080x1920:d=1,format=rgb24,ass='{_escape_filter_path(ass_path)}'"
+    if overlay:
+        args += ["-i", overlay["path"]]
+        # 배지는 높이를 블록에 맞추고(폭은 비율대로) 가로 가운데에 놓는다.
+        chain += (
+            f"[t];[0:v]scale=-2:{int(overlay['height'])}[b];"
+            f"[t][b]overlay=x=(W-w)/2:y={int(overlay['top'])}:format=rgb"
+        )
+    args += ["-filter_complex", chain, "-frames:v", "1", "-update", "1", dst]
+    _run(args, timeout=60)
+
+
+def render_card(
+    src: str,
+    dst: str,
+    parts: list[tuple[float, float]],
+    card_png: str,
+    slot_top: int,
+    slot_height: int,
+    crop: dict,
+    bridge_sec: float = 0.4,
+    subtitle_path: str | None = None,
+    binary: str = "ffmpeg",
+) -> None:
+    """카드 숏폼 렌더 — 글자 층 PNG 를 바탕으로, 원본에서 창만큼 자른 영상을 칸에 얹는다(tease §5-10).
+
+    단일 컷도 조각 하나짜리로 같은 길을 간다. 조각이 여럿이면 render_parts 처럼 사이에 브릿지가 들어가는데,
+    브릿지는 **칸 크기**의 검은 화면이다 — 카드(배지 · 카피 · 출처)는 점프하는 동안에도 그대로 있다.
+
+    🔴 바탕 PNG 는 `-loop 1 -framerate {원본 fps}` 로 넣는다. overlay 의 출력 프레임률은 바탕(첫 입력)을 따르므로,
+    그냥 넣으면 25fps 로 굳어 30fps 원본이 뚝뚝 끊긴다. 끝은 `shortest=1` 이 영상 쪽에 맞춘다.
+    """
+    if not parts:
+        raise FfmpegError("조각이 없다")
+    fps = video_fps(src, binary)
+    slot_height = int(slot_height)
+
+    args = [binary, "-nostdin", "-y"]
+    for start, end in parts:
+        args += ["-ss", f"{start}", "-t", f"{end - start}", "-i", src]
+    bridges = len(parts) - 1
+    color_index = silence_index = None
+    if bridges:
+        color_index, silence_index = len(parts), len(parts) + 1
+        args += ["-f", "lavfi", "-i", f"color=c=black:s=1080x{slot_height}:r={fps:g}"]
+        args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+    card_index = len(parts) + (2 if bridges else 0)
+    args += ["-loop", "1", "-framerate", f"{fps:g}", "-i", card_png]
+
+    chain: list[str] = []
+    order: list[str] = []
+    for index in range(len(parts)):
+        chain.append(
+            f"[{index}:v]crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']},"
+            f"scale=1080:{slot_height},setsar=1,fps={fps:g}[v{index}]"
+        )
+        chain.append(f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo[a{index}]")
+        order += [f"[v{index}]", f"[a{index}]"]
+        if index < bridges:
+            chain.append(f"[{color_index}:v]trim=duration={bridge_sec},setpts=PTS-STARTPTS,setsar=1[bv{index}]")
+            chain.append(f"[{silence_index}:a]atrim=duration={bridge_sec},asetpts=PTS-STARTPTS[ba{index}]")
+            order += [f"[bv{index}]", f"[ba{index}]"]
+    chain.append(f"{''.join(order)}concat=n={len(parts) + bridges}:v=1:a=1[cv][ca]")
+    chain.append(f"[{card_index}:v]format=yuv420p,setsar=1[bg]")
+    chain.append(f"[bg][cv]overlay=x=0:y={int(slot_top)}:shortest=1[ov]")
+    if subtitle_path:
+        chain.append(f"[ov]ass='{_escape_filter_path(subtitle_path)}'[vout]")
+        video_label = "[vout]"
+    else:
+        video_label = "[ov]"
+
+    args += [
+        "-filter_complex", ";".join(chain),
+        "-map", video_label, "-map", "[ca]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart",
+        dst,
+    ]
+    _run(args, timeout=1800)
