@@ -627,5 +627,40 @@ class QuestionRepliesTest(SchemaTestCase):
         self.assertEqual((row["question_id"], row["youtube_comment_id"]), (None, "c1.r1"))
 
 
+
+class ClipLayoutTablesTest(SchemaTestCase):
+    """숏폼 편집(019) — 템플릿 · 시리즈. spec 의 모양은 코드(pipeline/templates.py)가 지키고, DB 는 이름 · 계열 · 출처만 본다."""
+
+    def insert_template(self, name: str = "카드", kind: str = "card") -> int:
+        return self.conn.execute(
+            "insert into templates (name, kind, spec) values (%s, %s, %s) returning id", (name, kind, Jsonb({}))
+        ).fetchone()["id"]
+
+    def test_only_the_card_kind_exists_for_now(self):
+        self.insert_template()
+        self.expect_integrity_error(
+            "insert into templates (name, kind, spec) values ('꽉 채움', 'fill', '{}')"
+        )
+
+    def test_names_are_unique_and_not_blank(self):
+        self.insert_template("잡소리 카드")
+        self.expect_integrity_error("insert into templates (name, spec) values ('잡소리 카드', '{}')")
+        self.expect_integrity_error("insert into series (name) values ('  ')")
+
+    def test_deleting_a_template_keeps_the_series(self):
+        # 시리즈의 배지는 템플릿과 따로 산다 — 템플릿을 지워도 시리즈는 남고 기본 템플릿만 빈다.
+        template_id = self.insert_template()
+        self.conn.execute("insert into series (name, template_id) values ('잡소리', %s)", (template_id,))
+        self.conn.execute("delete from templates where id = %s", (template_id,))
+        self.assertIsNone(self.conn.execute("select template_id from series").fetchone()["template_id"])
+
+    def test_deleting_a_series_keeps_the_source(self):
+        series_id = self.conn.execute("insert into series (name) values ('잡소리') returning id").fetchone()["id"]
+        source_id = self.insert_source()
+        self.conn.execute("update sources set series_id = %s where id = %s", (series_id, source_id))
+        self.conn.execute("delete from series where id = %s", (series_id,))
+        self.assertIsNone(self.conn.execute("select series_id from sources").fetchone()["series_id"])
+
+
 if __name__ == "__main__":
     unittest.main()

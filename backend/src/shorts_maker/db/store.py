@@ -29,6 +29,8 @@ TABLES = (
     "stage_calls", "question_clusters", "questions", "question_likes", "embeddings", "viewer_events",
     "admin_standards", "youtube_channel", "clip_uploads", "transcripts", "stt_spans", "question_replies",
     "source_comments", "reaction_summaries", "short_stats", "short_stats_daily",
+    # 숏폼 편집(019). 🔴 테스트의 truncate 가 기본 템플릿 둘(시드)까지 지운다 — 테스트는 자기 템플릿을 넣는다.
+    "templates", "series",
 )
 
 

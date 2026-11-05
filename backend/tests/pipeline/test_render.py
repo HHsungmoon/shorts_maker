@@ -10,6 +10,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from psycopg.types.json import Jsonb
+
 from shorts_maker.adapters import ffmpeg
 from shorts_maker.pipeline import render
 
@@ -180,6 +182,130 @@ class CombinedSubtitleTest(RenderTestCase):
             render.run_for_clip(self.conn, self.cfg, clip_id, force=True, burn_subtitles=False)
         self.assertIsNone(combined.call_args.kwargs["subtitle_path"])
 
+
+
+
+class CardRenderTest(RenderTestCase):
+    """편집 명세(clips.layout)가 있으면 카드로 굽는다(tease §5-10). ffmpeg 은 mock — 실제 그래프는 2026-11-05 에
+    소스 4 로 6초 + 브릿지 + 3초를 구워 확인했다(9.43초, 1080×1920, 23.976fps)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from .test_templates import card as card_spec
+
+        self.template_id = self.conn.execute(
+            "insert into templates (name, spec) values ('카드', %s) returning id", (Jsonb(card_spec(default=852)),)
+        ).fetchone()["id"]
+        self.series_id = self.conn.execute(
+            "insert into series (name, template_id) values ('잡소리', %s) returning id", (self.template_id,)
+        ).fetchone()["id"]
+        self.conn.commit()
+        for name, value in (("video_size", (1920, 1080)),):
+            patcher = mock.patch.object(ffmpeg, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        # 글자 층은 파일이 생겨야 다음 단계가 이름을 읽는다 — 빈 PNG 를 쓰는 가짜로 바꾼다.
+        patcher = mock.patch.object(ffmpeg, "render_still", side_effect=lambda dst, *a, **k: Path(dst).write_bytes(b"png"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def with_layout(self, clip_id: int, **overrides) -> dict:
+        from shorts_maker.pipeline import layout, templates
+
+        from .test_templates import card as card_spec
+
+        value = layout.default(
+            templates.validate(card_spec(default=852)), template_id=self.template_id, series_id=self.series_id,
+            title="면접관이 말하는 합격 답변", channel="채널 원티드", src_w=1920, src_h=1080,
+        ) | overrides
+        self.conn.execute("update clips set layout = %s where id = %s", (Jsonb(value), clip_id))
+        self.conn.commit()
+        return value
+
+    def test_a_clip_with_a_layout_is_rendered_as_a_card(self):
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id)
+        with (
+            mock.patch.object(ffmpeg, "render_vertical") as blur,
+            mock.patch.object(ffmpeg, "render_card") as card_render,
+        ):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        blur.assert_not_called()
+        card_render.assert_called_once()
+        args = card_render.call_args.args
+        self.assertEqual([(0.0, 30.0)], args[2])
+        self.assertEqual(852, args[5])  # 칸 높이
+        # 칸 852 · 원본 1920×1080 → 원본 높이 전체, 폭 1370(짝수) 를 가운데에서.
+        self.assertEqual({"w": 1370, "h": 1080, "x": 276, "y": 0}, args[6])
+
+    def test_the_snapshot_keeps_the_template_used(self):
+        clip_id = self.clip(0, 30, None)
+        value = self.with_layout(clip_id)
+        with mock.patch.object(ffmpeg, "render_card"):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        snapshot = self.conn.execute("select render_spec from clips where id = %s", (clip_id,)).fetchone()["render_spec"]
+        self.assertEqual(value, snapshot["layout"])
+        self.assertEqual(self.template_id, snapshot["template"]["id"])
+        self.assertEqual("잡소리", snapshot["series"]["name"])
+        self.assertTrue(self.recorded()["card"])
+
+    def test_the_layout_can_turn_subtitles_off(self):
+        # 원본 화면에 자막이 박혀 있으면 우리 자막을 끈다 — 잡소리 원본이 그렇다.
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id, subtitles=False)
+        with mock.patch.object(ffmpeg, "render_card") as card_render:
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        self.assertIsNone(card_render.call_args.kwargs["subtitle_path"])
+
+    def test_the_cli_switch_also_turns_them_off(self):
+        # 🔴 어느 한쪽이 끈 것을 다른 쪽이 되살리지 않는다.
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id, subtitles=True)
+        with mock.patch.object(ffmpeg, "render_card") as card_render:
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True, burn_subtitles=False)
+        self.assertIsNone(card_render.call_args.kwargs["subtitle_path"])
+
+    def test_card_subtitles_sit_inside_the_slot(self):
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id)
+        with mock.patch.object(ffmpeg, "render_card") as card_render:
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        text = Path(card_render.call_args.kwargs["subtitle_path"]).read_text(encoding="utf-8")
+        # \an2(하단 중앙) · MarginV = 1920 − 칸 아래끝 + 36
+        slot_bottom = card_render.call_args.args[4] + card_render.call_args.args[5]
+        self.assertIn(f",2,60,60,{1920 - slot_bottom + 36},1", text)
+
+    def test_parts_go_through_the_card_path_too(self):
+        clip_id = self.clip(0, 700, [(0.0, 20.0), (600.0, 610.0)], total_sec=30.0)
+        self.with_layout(clip_id)
+        with (
+            mock.patch.object(ffmpeg, "render_parts") as blur_parts,
+            mock.patch.object(ffmpeg, "render_card") as card_render,
+        ):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        blur_parts.assert_not_called()
+        self.assertEqual([(0.0, 20.0), (600.0, 610.0)], card_render.call_args.args[2])
+        self.assertEqual(2, self.recorded()["parts"])
+
+    def test_a_missing_template_stops_the_render(self):
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id, template_id=9999)
+        with mock.patch.object(ffmpeg, "render_card") as card_render, self.assertRaises(render.RenderError):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        card_render.assert_not_called()
+
+    def test_going_back_to_blur_drops_the_card_snapshot(self):
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id)
+        with mock.patch.object(ffmpeg, "render_card"):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        self.conn.execute("update clips set layout = null where id = %s", (clip_id,))
+        self.conn.commit()
+        with mock.patch.object(ffmpeg, "render_vertical"):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        self.assertIsNone(
+            self.conn.execute("select render_spec from clips where id = %s", (clip_id,)).fetchone()["render_spec"]
+        )
 
 
 class LegacyClipLengthTest(DbTestCase):
