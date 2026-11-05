@@ -166,6 +166,111 @@ export interface ShortsClip {
 	reviews: ShortsClipReview[];
 	/** 이 클립을 유튜브에 올린 기록, 최신 먼저. 같은 클립을 비공개로 시험한 뒤 다시 올릴 수 있어 여럿이다. */
 	uploads: ShortsClipUpload[];
+	/** 숏폼 편집 명세(tease §5-10). null 이면 예전의 블러 렌더다. */
+	layout: ClipLayout | null;
+	/** 마지막 렌더에 쓴 명세의 사본. 카드로 구운 적이 없으면 null. */
+	render_spec: { rendered_at?: string } | null;
+}
+
+/** 누가 정한 값인가. 🔴 person 인 값은 AI 를 다시 돌려도 덮지 않는다(P5). */
+export type LayoutBy = "auto" | "ai" | "person";
+
+/** 원본에서 칸에 보여 줄 영역. x · y · w 는 원본 폭 · 높이에 대한 비율이고, 높이는 칸 비율에서 나온다. */
+export interface ClipWindow {
+	start: number;
+	end: number | null;
+	x: number;
+	y: number;
+	w: number;
+	by: LayoutBy;
+}
+
+/** 클립 편집 명세(clips.layout). 모양 검사는 서버(pipeline/layout.py)가 한다. */
+export interface ClipLayout {
+	version: number;
+	template_id: number;
+	series_id: number | null;
+	headline: string[];
+	credit: string;
+	subtitles: boolean;
+	subtitles_by: LayoutBy;
+	slot_height: number;
+	windows: ClipWindow[];
+}
+
+export interface LayoutBox {
+	top: number;
+	height: number;
+}
+
+/** 서버가 계산한 자리. 🔴 화면은 칸 위치를 따로 계산하지 않고 이것을 그린다. */
+export interface LayoutGeometry {
+	frame: { w: number; h: number };
+	safe: { top: number; bottom: number };
+	boxes: Partial<Record<"badge" | "headline" | "slot" | "credit", LayoutBox>>;
+	slotLimits: [number, number];
+	crop: { w: number; h: number; x: number; y: number };
+	upscale: number;
+	warnings: string[];
+}
+
+export interface TemplateBlock {
+	type: "badge" | "headline" | "slot" | "credit";
+	[key: string]: unknown;
+}
+
+export interface ShortsTemplate {
+	id: number;
+	name: string;
+	kind: "card";
+	origin: "seed" | "manual" | "reference";
+	spec: { background: string; anchor_y: number; font: string; blocks: TemplateBlock[] };
+	/** spec 이 잘못됐으면 null 이고 error 에 이유가 있다. */
+	slotLimits: [number, number] | null;
+	error: string | null;
+}
+
+export interface ShortsSeries {
+	id: number;
+	name: string;
+	template_id: number | null;
+	/** 배지 이미지 주소. null 이면 시리즈 이름을 글자 배지로 그린다. */
+	badgeUrl: string | null;
+}
+
+/** 편집 화면 한 벌(`GET /api/clips/{id}/layout`). */
+export interface ClipEditorState {
+	clip: {
+		id: number;
+		title: string | null;
+		start_sec: number;
+		end_sec: number;
+		total_sec: number | null;
+		rendered: boolean;
+		/** 조합 클립의 조각들. 조각이 하나뿐이면 빈 목록이고 start~end 를 돈다. */
+		parts: { ordinal: number; start_sec: number; end_sec: number }[];
+		renderedAs: "card" | "blur" | null;
+		renderedAt: string | null;
+	};
+	source: { id: number; width: number; height: number; channel: string | null; seriesId: number | null; videoUrl: string };
+	layout: ClipLayout;
+	/** 거짓이면 아직 저장 안 한 초안이다. */
+	saved: boolean;
+	/** 구운 영상이 지금 명세와 다르다 — 다시 렌더해야 한다. */
+	stale: boolean;
+	/** 저장된 명세가 지금은 풀리지 않을 때의 이유(템플릿이 지워졌다 등). 그때 layout 은 초안이다. */
+	error: string | null;
+	geometry: LayoutGeometry;
+	/** 이미 그려 둔 글자 층. 없으면 null(보기 전용은 새로 그리지 않는다). */
+	cardUrl: string | null;
+	templates: ShortsTemplate[];
+	series: ShortsSeries[];
+}
+
+export interface LayoutPreview {
+	layout: ClipLayout;
+	geometry: LayoutGeometry;
+	cardUrl: string;
 }
 
 export type YoutubePrivacy = "private" | "unlisted" | "public";

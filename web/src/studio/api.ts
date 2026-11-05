@@ -1,5 +1,8 @@
 import { request } from "../shared/client";
 import type {
+	ClipEditorState,
+	ClipLayout,
+	LayoutPreview,
 	PromptCatalog,
 	PromptStandard,
 	QuestionReply,
@@ -13,6 +16,7 @@ import type {
 	ShortsMediaList,
 	ShortsRemoval,
 	ShortsReport,
+	ShortsSeries,
 	ShortsSourceDetail,
 	ShortsSourceListItem,
 	ShortsStageCallBody,
@@ -232,8 +236,9 @@ export function reviewClip(
 // Authorization 헤더가 필요한데 <video src> 는 헤더를 못 붙이기 때문이었다. 지금은
 // 세션 쿠키라 브라우저가 알아서 실어 보낸다. 그 우회가 통째로 사라졌고, 덕분에
 // **브라우저가 range 요청으로 스트리밍**한다 — 예전엔 전체를 받아야 재생이 시작됐다.
-export function clipUrl(clipId: number): string {
-	return `/api/clips/${clipId}/file`;
+export function clipUrl(clipId: number, version?: string | null): string {
+	// 🔴 다시 렌더해도 주소가 같다(clips/clipNNN.mp4 를 덮어쓴다). 브라우저가 옛 영상을 들고 있지 않게 렌더 시각을 붙인다.
+	return version ? `/api/clips/${clipId}/file?v=${encodeURIComponent(version)}` : `/api/clips/${clipId}/file`;
 }
 
 export function segmentPreviewUrl(segmentId: number): string {
@@ -422,4 +427,36 @@ export function refreshYoutubeStats(sourceId: number): Promise<ShortsJob> {
 // 🔴 연결된 채널에 실제로 올라간다. 공개 범위는 사람이 고른 값을 그대로 보낸다 — 서버에 기본값이 없다.
 export function uploadClipToYoutube(clipId: number, draft: YoutubeUploadDraft): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/clips/${clipId}/youtube`, { method: "POST", body: draft });
+}
+
+// ---------------------------------------------------------------- 숏폼 편집(tease §5-10)
+
+export function fetchClipLayout(clipId: number): Promise<ClipEditorState> {
+	return request<ClipEditorState>(`/api/clips/${clipId}/layout`);
+}
+
+export function saveClipLayout(clipId: number, layout: ClipLayout): Promise<ClipEditorState> {
+	return request<ClipEditorState>(`/api/clips/${clipId}/layout`, { method: "PUT", body: { layout } });
+}
+
+/** 명세를 지운다 — 다음 렌더는 예전의 블러 렌더다. */
+export function deleteClipLayout(clipId: number): Promise<{ layout: null }> {
+	return request<{ layout: null }>(`/api/clips/${clipId}/layout`, { method: "DELETE" });
+}
+
+/** 저장하지 않은 명세로 글자 층을 그린다. 🔴 행동이다(ffmpeg) — 보기 전용은 부르지 않는다. */
+export function previewClipLayout(clipId: number, layout: ClipLayout): Promise<LayoutPreview> {
+	return request<LayoutPreview>(`/api/clips/${clipId}/layout/preview`, { method: "POST", body: { layout } });
+}
+
+export function createSeries(name: string, templateId: number | null): Promise<ShortsSeries> {
+	return request<ShortsSeries>("/api/series", { method: "POST", body: { name, templateId } });
+}
+
+export function uploadSeriesBadge(seriesId: number, file: File): Promise<ShortsSeries> {
+	return request<ShortsSeries>(`/api/series/${seriesId}/badge`, { method: "PUT", file });
+}
+
+export function deleteSeriesBadge(seriesId: number): Promise<ShortsSeries> {
+	return request<ShortsSeries>(`/api/series/${seriesId}/badge`, { method: "DELETE" });
 }

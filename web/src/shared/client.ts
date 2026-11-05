@@ -65,15 +65,21 @@ function messageFrom(payload: unknown, fallback: string): string {
 interface RequestOptions {
 	method?: string;
 	body?: unknown;
+	/** 파일을 본문 그대로 보낸다(시리즈 배지). Content-Type 은 파일의 것이다 — 서버가 첫 바이트로 다시 확인한다. */
+	file?: Blob;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-	const { method = "GET", body } = options;
+	const { method = "GET", body, file } = options;
 
 	const response = await fetch(path, {
 		method,
-		headers: body === undefined ? undefined : { "Content-Type": "application/json" },
-		body: body === undefined ? undefined : JSON.stringify(body),
+		headers: file
+			? { "Content-Type": file.type || "application/octet-stream" }
+			: body === undefined
+				? undefined
+				: { "Content-Type": "application/json" },
+		body: file ?? (body === undefined ? undefined : JSON.stringify(body)),
 	});
 
 	if (response.status === 401) {

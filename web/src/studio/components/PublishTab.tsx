@@ -164,7 +164,7 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 				{clip.rendered ? (
 					// 🔴 비율을 미리 잡는다(CSS). 메타데이터가 오기 전엔 <video> 높이가 0 이라 카드가 납작하게
 					// 그려졌다가 영상이 뜨면서 격자 전체가 아래로 밀린다.
-					<video controls preload="metadata" src={clipUrl(clip.id)} />
+					<video controls preload="metadata" src={clipUrl(clip.id, clip.render_spec?.rendered_at)} />
 				) : (
 					<div className="sm-short__pending">
 						<span>아직 렌더 전</span>
@@ -283,6 +283,10 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 						<button type="button" className="sm-short__tool sm-short__tool--end" onClick={() => setEditing(true)}>
 							제목 고치기
 						</button>
+						{/* 숏폼 편집(tease §5-10) — 배지 · 카피 · 영상 칸 · 출처. 카드로 만든 클립은 이름에 표시한다. */}
+						<Link className="sm-short__tool" to={`/studio/sources/${view.sourceId}/clips/${clip.id}/edit`}>
+							{clip.layout ? "카드 편집" : "숏폼 편집"}
+						</Link>
 					</div>
 				</div>
 			</div>

@@ -259,6 +259,7 @@
 	font: inherit;
 	font-size: 13px;
 	color: var(--text-muted);
+	text-decoration: none;
 	cursor: pointer;
 }
 

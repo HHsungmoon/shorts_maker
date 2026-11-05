@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 import { Link, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { fetchClusters, fetchShortsSource, fetchStatus } from "./api";
+import { ClipEditor } from "./components/ClipEditor";
 import { LogTab } from "./components/LogTab";
 import { NewClipTab } from "./components/NewClipTab";
 import { PublishTab } from "./components/PublishTab";
@@ -327,6 +328,8 @@ export function SourcePage() {
 					<Route path="prepare" element={<PrepareTab view={view} />} />
 					<Route path="make" element={<NewClipTab view={view} />} />
 					<Route path="clips" element={<PublishTab view={view} />} />
+					{/* 숏폼 편집(tease §5-10). 공개 탭 아래에 둔다 — 탭 줄의 "공개" 가 켜진 채로 남는다. */}
+					<Route path="clips/:clipId/edit" element={<ClipEditor view={view} />} />
 					<Route path="youtube" element={<YoutubeStatsTab view={view} />} />
 					<Route path="report" element={<ReportTab view={view} />} />
 					<Route path="log" element={<LogTab view={view} />} />

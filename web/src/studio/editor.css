@@ -1,0 +1,416 @@
+/* 숏폼 편집 화면(tease §5-10). ClipEditor 가 import 한다.
+ *
+ * 토큰(--surface, --border, --accent …)과 공통 클래스(.button, .sm-meta, .field__input)는 shared/styles.css 것을
+ * 그대로 쓴다. 클래스 이름은 `sm-edit*` — 다른 탭 CSS 와 겹치지 않게 한다(탭 CSS 도 한 번 읽히면 페이지 전체에 걸린다).
+ */
+
+.sm-edit {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+
+.sm-edit__head {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+}
+
+.sm-edit__back {
+	font-size: 14px;
+	color: var(--text-muted);
+	text-decoration: none;
+}
+
+.sm-edit__back:hover {
+	color: var(--accent);
+}
+
+.sm-edit__title {
+	margin: 0;
+	font-size: 20px;
+	max-width: 520px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sm-edit__status {
+	display: inline-flex;
+	gap: 6px;
+}
+
+.sm-edit__chip {
+	padding: 2px 9px;
+	font-size: 12px;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	color: var(--text-muted);
+	background: var(--surface);
+}
+
+.sm-edit__chip--warn {
+	color: var(--warn-ink);
+	background: var(--warn-bg);
+	border-color: var(--warn-line);
+}
+
+.sm-edit__chip--ok {
+	color: var(--accent);
+	background: var(--accent-soft);
+	border-color: var(--accent-line);
+}
+
+.sm-edit__notice {
+	margin: 0;
+	padding: 10px 14px;
+	font-size: 14px;
+	color: var(--warn-ink);
+	background: var(--warn-bg);
+	border: 1px solid var(--warn-line);
+	border-radius: var(--radius);
+}
+
+/* 왼쪽 폰(고정 폭) · 오른쪽 편집. 좁으면 위아래로 쌓는다. */
+.sm-edit__grid {
+	display: grid;
+	grid-template-columns: 320px minmax(0, 1fr);
+	gap: 20px;
+	align-items: start;
+}
+
+@media (max-width: 960px) {
+	.sm-edit__grid {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+/* ------------------------------------------------------------ 폰 미리보기 */
+
+.sm-edit__phonewrap {
+	position: sticky;
+	top: 12px;
+}
+
+.sm-edit__phone {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 1080 / 1920;
+	overflow: hidden;
+	border-radius: 18px;
+	border: 1px solid var(--border);
+	box-shadow: 0 6px 24px rgba(20, 26, 46, 0.12);
+}
+
+.sm-edit__card {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.sm-edit__nocard {
+	position: absolute;
+	top: 12%;
+	left: 0;
+	right: 0;
+	text-align: center;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+/* 칸. 위치 · 높이는 인라인 style(서버 geometry). 캔버스 내부 해상도는 540 폭이라 화면 폭에 맞춰 늘린다. */
+.sm-edit__slot {
+	position: absolute;
+	left: 0;
+	width: 100%;
+	background: #000;
+	display: block;
+}
+
+.sm-edit__subtitle {
+	position: absolute;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 1px 8px;
+	font-size: 11px;
+	font-weight: 700;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.45);
+	border: 1px dashed rgba(255, 255, 255, 0.7);
+	border-radius: 4px;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* 유튜브 UI 가 덮는 자리. 글자를 두지 않는 곳이라 빗금으로 표시만 한다. */
+.sm-edit__safe {
+	position: absolute;
+	left: 0;
+	right: 0;
+	background: repeating-linear-gradient(135deg, rgba(180, 35, 24, 0.08) 0 6px, transparent 6px 12px);
+	pointer-events: none;
+}
+
+.sm-edit__busy {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	padding: 2px 8px;
+	font-size: 11px;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 999px;
+}
+
+.sm-edit__phonenote {
+	margin: 8px 0 0;
+	font-size: 12px;
+}
+
+/* ------------------------------------------------------------ 영역 편집 */
+
+.sm-edit__main {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	min-width: 0;
+}
+
+.sm-edit__region {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sm-edit__stage {
+	position: relative;
+	width: 100%;
+	overflow: hidden;
+	background: #000;
+	border-radius: var(--radius);
+	touch-action: none;
+	user-select: none;
+}
+
+.sm-edit__video {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+/* 상자 밖을 어둡게 — 그림자를 크게 펼쳐 칠한다(무대가 overflow: hidden 이라 밖으로 새지 않는다). */
+.sm-edit__box {
+	position: absolute;
+	box-sizing: border-box;
+	border: 2px solid #fff;
+	box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.5);
+	cursor: move;
+}
+
+/* 확대가 커서 흐려질 수 있다. 손잡이까지 주황으로 — 숫자를 안 읽어도 눈에 걸리게. */
+.sm-edit__box--soft {
+	border-color: #f59e0b;
+}
+
+.sm-edit__handle {
+	position: absolute;
+	width: 14px;
+	height: 14px;
+	background: #fff;
+	border: 2px solid var(--accent);
+	border-radius: 3px;
+}
+
+.sm-edit__box--soft .sm-edit__handle {
+	border-color: #f59e0b;
+}
+
+.sm-edit__handle--nw {
+	left: -8px;
+	top: -8px;
+	cursor: nwse-resize;
+}
+
+.sm-edit__handle--ne {
+	right: -8px;
+	top: -8px;
+	cursor: nesw-resize;
+}
+
+.sm-edit__handle--sw {
+	left: -8px;
+	bottom: -8px;
+	cursor: nesw-resize;
+}
+
+.sm-edit__handle--se {
+	right: -8px;
+	bottom: -8px;
+	cursor: nwse-resize;
+}
+
+/* 위 · 아래 변 = 칸 높이. 모서리와 다른 모양(가로 막대)으로 하는 일이 다르다는 것을 보인다. */
+.sm-edit__edge {
+	position: absolute;
+	left: 50%;
+	width: 44px;
+	height: 10px;
+	margin-left: -22px;
+	background: var(--accent);
+	border: 2px solid #fff;
+	border-radius: 999px;
+	cursor: ns-resize;
+}
+
+.sm-edit__edge--n {
+	top: -7px;
+}
+
+.sm-edit__edge--s {
+	bottom: -7px;
+}
+
+.sm-edit__boxlabel {
+	position: absolute;
+	left: 6px;
+	top: 6px;
+	padding: 1px 6px;
+	font-size: 11px;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 4px;
+	pointer-events: none;
+}
+
+.sm-edit__transport {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sm-edit__transport input[type="range"] {
+	flex: 1;
+}
+
+/* ------------------------------------------------------------ 설정 */
+
+.sm-edit__form {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 14px;
+	align-items: start;
+}
+
+.sm-edit__group {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+}
+
+.sm-edit__group h3 {
+	margin: 0;
+	font-size: 15px;
+}
+
+.sm-edit__field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	font-size: 13px;
+}
+
+.sm-edit__field > span:first-child {
+	display: flex;
+	justify-content: space-between;
+	color: var(--text-muted);
+}
+
+.sm-edit__count {
+	font-style: normal;
+	color: var(--text-muted);
+}
+
+.sm-edit__count--over {
+	color: var(--danger);
+	font-weight: 700;
+}
+
+.sm-edit__row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-edit__row .field__input {
+	flex: 1;
+	min-width: 0;
+}
+
+.sm-edit__check {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 14px;
+}
+
+.sm-edit__check em {
+	font-style: normal;
+}
+
+.sm-edit__scale {
+	flex: 1;
+	font-size: 13px;
+	color: var(--text-muted);
+}
+
+.sm-edit__scale--warn {
+	color: #b45309;
+	font-weight: 700;
+}
+
+.sm-edit__badge {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 8px;
+	background: var(--bg);
+	border-radius: var(--radius);
+}
+
+.sm-edit__badge img {
+	height: 36px;
+	max-width: 180px;
+	object-fit: contain;
+}
+
+.sm-edit__warnings {
+	grid-column: 1 / -1;
+	margin: 0;
+	padding: 10px 14px 10px 30px;
+	font-size: 13px;
+	color: var(--warn-ink);
+	background: var(--warn-bg);
+	border: 1px solid var(--warn-line);
+	border-radius: var(--radius);
+}
+
+.sm-edit__warning--error {
+	color: var(--danger-ink);
+	font-weight: 700;
+}
+
+.sm-edit__result video {
+	width: 220px;
+	aspect-ratio: 9 / 16;
+	background: #000;
+	border-radius: var(--radius);
+}
