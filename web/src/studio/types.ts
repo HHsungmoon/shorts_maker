@@ -286,7 +286,16 @@ export interface ClipEditorState {
 		renderedAs: "card" | "blur" | null;
 		renderedAt: string | null;
 	};
-	source: { id: number; width: number; height: number; channel: string | null; seriesId: number | null; videoUrl: string };
+	source: {
+		id: number;
+		width: number;
+		height: number;
+		channel: string | null;
+		seriesId: number | null;
+		videoUrl: string;
+		/** 원본 프레임률 — 단축키 ←/→ 가 한 프레임씩 옮긴다. 못 읽으면 30. */
+		fps: number;
+	};
 	layout: ClipLayout;
 	/** 거짓이면 아직 저장 안 한 초안이다. */
 	saved: boolean;
@@ -950,4 +959,22 @@ export interface YoutubeStatsView {
 	fetchedAt: string | null;
 	through: string | null;
 	channel: { connected: boolean; canAnalytics: boolean; channelTitle: string | null };
+}
+
+/** AI 카피 후보 하나(tease §5-10 "AI 카피 후보"). 숫자는 서버가 대사와 맞대 본 것만 온다. */
+export interface CopyCandidate {
+	lines: string[];
+	/** 각도 — "결론 먼저" 처럼 짧게. */
+	angle: string;
+	/** 근거 구절(대사 그대로). 대사에 없었으면 null. */
+	quote: string | null;
+	/** 글자 수가 넘친 줄의 번호. */
+	over: number[];
+}
+
+export interface CopySuggestion {
+	candidates: CopyCandidate[];
+	/** 검증에서 버린 후보 수(대사에 없는 숫자 · 줄 수). */
+	dropped: number;
+	latencyMs: number;
 }

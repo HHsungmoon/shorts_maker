@@ -757,3 +757,80 @@
 .sm-edit__cueundo:hover {
 	color: var(--accent);
 }
+
+/* ------------------------------------------------------------ 단축키 안내 */
+
+.sm-edit__keys {
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.9;
+}
+
+.sm-edit__keys kbd {
+	display: inline-block;
+	min-width: 18px;
+	margin: 0 1px;
+	padding: 0 5px;
+	font-family: inherit;
+	font-size: 11px;
+	line-height: 17px;
+	text-align: center;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+}
+
+/* ------------------------------------------------------------ AI 카피 후보 */
+
+.sm-edit__copies {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-edit__copy {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	width: 100%;
+	padding: 8px 10px;
+	text-align: left;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.sm-edit__copy:hover {
+	border-color: var(--accent-line);
+}
+
+.sm-edit__copy--on {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.sm-edit__copylines {
+	display: flex;
+	flex-direction: column;
+	font-size: 14px;
+	font-weight: 700;
+	color: var(--text);
+}
+
+/* 둘째 줄은 카드에서 검은 띠 위에 앉는다 — 후보에서도 띠로 보여 어느 줄이 강조인지 알게 한다. */
+.sm-edit__copylines > span:nth-child(2) {
+	align-self: flex-start;
+	padding: 0 4px;
+	color: #fff;
+	background: #111;
+}
+
+.sm-edit__copyline--over {
+	text-decoration: underline wavy var(--warn-ink);
+}

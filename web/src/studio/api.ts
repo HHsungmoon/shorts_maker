@@ -3,6 +3,7 @@ import type {
 	ClipEditorState,
 	ClipLayout,
 	ClipTrim,
+	CopySuggestion,
 	LayoutPreview,
 	PromptCatalog,
 	PromptStandard,
@@ -465,6 +466,14 @@ export function splitClipScenes(clipId: number, layout: ClipLayout, trim: ClipTr
  */
 export function focusClipScenes(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<SceneFocus> {
 	return request<SceneFocus>(`/api/clips/${clipId}/layout/focus`, { method: "POST", body: { layout, trim } });
+}
+
+/**
+ * [AI 카피 후보] — 보낸 명세(템플릿 · 고친 자막)와 구간으로 카피 후보 다섯을 받는다. 저장하지 않는다.
+ * 🔴 유료 호출이다(Gemini 1회) — 사람이 누를 때만 부른다.
+ */
+export function suggestClipCopy(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<CopySuggestion> {
+	return request<CopySuggestion>(`/api/clips/${clipId}/layout/copy`, { method: "POST", body: { layout, trim } });
 }
 
 /** 자막 줄(고치기 전). trim 을 주면 다듬는 중인 구간으로 만든다. DB 만 읽는다(GET) — 보기 전용도 부른다. */

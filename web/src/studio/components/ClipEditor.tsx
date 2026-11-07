@@ -12,6 +12,7 @@ import {
 	renderClip,
 	saveClipLayout,
 	splitClipScenes,
+	suggestClipCopy,
 	uploadSeriesBadge,
 } from "../api";
 import { useAuth } from "../AuthContext";
@@ -21,6 +22,7 @@ import type {
 	ClipLayout,
 	ClipTrim,
 	ClipWindow,
+	CopyCandidate,
 	FocusHow,
 	LayoutGeometry,
 	SceneFocus,
@@ -72,6 +74,12 @@ const SUBTITLE_TEXT_MAX = 60;
 const SUBTITLE_LINE_CHARS = 16;
 // 자막 줄을 다시 읽기 전에 기다리는 시간 — 처음 · 끝을 0.1초씩 여러 번 누를 때 매번 읽지 않는다.
 const SUBTITLE_DELAY_MS = 300;
+// 단축키 안내의 수정 키 — 맥은 ⌘, 그 밖은 Ctrl.
+const MOD = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl+";
+// 되돌리기 기록의 길이와, 같은 동작을 한 칸으로 묶는 간격. 0.8초면 글자를 치다 잠깐 멈춘 것은 이어지고, 다른 칸으로
+// 옮겨 다시 치는 것은 끊긴다.
+const HISTORY_MAX = 100;
+const HISTORY_JOIN_MS = 800;
 // 처음 · 끝을 옮기는 단추. 0.1초는 단어 하나, 1초는 문장 조각 하나쯤이다.
 const TRIM_STEPS: [string, number][] = [
 	["−1초", -1],
@@ -132,6 +140,13 @@ function fitWindow(slot: number, srcW: number, srcH: number, win?: ClipWindow): 
 }
 
 type Range = readonly [number, number];
+
+/** 되돌리기 한 칸 — 명세 · 구간 · 장면 나누기 결과(경계를 끌 때 붙는 컷 · 처음 · 끝의 번쩍임). */
+interface Snapshot {
+	draft: ClipLayout;
+	trim: ClipTrim | null;
+	sceneInfo: SceneSplit["scenes"] | null;
+}
 
 /** 클립 안의 시간(조각을 이은 시간, 브릿지 제외) ↔ 원본 시각. */
 interface Timeline {
@@ -328,8 +343,61 @@ export function ClipEditor({ view }: { view: SourceView }) {
 		}
 	}, [data]);
 
+	// **지금의** 초안. 미루어 둔 미리보기 요청 · 늦게 오는 AI 응답 · 되돌리기 기록이 그때의 최신 명세를 읽게 한다.
+	const draftRef = useRef(draft);
+	useEffect(() => {
+		draftRef.current = draft;
+	}, [draft]);
+	const sceneInfoRef = useRef(sceneInfo);
+	useEffect(() => {
+		sceneInfoRef.current = sceneInfo;
+	}, [sceneInfo]);
+
+	// ------------------------------------------------------------ 되돌리기(tease §5-10 "되돌리기 · 단축키")
+	// 화면 안의 기록이다 — 저장(DB)은 되돌리지 않는다. 한 칸 = 명세 · 구간 · 장면 나누기 결과. 끌기 · 글자 입력처럼
+	// 이어지는 동작은 같은 열쇠(key)로 HISTORY_JOIN_MS 안에 이어 오면 한 칸으로 묶는다 — 아니면 끌기 한 번이 수십 칸이다.
+	const history = useRef<{ past: Snapshot[]; future: Snapshot[]; key: string | null; at: number }>({
+		past: [],
+		future: [],
+		key: null,
+		at: 0,
+	});
+	const [steps, setSteps] = useState({ back: 0, forward: 0 });
+	const countSteps = useCallback(() => {
+		setSteps({ back: history.current.past.length, forward: history.current.future.length });
+	}, []);
+	const remember = useCallback(
+		(key?: string) => {
+			const h = history.current;
+			const current = draftRef.current;
+			if (!current) {
+				return;
+			}
+			const now = performance.now();
+			if (key && h.key === key && now - h.at < HISTORY_JOIN_MS) {
+				h.at = now;
+				return;
+			}
+			h.past.push({ draft: current, trim: trimRef.current, sceneInfo: sceneInfoRef.current });
+			if (h.past.length > HISTORY_MAX) {
+				h.past.shift();
+			}
+			h.future = [];
+			h.key = key ?? null;
+			h.at = now;
+			countSteps();
+		},
+		[countSteps],
+	);
+	// 다른 클립으로 옮기면 기록을 비운다 — 옛 클립의 명세로 되돌아가면 안 된다(단추의 잠금은 다음 동작 때 맞춰진다).
+	useEffect(() => {
+		history.current = { past: [], future: [], key: null, at: 0 };
+	}, [id]);
+
 	// 함수를 받으면 **그때의** 초안에서 고친다 — 끌기처럼 한 렌더 사이에 여러 번 고칠 때 앞의 것을 잃지 않는다.
-	const edit = (patch: Partial<ClipLayout> | ((previous: ClipLayout) => Partial<ClipLayout>)) => {
+	// key 는 되돌리기 묶음의 열쇠다(위). 없으면 한 번이 한 칸이다.
+	const edit = (patch: Partial<ClipLayout> | ((previous: ClipLayout) => Partial<ClipLayout>), key?: string) => {
+		remember(key);
 		setDraft((previous) =>
 			previous ? { ...previous, ...(typeof patch === "function" ? patch(previous) : patch) } : previous,
 		);
@@ -393,12 +461,6 @@ export function ClipEditor({ view }: { view: SourceView }) {
 		};
 	}, [cueKey, id]);
 
-	// **지금의** 초안. 미루어 둔 미리보기 요청과 늦게 오는 AI 초점 응답이 보낼 때 · 받을 때의 최신 명세를 읽게 한다.
-	const draftRef = useRef(draft);
-	useEffect(() => {
-		draftRef.current = draft;
-	}, [draft]);
-
 	// AI 초점 — 사람이 잡지 않은 장면마다 사람을 찾아 상자를 맞춘다(Gemini 1회, 클립 4 에서 17초).
 	// 🔴 기다리는 동안 사람이 고친 것을 덮지 않는다. 응답이 오면 **그때의** 초안에서, 장면 경계가 보낸 때와 같고 그 사이
 	// 사람이 잡지 않은 창만 바꾼다. 경계가 바뀌었으면 통째로 버린다 — 장면 번호가 어긋나 엉뚱한 장면에 상자가 간다.
@@ -424,6 +486,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						? w
 						: fitWindow(current.slot_height, srcW, srcH, { ...next.layout.windows[i], start: w.start, end: w.end }),
 				);
+				remember();
 				setDraft({ ...current, windows });
 				// 유료로 받은 결과다 — 화면을 다시 읽어도(reloadToken) 날아가지 않게 "고친 것" 으로 둔다.
 				setDirty(true);
@@ -436,8 +499,13 @@ export function ClipEditor({ view }: { view: SourceView }) {
 				setFocusing(false);
 			}
 		},
-		[id],
+		[id, remember],
 	);
+
+	// AI 카피 후보 — 사람이 누를 때만 부른다(유료). 고르면 카피 칸에 들어간다. 저장하지 않는다.
+	const [copies, setCopies] = useState<CopyCandidate[] | null>(null);
+	const [copyNote, setCopyNote] = useState<string | null>(null);
+	const [copying, setCopying] = useState(false);
 
 	// 처음 여는 초안이면 열 때 한 번 장면을 나누고 AI 초점을 맞춘다. 🔴 열기(GET)는 ffmpeg · 모델을 돌리지 않는다 —
 	// 나누기 · 초점은 따로 POST 다. 저장한 명세(장면 하나인 예전 것 포함)는 사람이 [장면 나누기] 를 누른다 — 사람이
@@ -569,7 +637,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	const setSlot = (value: number) => {
 		const slot = clamp(even(value), limits[0], limits[1]);
 		// 칸 높이는 클립에 하나다 — 모든 장면의 창이 새 비율로 함께 맞춰진다.
-		edit({ slot_height: slot, windows: draft.windows.map((w) => fitWindow(slot, srcW, srcH, w)) });
+		edit({ slot_height: slot, windows: draft.windows.map((w) => fitWindow(slot, srcW, srcH, w)) }, "slot");
 	};
 
 	// ------------------------------------------------------------ 장면
@@ -584,7 +652,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						: fitWindow(slot, srcW, srcH, w),
 			);
 			return slot === undefined ? { windows } : { windows, slot_height: slot };
-		});
+		}, `box-${index}`);
 
 	const splitHere = () => {
 		if (clock - win.start < MIN_SCENE_SEC || sceneEnd - clock < MIN_SCENE_SEC) {
@@ -621,7 +689,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			const snapped = sceneInfo?.cuts.find((cut) => Math.abs(cut.t - t) <= SNAP_SEC)?.t ?? t;
 			const start = Math.round(clamp(snapped, low, high) * 1000) / 1000;
 			return { windows: previous.windows.map((w, i) => (i === index ? { ...w, start } : w)) };
-		});
+		}, `cut-${index}`);
 
 	// ------------------------------------------------------------ 구간 앞뒤 다듬기
 	const base = clipRanges(data.clip);
@@ -701,7 +769,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 		edit((previous) => {
 			const rest = previous.subtitle_edits.filter((e) => !(Math.abs(e.at - at) <= 0.0005 && e.was === cue.text));
 			return { subtitle_edits: text === cue.text ? rest : [...rest, { at, was: cue.text, text }] };
-		});
+		}, `cue-${at}`);
 	};
 	const cueNow = cues?.find((cue) => clock >= cue.start && clock < cue.end) ?? null;
 	const subtitleNow = cueNow ? (editFor(draft.subtitle_edits, cueNow)?.text ?? cueNow.text) : null;
@@ -715,6 +783,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	const resplit = () =>
 		act(async () => {
 			const next = await splitClipScenes(id, draft, trimRef.current);
+			remember();
 			setSceneInfo(next.scenes);
 			setSceneNote(null);
 			setDraft(next.layout);
@@ -729,6 +798,131 @@ export function ClipEditor({ view }: { view: SourceView }) {
 				await focusScenes(draft, srcW, srcH);
 			}
 		});
+
+	// ------------------------------------------------------------ 되돌리기 · 다시
+	// 한 칸을 꺼내 지금 것과 맞바꾼다. 구간이 달라지면 처음 프레임을 보여 준다(재생 위치가 새 구간 밖일 수 있다).
+	const travel = (from: "past" | "future") => {
+		const h = history.current;
+		const target = (from === "past" ? h.past : h.future).pop();
+		if (!target) {
+			return;
+		}
+		(from === "past" ? h.future : h.past).push({ draft, trim: trimRef.current, sceneInfo });
+		h.key = null;
+		if (JSON.stringify(target.trim) !== JSON.stringify(trimRef.current)) {
+			pendingSeek.current = 0;
+		}
+		setDraft(target.draft);
+		draftRef.current = target.draft;
+		setTrim(target.trim);
+		setSceneInfo(target.sceneInfo);
+		setDirty(true);
+		countSteps();
+	};
+	const undo = () => travel("past");
+	const redo = () => travel("future");
+
+	// ------------------------------------------------------------ AI 카피 후보
+	const suggestCopy = () =>
+		act(async () => {
+			if (copying) {
+				return;
+			}
+			setCopying(true);
+			setCopyNote("AI 가 카피를 쓰고 있습니다 — 몇 초 걸립니다");
+			try {
+				const next = await suggestClipCopy(id, draft, trimRef.current);
+				setCopies(next.candidates);
+				const dropped = next.dropped > 0 ? ` · 대사에 없는 숫자 등으로 뺀 것 ${next.dropped}` : "";
+				setCopyNote(
+					next.candidates.length > 0
+						? `후보 ${next.candidates.length}${dropped} · ${Math.round(next.latencyMs / 1000)}초 — 누르면 카피 칸에 들어갑니다`
+						: `쓸 만한 후보가 없었습니다${dropped} — 다시 눌러 보세요`,
+				);
+			} catch (error: unknown) {
+				setCopyNote(`카피 후보를 받지 못했습니다 — ${error instanceof Error ? error.message : String(error)}`);
+			} finally {
+				setCopying(false);
+			}
+		});
+	const pickCopy = (candidate: CopyCandidate) => {
+		const lines = Array.from({ length: headline.lines }, (_, i) => candidate.lines[i] ?? "");
+		edit({ headline: lines });
+	};
+
+	// ------------------------------------------------------------ 단축키
+	const video = () => document.getElementById(`sm-edit-video-${id}`) as HTMLVideoElement | null;
+	const togglePlay = () => {
+		const element = video();
+		if (element) {
+			if (element.paused) {
+				void element.play();
+			} else {
+				element.pause();
+			}
+		}
+	};
+	const stepBy = (delta: number) => {
+		const element = video();
+		const now = element ? line.toClip(element.currentTime) : clock;
+		seekClip(now + delta, line);
+	};
+	const onKey = (event: KeyboardEvent) => {
+		const target = event.target as HTMLElement | null;
+		const tag = target?.tagName ?? "";
+		const kind = tag === "INPUT" ? (target as HTMLInputElement).type : "";
+		// 글자를 치는 칸 — 여기서는 되돌리기 · 저장만 듣는다(스페이스 · 글자는 그 칸의 것이다).
+		const typing =
+			tag === "TEXTAREA" ||
+			tag === "SELECT" ||
+			Boolean(target?.isContentEditable) ||
+			(tag === "INPUT" && !["range", "checkbox", "radio", "button", "submit", "color", "file"].includes(kind));
+		const mod = event.metaKey || event.ctrlKey;
+		const key = event.key.toLowerCase();
+		if (mod && key === "z") {
+			event.preventDefault();
+			if (event.shiftKey) {
+				redo();
+			} else {
+				undo();
+			}
+			return;
+		}
+		if (mod && key === "y") {
+			event.preventDefault();
+			redo();
+			return;
+		}
+		if (mod && key === "s") {
+			event.preventDefault();
+			save();
+			return;
+		}
+		if (mod || event.altKey || typing || (event.repeat && key !== "arrowleft" && key !== "arrowright")) {
+			return;
+		}
+		if (key === " ") {
+			if (kind === "checkbox" || kind === "radio") {
+				return;
+			}
+			// 🔴 방금 누른 단추에 초점이 남아 있으면 스페이스가 그 단추를 또 누른다(+0.1 이 한 번 더) — 막고 재생한다.
+			event.preventDefault();
+			togglePlay();
+		} else if (key === "arrowleft" || key === "arrowright") {
+			if (tag === "INPUT") {
+				return; // 칸 높이 막대는 화살표로 움직인다
+			}
+			event.preventDefault();
+			const size = event.shiftKey ? 1 : 1 / (data.source.fps || 30);
+			stepBy(key === "arrowleft" ? -size : size);
+		} else if (key === "s") {
+			splitHere();
+		} else if (key === "i") {
+			startHere();
+		} else if (key === "o") {
+			endHere();
+		}
+	};
 
 	// 구간은 그대로 둔다 — 다시 읽을 때(act 가 reloadToken 을 올린다) 서버의 새 구간과 함께 비워진다. 지금 비우면 다시
 	// 읽기 전까지 옛 구간 위에 새 장면 시각이 놓인다.
@@ -759,6 +953,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 
 	return (
 		<div className="sm-edit">
+			<Shortcuts onKey={onKey} />
 			<div className="sm-edit__head">
 				<Link className="sm-edit__back" to={`/studio/sources/${sourceId}/clips`}>
 					← 완성 클립
@@ -773,7 +968,25 @@ export function ClipEditor({ view }: { view: SourceView }) {
 					{data.saved && !dirty && !data.stale && <span className="sm-edit__chip sm-edit__chip--ok">렌더와 같음</span>}
 				</span>
 				<span className="sm-actions sm-actions--end">
-					<button type="button" className="button button--small" onClick={save}>
+					<button
+						type="button"
+						className="button button--small"
+						disabled={steps.back === 0}
+						onClick={undo}
+						title={`되돌리기 (${MOD}Z)`}
+					>
+						↶ 되돌리기
+					</button>
+					<button
+						type="button"
+						className="button button--small"
+						disabled={steps.forward === 0}
+						onClick={redo}
+						title={`다시 (${MOD}⇧Z)`}
+					>
+						↷ 다시
+					</button>
+					<button type="button" className="button button--small" onClick={save} title={`저장 (${MOD}S)`}>
 						저장
 					</button>
 					<button type="button" className="button button--small sm-go" disabled={jobBusy} onClick={saveAndRender}>
@@ -878,6 +1091,12 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							</button>
 						</div>
 						{sceneNote && <p className="sm-meta sm-edit__scenenote">{sceneNote}</p>}
+						<p className="sm-meta sm-edit__keys">
+							단축키 — <kbd>스페이스</kbd> 재생 · <kbd>←</kbd>
+							<kbd>→</kbd> 한 프레임(<kbd>Shift</kbd> 1초) · <kbd>S</kbd> 여기서 나누기 · <kbd>I</kbd>
+							<kbd>O</kbd> 여기부터 · 여기까지 · <kbd>{MOD}Z</kbd> 되돌리기 · <kbd>{MOD}⇧Z</kbd> 다시 ·{" "}
+							<kbd>{MOD}S</kbd> 저장
+						</p>
 						{sceneInfo && (sceneInfo.headFlash !== null || sceneInfo.tailFlash !== null) && (
 							<p className="sm-meta sm-edit__scenenote">
 								{sceneInfo.headFlash !== null && `클립 처음 ${sceneInfo.headFlash.toFixed(2)}초는 앞 장면입니다. `}
@@ -951,6 +1170,54 @@ export function ClipEditor({ view }: { view: SourceView }) {
 
 					<section className="sm-edit__group">
 						<h3>카피 · 출처</h3>
+						<div className="sm-edit__row">
+							<button
+								type="button"
+								className="button button--small"
+								onClick={suggestCopy}
+								title="이 구간의 대사(고친 자막) · 제목 · 영상 개요로 카피 후보 다섯을 받습니다(Gemini 1회). 숫자는 대사에 있는 것만 남깁니다"
+							>
+								{copying ? "AI 쓰는 중…" : "AI 카피 후보"}
+							</button>
+							{copies && copies.length > 0 && (
+								<button type="button" className="button button--small" onClick={() => setCopies(null)}>
+									후보 닫기
+								</button>
+							)}
+						</div>
+						{copyNote && <p className="sm-meta">{copyNote}</p>}
+						{copies && copies.length > 0 && (
+							<ul className="sm-edit__copies">
+								{copies.map((candidate) => {
+									const on = candidate.lines.every((line, i) => (draft.headline[i] ?? "") === line);
+									return (
+										<li key={candidate.lines.join("/")}>
+											<button
+												type="button"
+												className={`sm-edit__copy${on ? " sm-edit__copy--on" : ""}`}
+												onClick={() => pickCopy(candidate)}
+											>
+												<span className="sm-edit__copylines">
+													{candidate.lines.map((line, i) => (
+														<span
+															key={`${i}-${line}`}
+															className={candidate.over.includes(i) ? "sm-edit__copyline--over" : undefined}
+														>
+															{line}
+														</span>
+													))}
+												</span>
+												<span className="sm-meta">
+													{candidate.angle}
+													{candidate.quote ? ` · “${candidate.quote}”` : ""}
+													{candidate.over.length > 0 ? ` · ${headline.maxChars}자 넘침` : ""}
+												</span>
+											</button>
+										</li>
+									);
+								})}
+							</ul>
+						)}
 						{Array.from({ length: headline.lines }, (_, index) => {
 							const value = draft.headline[index] ?? "";
 							const over = headline.maxChars > 0 && value.replace(/\s/g, "").length > headline.maxChars;
@@ -970,7 +1237,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 										onChange={(event) => {
 											const lines = Array.from({ length: headline.lines }, (_, i) => draft.headline[i] ?? "");
 											lines[index] = event.target.value;
-											edit({ headline: lines });
+											edit({ headline: lines }, `headline-${index}`);
 										}}
 									/>
 								</label>
@@ -983,7 +1250,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								value={draft.credit}
 								maxLength={60}
 								placeholder="출처 : 채널 원티드"
-								onChange={(event) => edit({ credit: event.target.value })}
+								onChange={(event) => edit({ credit: event.target.value }, "credit")}
 							/>
 						</label>
 					</section>
@@ -1137,6 +1404,23 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			</div>
 		</div>
 	);
+}
+
+/**
+ * 단축키(tease §5-10 "되돌리기 · 단축키"). 듣기는 한 번만 걸고, 할 일은 매번 최신 함수를 부른다 — 편집 화면이 그릴 때마다
+ * 듣기를 떼었다 붙이지 않는다.
+ */
+function Shortcuts({ onKey }: { onKey: (event: KeyboardEvent) => void }) {
+	const latest = useRef(onKey);
+	useEffect(() => {
+		latest.current = onKey;
+	});
+	useEffect(() => {
+		const listen = (event: KeyboardEvent) => latest.current(event);
+		window.addEventListener("keydown", listen);
+		return () => window.removeEventListener("keydown", listen);
+	}, []);
+	return null;
 }
 
 /** 시리즈 고르기 · 새로 만들기 · 배지 이미지. */
