@@ -42,7 +42,9 @@ class LayoutError(ValueError):
 
 def _even(value: float) -> int:
     # 🔴 yuv420p 는 가로 · 세로가 짝수여야 한다. 칸 높이와 자른 크기를 짝수로 맞춘다.
-    return max(2, int(round(value / 2)) * 2)
+    # 🔴 0.5 는 **올린다** — 편집 화면의 `even()`(JS Math.round)과 같은 규칙이다. 파이썬 round 는 짝수 쪽으로 보내서
+    # (round(426.5) = 426) 잡소리 기본 칸 853 이 서버는 852, 화면은 854 가 됐다(2026-11-06 크롬 확인에서 발견).
+    return max(2, int(value / 2 + 0.5) * 2)
 
 
 def text_width(text: str, size: int) -> float:

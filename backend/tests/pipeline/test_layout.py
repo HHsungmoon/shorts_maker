@@ -93,6 +93,11 @@ class ValidateTest(unittest.TestCase):
         # yuv420p 는 짝수 크기만 받는다.
         self.assertEqual(0, self.check(draft(slot_height=701))["slot_height"] % 2)
 
+    def test_a_half_rounds_up_like_the_editor(self):
+        # 편집 화면은 Math.round(853 / 2) * 2 = 854 다. 서버가 852 로 내리면 같은 템플릿이 열 때마다 2px 달라진다.
+        self.assertEqual(854, layout._even(853))
+        self.assertEqual(702, layout._even(701))
+
     def test_a_taller_slot_shrinks_a_full_width_window_instead_of_overflowing(self):
         value = draft(slot_height=900)  # 창은 기본값(원본 전체 폭)이다 — 칸이 길어지면 높이가 원본을 넘는다.
         window = self.check(value)["windows"][0]
