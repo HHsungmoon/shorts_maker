@@ -449,3 +449,122 @@ def create_answer_clip(
              part.start_utterance_idx, part.end_utterance_idx),
         )
     return clip_id
+
+
+# ---------------------------------------------------------------- 앞뒤 다듬기 (편집 화면, tease §5-10 "구간 앞뒤 다듬기")
+
+# 조각 하나의 최소 길이. 1초보다 짧은 조각은 사람이 의도한 것이 아니라 버튼을 너무 많이 누른 것이다.
+TRIM_MIN_PART_SEC = 1.0
+# 유튜브 쇼츠의 길이 상한(3분). 그보다 길면 쇼츠로 올라가지 않는다.
+TRIM_MAX_CLIP_SEC = 180.0
+
+
+def _trim_rows(conn: psycopg.Connection, clip_id: int) -> tuple[dict, list[dict]]:
+    clip = conn.execute(
+        """select cl.id, cl.start_sec, cl.end_sec, sg.chunk_id
+           from clips cl join segments sg on sg.id = cl.segment_id where cl.id = %s""",
+        (clip_id,),
+    ).fetchone()
+    if clip is None:
+        raise CuttingError(f"clip {clip_id} 없음")
+    # 조각의 구간이 지워졌으면(segment_id 가 null) 청크는 클립의 것으로 본다.
+    parts = conn.execute(
+        """select p.id, p.ordinal, p.start_sec, p.end_sec, p.start_utterance_idx, p.end_utterance_idx,
+                  coalesce(sg.chunk_id, %s) as chunk_id
+           from clip_parts p left join segments sg on sg.id = p.segment_id
+           where p.clip_id = %s order by p.ordinal""",
+        (clip["chunk_id"], clip_id),
+    ).fetchall()
+    return dict(clip), [dict(p) for p in parts]
+
+
+def _bounds(conn: psycopg.Connection, clip: dict, parts: list[dict]) -> tuple[float, float]:
+    first_chunk = parts[0]["chunk_id"] if parts else clip["chunk_id"]
+    last_chunk = parts[-1]["chunk_id"] if parts else clip["chunk_id"]
+    low = conn.execute("select start_sec from chunks where id = %s", (first_chunk,)).fetchone()["start_sec"]
+    high = conn.execute("select end_sec from chunks where id = %s", (last_chunk,)).fetchone()["end_sec"]
+    return float(low), float(high)
+
+
+def trim_bounds(conn: psycopg.Connection, clip_id: int) -> tuple[float, float]:
+    """처음 · 끝을 옮길 수 있는 범위 — 첫 조각 청크의 시작 ~ 마지막 조각 청크의 끝(원본 절대 초)."""
+    clip, parts = _trim_rows(conn, clip_id)
+    return _bounds(conn, clip, parts)
+
+
+def trim_ranges(conn: psycopg.Connection, clip_id: int, start: float, end: float) -> list[tuple[float, float]]:
+    """처음을 start, 끝을 end 로 옮긴 구간들(`render.clip_ranges` 와 같은 모양). DB 는 바꾸지 않는다.
+
+    조합 클립은 첫 조각의 처음과 마지막 조각의 끝만 옮긴다 — 가운데 이음매는 그대로다.
+    🔴 그 조각의 **청크 안에서만** 옮긴다. 청크 밖에는 대사가 없어 자막과 발화 번호를 만들 수 없다.
+    """
+    clip, parts = _trim_rows(conn, clip_id)
+    ranges = (
+        [[float(p["start_sec"]), float(p["end_sec"])] for p in parts]
+        if len(parts) > 1
+        else [[float(clip["start_sec"]), float(clip["end_sec"])]]
+    )
+    low, high = _bounds(conn, clip, parts)
+    start, end = round(float(start), 3), round(float(end), 3)
+    if start < low - 0.001 or end > high + 0.001:
+        raise CuttingError(
+            f"구간은 대사를 받은 범위({_clock(low)}–{_clock(high)}) 안에서만 옮길 수 있다"
+        )
+    ranges[0][0] = start
+    ranges[-1][1] = end
+    for index, (a, b) in enumerate(ranges):
+        if b - a < TRIM_MIN_PART_SEC:
+            where = "클립" if len(ranges) == 1 else f"조각 {index + 1}"
+            raise CuttingError(f"{where}이 {TRIM_MIN_PART_SEC:g}초보다 짧아진다")
+    total = sum(b - a for a, b in ranges)
+    if total > TRIM_MAX_CLIP_SEC:
+        raise CuttingError(f"클립이 {TRIM_MAX_CLIP_SEC:g}초(쇼츠 상한)를 넘는다 ({total:.1f}초)")
+    return [(a, b) for a, b in ranges]
+
+
+def apply_trim(conn: psycopg.Connection, clip_id: int, ranges: list[tuple[float, float]]) -> None:
+    """`trim_ranges` 가 낸 구간을 `clips` · `clip_parts` 에 쓴다. 커밋하지 않는다 — 명세 저장과 한 트랜잭션이다.
+
+    🔴 조각의 발화 번호도 새 시각으로 다시 찾는다. 번호로 대사를 읽는 곳(답하기 · 판정)이 잘려 나간 문장을 읽지 않게 —
+    대사를 갈아 끼울 때 번호를 시각으로 다시 맞추는 것(`transcripts.use`)과 같은 이유다.
+    """
+    clip, parts = _trim_rows(conn, clip_id)
+    start, end = ranges[0][0], ranges[-1][1]
+    conn.execute(
+        "update clips set start_sec = %s, end_sec = %s, total_sec = %s where id = %s",
+        (start, end, round(sum(b - a for a, b in ranges), 3), clip_id),
+    )
+    if not parts:
+        return
+    first, last = parts[0], parts[-1]
+    first_idx, _ = _utterance_span(conn, first["chunk_id"], start, first["end_sec"] if len(parts) > 1 else end)
+    _, last_idx = _utterance_span(conn, last["chunk_id"], last["start_sec"] if len(parts) > 1 else start, end)
+    if len(parts) == 1:
+        begin = first_idx if first_idx is not None else first["start_utterance_idx"]
+        finish = last_idx if last_idx is not None else first["end_utterance_idx"]
+        # 대사 없는 틈만 남기면 둘이 엇갈린다 — 끝 번호를 처음 번호에 맞춘다(CHECK end >= start).
+        conn.execute(
+            """update clip_parts set start_sec = %s, end_sec = %s, start_utterance_idx = %s, end_utterance_idx = %s
+               where id = %s""",
+            (start, end, begin, max(begin, finish), first["id"]),
+        )
+        return
+    begin = min(first_idx if first_idx is not None else first["start_utterance_idx"], first["end_utterance_idx"])
+    finish = max(last_idx if last_idx is not None else last["end_utterance_idx"], last["start_utterance_idx"])
+    conn.execute(
+        "update clip_parts set start_sec = %s, start_utterance_idx = %s where id = %s", (start, begin, first["id"])
+    )
+    conn.execute("update clip_parts set end_sec = %s, end_utterance_idx = %s where id = %s", (end, finish, last["id"]))
+
+
+def _utterance_span(conn: psycopg.Connection, chunk_id: int, start: float, end: float) -> tuple[int | None, int | None]:
+    """start~end 에 걸친 발화의 처음 · 마지막 번호. 걸친 발화가 없으면 (None, None)."""
+    row = conn.execute(
+        "select min(idx) as first, max(idx) as last from utterances where chunk_id = %s and end_sec > %s and start_sec < %s",
+        (chunk_id, start, end),
+    ).fetchone()
+    return row["first"], row["last"]
+
+
+def _clock(sec: float) -> str:
+    return f"{int(sec // 60)}:{sec % 60:04.1f}"

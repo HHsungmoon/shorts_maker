@@ -60,15 +60,15 @@ class LayoutApiTestCase(unittest.TestCase):
                 "insert into sources (title, content_type, path, fingerprint, status, channel)"
                 " values ('잡소리 ep.48', 'LECTURE', 'a.mp4', 'sha256:a', 'DONE', '채널 원티드') returning id"
             ).fetchone()["id"]
-            chunk_id = conn.execute(
+            self.chunk_id = chunk_id = conn.execute(
                 "insert into chunks (source_id, idx, start_sec, end_sec, path) values (%s, 0, 0, 3000, 'c.wav')"
                 " returning id", (self.source_id,),
             ).fetchone()["id"]
-            segment_id = conn.execute(
+            self.segment_id = segment_id = conn.execute(
                 "insert into segments (chunk_id, idx, start_sec, end_sec, start_utterance_idx, end_utterance_idx)"
                 " values (%s, 0, 0, 800, 0, 7) returning id", (chunk_id,),
             ).fetchone()["id"]
-            run_id = conn.execute("insert into runs (source_id) values (%s) returning id", (self.source_id,)).fetchone()["id"]
+            self.run_id = run_id = conn.execute("insert into runs (source_id) values (%s) returning id", (self.source_id,)).fetchone()["id"]
             self.clip_id = conn.execute(
                 "insert into clips (run_id, segment_id, start_sec, end_sec, title)"
                 " values (%s, %s, 10, 40, '면접관이 말하는 합격 답변') returning id", (run_id, segment_id),
@@ -246,6 +246,110 @@ class FocusTest(LayoutApiTestCase):
         self.assertIn("일일 할당량", response.json()["detail"])
 
 
+class TrimTest(LayoutApiTestCase):
+    """구간 앞뒤 다듬기(tease §5-10). 클립은 10~40초, 청크는 0~3000초."""
+
+    def setUp(self):
+        super().setUp()
+        with store.connect(self.url) as conn:
+            for idx, (start, end, text) in enumerate(
+                [(8, 12, "앞 문장"), (12, 20, "수능체제 기준으로"), (21, 30, "가운데"), (38, 44, "끝 문장")]
+            ):
+                conn.execute(
+                    "insert into utterances (chunk_id, idx, start_sec, end_sec, text) values (%s, %s, %s, %s, %s)",
+                    (self.chunk_id, idx, start, end, text),
+                )
+            conn.commit()
+
+    def put(self, layout: dict, trim: dict | None = None):
+        return self.client.put(f"/api/clips/{self.clip_id}/layout", json={"layout": layout, "trim": trim})
+
+    def test_saving_with_a_trim_moves_the_clip_with_its_scenes(self):
+        # 화면은 처음을 옮긴 만큼 장면 시작 초를 함께 옮겨 보낸다(10→12 면 8.0 이 6.0).
+        layout = self.opened()["layout"]
+        first = layout["windows"][0]
+        windows = [first, first | {"start": 6.0, "x": 0.2}]
+        response = self.put(layout | {"windows": windows}, {"start": 12.0, "end": 30.0})
+        self.assertEqual(200, response.status_code, response.text)
+        row = self.stored("select start_sec, end_sec, total_sec, layout from clips where id = %s", self.clip_id)
+        self.assertEqual((12.0, 30.0, 18.0), (row["start_sec"], row["end_sec"], row["total_sec"]))
+        self.assertEqual([0.0, 6.0], [w["start"] for w in row["layout"]["windows"]])
+        self.assertEqual(18.0, response.json()["clip"]["duration"])
+
+    def test_a_trim_outside_the_chunk_is_refused(self):
+        # 청크 밖에는 대사가 없다 — 자막과 발화 번호를 만들 수 없다.
+        response = self.put(self.opened()["layout"], {"start": 10.0, "end": 3100.0})
+        self.assertEqual(422, response.status_code)
+        self.assertIn("범위", response.json()["detail"])
+        self.assertEqual(40.0, self.stored("select end_sec from clips where id = %s", self.clip_id)["end_sec"])
+
+    def test_a_too_short_clip_is_refused(self):
+        response = self.put(self.opened()["layout"], {"start": 20.0, "end": 20.5})
+        self.assertEqual(422, response.status_code)
+
+    def test_a_scene_past_the_trimmed_end_is_refused(self):
+        layout = self.opened()["layout"]
+        windows = [layout["windows"][0], layout["windows"][0] | {"start": 25.0}]
+        response = self.put(layout | {"windows": windows}, {"start": 10.0, "end": 30.0})
+        self.assertEqual(422, response.status_code)
+        self.assertEqual(40.0, self.stored("select end_sec from clips where id = %s", self.clip_id)["end_sec"])
+
+    def test_the_parts_and_their_utterance_numbers_follow(self):
+        # 조합 클립: 첫 조각의 처음과 마지막 조각의 끝만 옮긴다. 발화 번호는 새 시각으로 다시 찾는다.
+        with store.connect(self.url) as conn:
+            conn.execute("update clips set start_sec = 10, end_sec = 44, total_sec = 16 where id = %s", (self.clip_id,))
+            for ordinal, (start, end, first, last) in enumerate([(10, 20, 0, 1), (38, 44, 3, 3)]):
+                conn.execute(
+                    """insert into clip_parts (clip_id, ordinal, segment_id, start_sec, end_sec,
+                                               start_utterance_idx, end_utterance_idx)
+                       values (%s, %s, %s, %s, %s, %s, %s)""",
+                    (self.clip_id, ordinal, self.segment_id, start, end, first, last),
+                )
+            conn.commit()
+        response = self.put(self.opened()["layout"], {"start": 12.5, "end": 42.0})
+        self.assertEqual(200, response.status_code, response.text)
+        with store.connect(self.url) as conn:
+            parts = conn.execute(
+                "select start_sec, end_sec, start_utterance_idx, end_utterance_idx from clip_parts"
+                " where clip_id = %s order by ordinal", (self.clip_id,),
+            ).fetchall()
+        self.assertEqual([(12.5, 20.0, 1, 1), (38.0, 42.0, 3, 3)], [tuple(p.values()) for p in parts])
+        row = self.stored("select start_sec, end_sec, total_sec from clips where id = %s", self.clip_id)
+        self.assertEqual((12.5, 42.0, 11.5), tuple(row.values()))
+
+    def test_only_a_range_change_makes_the_render_stale(self):
+        saved = self.put(self.opened()["layout"]).json()
+        spec = next(t["spec"] for t in saved["templates"] if t["id"] == self.template_id)
+        # 고친 자막 · 구간이 생기기 전의 사본(그 칸이 없다)도 같은 영상으로 본다.
+        old_layout = {k: v for k, v in saved["layout"].items() if k != "subtitle_edits"}
+        snapshot = {"layout": old_layout, "template": {"id": self.template_id, "spec": spec}, "series": None}
+        with store.connect(self.url) as conn:
+            conn.execute(
+                "update clips set rendered = true, render_spec = %s where id = %s", (Jsonb(snapshot), self.clip_id)
+            )
+            conn.commit()
+        self.assertFalse(self.opened()["stale"])
+        with store.connect(self.url) as conn:
+            conn.execute(
+                "update clips set render_spec = %s where id = %s",
+                (Jsonb(snapshot | {"ranges": [[10.0, 40.0]]}), self.clip_id),
+            )
+            conn.commit()
+        self.assertFalse(self.opened()["stale"])
+        self.assertTrue(self.put(saved["layout"], {"start": 12.0, "end": 40.0}).json()["stale"])
+
+    def test_subtitles_are_listed_for_the_trimmed_range(self):
+        # 시각은 편집 화면의 시간(클립 처음 = 0), at 은 원본 시각 — 고친 문구를 붙이는 열쇠.
+        whole = self.client.get(f"/api/clips/{self.clip_id}/subtitles").json()["cues"]
+        self.assertEqual(["앞 문장", "수능체제 기준으로", "가운데", "끝 문장"], [c["text"] for c in whole])
+        self.assertEqual({"start": 2.0, "end": 10.0, "at": 12.0, "text": "수능체제 기준으로"}, whole[1])
+        trimmed = self.client.get(f"/api/clips/{self.clip_id}/subtitles", params={"start": 12, "end": 30}).json()["cues"]
+        self.assertEqual([("수능체제 기준으로", 0.0), ("가운데", 9.0)], [(c["text"], c["start"]) for c in trimmed])
+
+    def test_the_editor_is_told_how_far_it_can_move(self):
+        self.assertEqual([0.0, 3000.0], self.opened()["clip"]["bounds"])
+
+
 class SeriesTest(LayoutApiTestCase):
     def test_a_series_name_is_unique(self):
         self.assertEqual(200, self.client.post("/api/series", json={"name": "왓츠인 마이 AI"}).status_code)
@@ -287,6 +391,8 @@ class ReadonlyTest(LayoutApiTestCase):
     def test_readonly_can_open_but_not_draw_or_save(self):
         self.login(READONLY)
         draft = self.opened()["layout"]
+        # 자막 줄은 DB 만 읽는다 — 보기 전용도 본다.
+        self.assertEqual(200, self.client.get(f"/api/clips/{self.clip_id}/subtitles").status_code)
         self.assertEqual(403, self.client.post(f"/api/clips/{self.clip_id}/layout/preview", json={"layout": draft}).status_code)
         self.assertEqual(403, self.client.put(f"/api/clips/{self.clip_id}/layout", json={"layout": draft}).status_code)
         # 장면 나누기도 ffmpeg 를 돌리는 행동이다.

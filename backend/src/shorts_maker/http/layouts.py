@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from . import deps
 from .deps import connect, rows
 from ..adapters import ffmpeg
-from ..pipeline import card, focus, layout as layouts, render, scenes, templates
+from ..pipeline import card, cutting, focus, layout as layouts, render, scenes, templates
 
 # 🔴 접두사·의존성을 두지 않는다(모듈 머리 주석).
 router = APIRouter()
@@ -36,10 +36,22 @@ BADGE_MAX_BYTES = 2 * 1024 * 1024
 BADGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 
+class TrimIn(BaseModel):
+    """다듬은 구간 — 클립(조합 클립이면 첫 조각)의 처음과 (마지막 조각의) 끝, 원본 절대 초."""
+
+    start: float
+    end: float
+
+
 class LayoutIn(BaseModel):
-    """화면이 보낸 명세 한 벌. 모양 검사는 `layout.validate` 가 한다 — 여기서 필드를 다시 적으면 둘이 어긋난다."""
+    """화면이 보낸 명세 한 벌. 모양 검사는 `layout.validate` 가 한다 — 여기서 필드를 다시 적으면 둘이 어긋난다.
+
+    trim 은 저장하기 전의 구간 다듬기다(tease §5-10 "구간 앞뒤 다듬기"). 있으면 미리보기 · 장면 나누기 · AI 초점이
+    그 구간으로 돌고, 저장(PUT)하면 명세와 함께 `clips` · `clip_parts` 에 쓴다. 없으면 지금 구간이다.
+    """
 
     layout: dict[str, Any]
+    trim: TrimIn | None = None
 
 
 class SeriesIn(BaseModel):
@@ -82,7 +94,7 @@ def _series_rows(conn: psycopg.Connection) -> list[dict]:
 def _clip(conn: psycopg.Connection, clip_id: int) -> dict:
     clip = conn.execute(
         """select cl.id, cl.title, cl.start_sec, cl.end_sec, cl.total_sec, cl.rendered, cl.layout, cl.render_spec,
-                  s.id as source_id, s.path as source_path, s.channel, s.series_id as source_series_id
+                  sg.chunk_id, s.id as source_id, s.path as source_path, s.channel, s.series_id as source_series_id
            from clips cl
            join segments sg on sg.id = cl.segment_id
            join chunks ch on ch.id = sg.chunk_id
@@ -105,9 +117,11 @@ def _source_size(clip: dict) -> tuple[int, int]:
         raise HTTPException(500, f"원본 크기를 읽지 못했습니다: {exc}") from exc
 
 
-def _resolve(conn: psycopg.Connection, clip: dict, raw: dict) -> dict:
+def _resolve(conn: psycopg.Connection, clip: dict, raw: dict, ranges: list[tuple[float, float]] | None = None) -> dict:
+    """명세를 푼다. ranges 를 주면(구간을 다듬는 중) 장면 시작 초를 그 길이로 검사한다."""
+    duration = sum(b - a for a, b in ranges) if ranges else render.clip_duration(clip)
     try:
-        return render.resolve(conn, deps.cfg, clip["source_path"], raw, render.clip_duration(clip))
+        return render.resolve(conn, deps.cfg, clip["source_path"], raw, duration)
     except render.RenderError as exc:
         raise HTTPException(422, str(exc)) from exc
     except ffmpeg.FfmpegError as exc:
@@ -132,16 +146,40 @@ def _default(conn: psycopg.Connection, clip: dict, src: tuple[int, int]) -> dict
 
 
 def _parts(conn: psycopg.Connection, clip_id: int) -> list[dict]:
-    return rows(
-        conn, "select ordinal, start_sec, end_sec from clip_parts where clip_id = %s order by ordinal", (clip_id,)
+    # 렌더와 같은 읽기(청크 번호까지) — 자막 줄을 같은 길로 만든다.
+    return render.load_parts(conn, clip_id)
+
+
+def _ranges(
+    conn: psycopg.Connection, clip: dict, parts: list[dict], trim: TrimIn | None = None
+) -> list[tuple[float, float]]:
+    """클립이 원본에서 차지하는 구간들 — 렌더(render.clip_ranges)와 같은 규칙이다. trim 이 있으면 다듬은 구간이다."""
+    if trim is None:
+        return render.clip_ranges(clip, parts)
+    try:
+        return cutting.trim_ranges(conn, clip["id"], trim.start, trim.end)
+    except cutting.CuttingError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+def _stale(clip: dict, resolved: dict, ranges: list[tuple[float, float]]) -> bool:
+    """🔴 "다시 렌더해야 한다" 의 근거. 명세가 같아도 템플릿 · 배지 · 구간이 바뀌었으면 결과가 다르다 — 다 본다."""
+    snapshot = clip["render_spec"]
+    if not clip["rendered"] or snapshot is None:
+        return True
+    series = resolved["series"]
+    # 고친 자막(2026-11-08)이 생기기 전의 사본에는 그 칸이 없다 — 없으면 "고친 것 없음" 이다. 사본에 구간이 없으면
+    # (같은 날 전의 렌더) 구간은 비교하지 않는다.
+    old_layout = {"subtitle_edits": []} | (snapshot.get("layout") or {})
+    old_ranges = snapshot.get("ranges")
+    return (
+        old_layout != resolved["layout"]
+        or (snapshot.get("template") or {}).get("spec") != resolved["spec"]
+        # 배지는 이미지(경로)든 글자(이름)든 바뀌면 결과가 다르다.
+        or {k: (snapshot.get("series") or {}).get(k) for k in ("name", "badge_path")}
+        != {k: (series or {}).get(k) for k in ("name", "badge_path")}
+        or (old_ranges is not None and old_ranges != [[round(a, 3), round(b, 3)] for a, b in ranges])
     )
-
-
-def _ranges(clip: dict, parts: list[dict]) -> list[tuple[float, float]]:
-    """클립이 원본에서 차지하는 구간들 — 렌더(render.render_card)와 같은 규칙이다(조각이 둘 이상일 때만 조각)."""
-    if len(parts) > 1:
-        return [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
-    return [(float(clip["start_sec"]), float(clip["end_sec"]))]
 
 
 def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, error: str | None = None) -> dict:
@@ -152,16 +190,7 @@ def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, err
         deps.cfg, resolved["spec"], resolved["layout"], series["name"] if series else None, resolved["badge_file"]
     )
     snapshot = clip["render_spec"]
-    # 🔴 "다시 렌더해야 한다" 의 근거. 명세가 같아도 템플릿을 고쳤으면 결과가 다르다 — 둘 다 본다.
-    stale = saved and (
-        not clip["rendered"]
-        or snapshot is None
-        or snapshot.get("layout") != resolved["layout"]
-        or (snapshot.get("template") or {}).get("spec") != resolved["spec"]
-        # 배지는 이미지(경로)든 글자(이름)든 바뀌면 결과가 다르다.
-        or {k: (snapshot.get("series") or {}).get(k) for k in ("name", "badge_path")}
-        != {k: (series or {}).get(k) for k in ("name", "badge_path")}
-    )
+    stale = saved and _stale(clip, resolved, render.clip_ranges(clip, parts))
     return {
         "clip": {
             "id": clip["id"], "title": clip["title"], "start_sec": clip["start_sec"], "end_sec": clip["end_sec"],
@@ -169,7 +198,11 @@ def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, err
             # 장면 시작 초가 놓이는 시간의 길이(조각 합, 브릿지 제외).
             "duration": render.clip_duration(clip),
             # 조합 클립의 조각들. 화면의 재생기가 이 순서로 돈다(조각 하나뿐이면 start~end).
-            "parts": parts if len(parts) > 1 else [],
+            "parts": [
+                {k: p[k] for k in ("ordinal", "start_sec", "end_sec")} for p in parts
+            ] if len(parts) > 1 else [],
+            # 처음 · 끝을 옮길 수 있는 범위(원본 절대 초) — 그 조각의 청크 안(cutting.trim_bounds).
+            "bounds": list(cutting.trim_bounds(conn, clip["id"])),
             "renderedAs": ("card" if snapshot else "blur") if clip["rendered"] else None,
             "renderedAt": snapshot.get("rendered_at") if snapshot else None,
         },
@@ -350,11 +383,16 @@ def get_layout(clip_id: int) -> dict:
 
 @router.put("/clips/{clip_id}/layout")
 def put_layout(clip_id: int, body: LayoutIn) -> dict:
-    """명세를 저장한다. 렌더는 하지 않는다 — 렌더는 기존 `POST /clips/{id}/render`(잡)가 이 명세를 읽는다."""
+    """명세를 저장한다(다듬은 구간이 있으면 함께). 렌더는 하지 않는다 — 렌더는 기존 `POST /clips/{id}/render`(잡)가
+    이 명세를 읽는다."""
     with connect() as conn:
         clip = _clip(conn, clip_id)
         _source_size(clip)
-        resolved = _resolve(conn, clip, body.layout)
+        ranges = _ranges(conn, clip, _parts(conn, clip_id), body.trim)
+        resolved = _resolve(conn, clip, body.layout, ranges)
+        if body.trim is not None:
+            # 🔴 구간과 명세는 한 트랜잭션이다 — 장면 시작 초가 새 구간 길이에 맞춰져 있다. 하나만 남으면 어긋난다.
+            cutting.apply_trim(conn, clip_id, ranges)
         conn.execute("update clips set layout = %s where id = %s", (Jsonb(resolved["layout"]), clip_id))
         series_id = resolved["layout"]["series_id"]
         if series_id is not None and clip["source_series_id"] is None:
@@ -383,7 +421,7 @@ def preview_layout(clip_id: int, body: LayoutIn) -> dict:
     with connect() as conn:
         clip = _clip(conn, clip_id)
         _source_size(clip)
-        resolved = _resolve(conn, clip, body.layout)
+        resolved = _resolve(conn, clip, body.layout, _ranges(conn, clip, _parts(conn, clip_id), body.trim))
         spec = resolved["spec"]
         if ffmpeg.font_available(spec["font"]) is False:
             raise HTTPException(
@@ -413,16 +451,17 @@ def split_scenes(clip_id: int, body: LayoutIn) -> dict:
     with connect() as conn:
         clip = _clip(conn, clip_id)
         _source_size(clip)
-        current = _resolve(conn, clip, body.layout)
+        ranges = _ranges(conn, clip, _parts(conn, clip_id), body.trim)
+        current = _resolve(conn, clip, body.layout, ranges)
         try:
             found = scenes.detect(
                 conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, source_path=clip["source_path"],
-                ranges=_ranges(clip, _parts(conn, clip_id)),
+                ranges=ranges,
             )
         except ffmpeg.FfmpegError as exc:
             raise HTTPException(500, f"장면을 나누지 못했습니다: {exc}") from exc
         windows = layouts.split(current["layout"]["windows"], found["starts"], found["duration"])
-        resolved = _resolve(conn, clip, current["layout"] | {"windows": windows})
+        resolved = _resolve(conn, clip, current["layout"] | {"windows": windows}, ranges)
     return {"layout": resolved["layout"], "geometry": resolved["geometry"], "scenes": found}
 
 
@@ -438,22 +477,39 @@ def focus_scenes(clip_id: int, body: LayoutIn) -> dict:
     with connect() as conn:
         clip = _clip(conn, clip_id)
         _source_size(clip)
-        current = _resolve(conn, clip, body.layout)
+        ranges = _ranges(conn, clip, _parts(conn, clip_id), body.trim)
+        current = _resolve(conn, clip, body.layout, ranges)
         try:
             found = focus.run(
                 conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, source_path=clip["source_path"],
-                ranges=_ranges(clip, _parts(conn, clip_id)), layout=current["layout"],
+                ranges=ranges, layout=current["layout"],
                 src_w=current["src_w"], src_h=current["src_h"],
             )
         except ffmpeg.FfmpegError as exc:
             raise HTTPException(500, f"프레임을 뽑지 못했습니다: {exc}") from exc
         except focus.FocusError as exc:
             raise HTTPException(502, str(exc)) from exc
-        resolved = _resolve(conn, clip, current["layout"] | {"windows": found["windows"]})
+        resolved = _resolve(conn, clip, current["layout"] | {"windows": found["windows"]}, ranges)
     return {
         "layout": resolved["layout"], "geometry": resolved["geometry"],
         "focus": {"scenes": found["scenes"], "called": found["called"], "latencyMs": found["latencyMs"]},
     }
+
+
+@router.get("/clips/{clip_id}/subtitles")
+def get_subtitles(clip_id: int, start: float | None = None, end: float | None = None) -> dict:
+    """편집 화면의 자막 줄 — **고치기 전** 문구와 시각(tease §5-10 "자막 고치기"). 고친 문구는 화면이 명세에서 붙인다.
+
+    start · end 를 주면 다듬는 중인 구간으로 만든다. 시각은 편집 화면의 시간(조각을 그냥 이은 시간, 브릿지 없음)이고,
+    at 은 줄의 원본 시각(고친 문구를 붙이는 열쇠)이다. DB 만 읽어 보기 전용도 부른다(GET).
+    """
+    with connect() as conn:
+        clip = _clip(conn, clip_id)
+        parts = _parts(conn, clip_id)
+        trim = TrimIn(start=start, end=end) if start is not None and end is not None else None
+        ranges = _ranges(conn, clip, parts, trim)
+        cues = render.clip_cues(conn, clip, parts, ranges, bridges=False)
+    return {"cues": [{"start": c.start, "end": c.end, "at": c.at, "text": c.text} for c in cues]}
 
 
 @router.get("/cards/{name}")
