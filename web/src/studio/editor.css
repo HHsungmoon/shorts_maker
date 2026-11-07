@@ -264,7 +264,7 @@
 .sm-edit__main {
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: 10px;
 	min-width: 0;
 }
 
@@ -382,8 +382,93 @@
 	gap: 10px;
 }
 
-.sm-edit__transport input[type="range"] {
+.sm-edit__clock {
+	min-width: 92px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ 장면 막대 (tease §5-10 "장면마다 창")
+ * 재생 막대가 장면 칸으로 나뉜다. 칸을 누르면 그 시각으로, 칸 사이 막대(경계)를 끌면 경계가 옮겨진다. */
+
+.sm-edit__scenes {
+	position: relative;
 	flex: 1;
+	height: 28px;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	cursor: pointer;
+	touch-action: none;
+	user-select: none;
+}
+
+.sm-edit__scene {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	overflow: hidden;
+	font-size: 11px;
+	color: var(--text-muted);
+	border-right: 1px solid var(--border);
+	pointer-events: none;
+}
+
+.sm-edit__scene:nth-child(even) {
+	background: rgba(20, 26, 46, 0.04);
+}
+
+.sm-edit__scene--on {
+	color: var(--accent);
+	font-weight: 700;
+	background: var(--accent-soft) !important;
+}
+
+/* 경계 손잡이. 칸보다 위아래로 조금 튀어나와 "잡을 수 있는 것" 으로 보이게. */
+.sm-edit__cut {
+	position: absolute;
+	top: -4px;
+	bottom: -4px;
+	width: 8px;
+	margin-left: -4px;
+	background: var(--accent);
+	border: 2px solid #fff;
+	border-radius: 3px;
+	cursor: ew-resize;
+	z-index: 1;
+}
+
+.sm-edit__playhead {
+	position: absolute;
+	top: -5px;
+	bottom: -5px;
+	width: 2px;
+	margin-left: -1px;
+	background: #e11d48;
+	pointer-events: none;
+	z-index: 2;
+}
+
+.sm-edit__scenetools {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-edit__scenelabel {
+	margin-right: auto;
+	font-size: 13px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-edit__scenenote {
+	margin: 0;
+	font-size: 12px;
 }
 
 /* ------------------------------------------------------------ 설정 */

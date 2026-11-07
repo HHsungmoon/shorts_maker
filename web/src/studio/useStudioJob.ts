@@ -30,6 +30,9 @@ export const STAGE_LABEL: Record<string, string> = {
 	comment: "댓글 가져오기",
 	reaction: "시청자 반응 요약",
 	analytics: "유튜브 성과 가져오기",
+	// 숏폼 편집(tease §5-10). 잡이 아니라 기록에만 나온다.
+	scenes: "장면 나누기",
+	focus: "AI 초점",
 };
 
 /**

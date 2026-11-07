@@ -175,7 +175,10 @@ export interface ShortsClip {
 /** 누가 정한 값인가. 🔴 person 인 값은 AI 를 다시 돌려도 덮지 않는다(P5). */
 export type LayoutBy = "auto" | "ai" | "person";
 
-/** 원본에서 칸에 보여 줄 영역. x · y · w 는 원본 폭 · 높이에 대한 비율이고, 높이는 칸 비율에서 나온다. */
+/**
+ * 원본에서 칸에 보여 줄 영역. x · y · w 는 원본 폭 · 높이에 대한 비율이고, 높이는 칸 비율에서 나온다.
+ * 장면마다 하나다 — start 는 클립 안의 초(조각을 이은 시간, 브릿지 제외), end 는 다음 장면의 start(서버가 채운다).
+ */
 export interface ClipWindow {
 	start: number;
 	end: number | null;
@@ -209,7 +212,9 @@ export interface LayoutGeometry {
 	safe: { top: number; bottom: number };
 	boxes: Partial<Record<"badge" | "headline" | "slot" | "credit", LayoutBox>>;
 	slotLimits: [number, number];
-	crop: { w: number; h: number; x: number; y: number };
+	/** 장면마다 자를 영역(px). start 는 클립 안의 초다. */
+	crops: { start: number; w: number; h: number; x: number; y: number }[];
+	/** 가장 많이 키우는 장면의 배율. */
 	upscale: number;
 	warnings: string[];
 }
@@ -246,6 +251,8 @@ export interface ClipEditorState {
 		start_sec: number;
 		end_sec: number;
 		total_sec: number | null;
+		/** 장면 시작 초가 놓이는 시간의 길이(조각 합, 브릿지 제외). */
+		duration: number;
 		rendered: boolean;
 		/** 조합 클립의 조각들. 조각이 하나뿐이면 빈 목록이고 start~end 를 돈다. */
 		parts: { ordinal: number; start_sec: number; end_sec: number }[];
@@ -265,6 +272,39 @@ export interface ClipEditorState {
 	cardUrl: string | null;
 	templates: ShortsTemplate[];
 	series: ShortsSeries[];
+}
+
+/** 장면 나누기 결과(`POST /api/clips/{id}/layout/scenes`). 시각은 모두 클립 안의 초다. */
+export interface SceneSplit {
+	layout: ClipLayout;
+	geometry: LayoutGeometry;
+	scenes: {
+		starts: number[];
+		/** 찾은 컷과 점수(앞 프레임과 얼마나 달라졌나, 0~1). */
+		cuts: { t: number; score: number }[];
+		/** 문턱(0.2) 아래의 애매한 곳. */
+		weak: { t: number; score: number }[];
+		/** 클립 처음 · 끝에 다른 장면이 잠깐 끼어 있으면 그 길이(초). */
+		headFlash: number | null;
+		tailFlash: number | null;
+		duration: number;
+	};
+}
+
+/** AI 초점(tease §5-10 "포커스 규칙") — 장면마다 어떻게 맞췄나. */
+export type FocusHow = "group" | "speaker" | "one" | "none" | "missing" | "person";
+
+export interface SceneFocus {
+	layout: ClipLayout;
+	geometry: LayoutGeometry;
+	focus: {
+		/** 장면마다. group = 모두 담음 · speaker = 둘 중 말하는 사람 · one = 한 명 · none = 사람 없음(그대로) ·
+		 * missing = AI 가 그 장면을 답하지 않음(그대로) · person = 사람이 잡은 상자라 보내지 않음. */
+		scenes: { scene: number; how: FocusHow; people: number | null }[];
+		/** 모델을 불렀나. 모든 장면을 사람이 잡았으면 부르지 않는다. */
+		called: boolean;
+		latencyMs: number;
+	};
 }
 
 export interface LayoutPreview {
