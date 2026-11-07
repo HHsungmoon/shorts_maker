@@ -80,10 +80,39 @@ class ValidateTest(unittest.TestCase):
         with self.assertRaises(layout.LayoutError):
             self.check(draft(windows=[{"x": 0.2, "y": 0.2, "w": 300 / W}]))
 
-    def test_one_window_for_now(self):
-        window = draft()["windows"][0]
+    def scenes(self, *starts: float, **box) -> list[dict]:
+        base = {"x": 0.1, "y": 0.0, "w": 0.6, "by": "person"} | box
+        return [base | {"start": start} for start in starts]
+
+    def test_each_scene_keeps_its_own_window_and_the_ends_are_filled(self):
+        # 클립 4 의 경계(8.27 · 10.94 …). end 는 다음 장면의 start 다 — 화면이 보낸 end 는 믿지 않는다.
+        windows = self.scenes(0, 8.266, 10.935)
+        windows[1] |= {"x": 0.3, "end": 99}
+        out = layout.validate(draft(windows=windows), spec(), W, H, duration=30.0)["windows"]
+        self.assertEqual([0.0, 8.266, 10.935], [w["start"] for w in out])
+        self.assertEqual([8.266, 10.935, None], [w["end"] for w in out])
+        self.assertAlmostEqual(0.3, out[1]["x"], places=3)
+
+    def test_the_first_scene_starts_at_zero(self):
         with self.assertRaises(layout.LayoutError):
-            self.check(draft(windows=[window, window]))
+            self.check(draft(windows=self.scenes(1.0, 5.0)))
+
+    def test_scenes_out_of_order_or_too_close_are_refused_instead_of_merged(self):
+        # 🔴 조용히 합치면 사람이 나눈 경계가 저장하는 순간 사라진다.
+        for starts in ((0, 5.0, 4.0), (0, 5.0, 5.1)):
+            with self.subTest(starts=starts), self.assertRaises(layout.LayoutError):
+                self.check(draft(windows=self.scenes(*starts)))
+
+    def test_a_scene_past_the_clip_end_is_refused(self):
+        with self.assertRaises(layout.LayoutError):
+            layout.validate(draft(windows=self.scenes(0, 29.9)), spec(), W, H, duration=30.0)
+
+    def test_every_scene_is_fitted_to_the_one_slot(self):
+        # 칸 높이는 클립에 하나 — 칸이 길어지면 모든 장면의 창이 원본 안으로 함께 줄어든다.
+        out = self.check(draft(slot_height=900, windows=self.scenes(0, 10, w=1.0)))
+        for window in out["windows"]:
+            self.assertLessEqual(layout.window_height(window, 900, W, H), 1.0 + 1e-6)
+
 
     def test_the_slot_must_stay_in_the_template_range(self):
         with self.assertRaises(layout.LayoutError):
@@ -117,6 +146,36 @@ class ValidateTest(unittest.TestCase):
             self.check(draft(subtitles_by="robot"))
 
 
+class SplitTest(unittest.TestCase):
+    def test_new_scenes_inherit_the_box_covering_their_middle(self):
+        # 경계가 8.0 → 8.3 으로 조금 옮겨져도 두 번째 장면은 옛 두 번째 상자를 물려받는다(시작 시각으로 고르면 첫 상자다).
+        # 옛 창(8~30초)의 98% 가 새 장면 안이라 1:1 — 사람이 잡은 상자로 남는다.
+        old = [
+            {"start": 0, "end": 8.0, "x": 0.1, "y": 0, "w": 0.5, "by": "auto"},
+            {"start": 8.0, "end": None, "x": 0.4, "y": 0, "w": 0.5, "by": "person"},
+        ]
+        out = layout.split(old, [0.0, 8.3], 30.0)
+        self.assertEqual([0.1, 0.4], [w["x"] for w in out])
+        self.assertEqual(["auto", "person"], [w["by"] for w in out])
+        self.assertEqual([8.3, None], [w["end"] for w in out])
+
+    def test_a_person_box_spread_over_several_scenes_goes_back_to_auto(self):
+        # 클립 4(2026-11-07): 창 하나일 때 클립 전체에 잡은 상자가 장면 여섯에 사람 것으로 퍼져 AI 가 못 고쳤다.
+        # 좌표는 초기값으로 물려주고 by 만 내린다.
+        old = [{"start": 0, "end": None, "x": 0.18025, "y": 0, "w": 0.71136, "by": "person"}]
+        out = layout.split(old, [0.0, 8.266, 10.935, 13.563, 19.277, 25.158], 30.0)
+        self.assertEqual({"auto"}, {w["by"] for w in out})
+        self.assertEqual({0.18025}, {w["x"] for w in out})
+        # 한 장면을 둘로 나눈 것도 같다 — 옛 창의 절반씩이라 어느 쪽과도 1:1 이 아니다.
+        halves = layout.split([old[0] | {"end": None}], [0.0, 15.0], 30.0)
+        self.assertEqual(["auto", "auto"], [w["by"] for w in halves])
+
+    def test_window_at_picks_the_scene_of_the_moment(self):
+        windows = [{"start": 0, "x": 0}, {"start": 8.3, "x": 1}]
+        self.assertEqual(0, layout.window_at(windows, 8.29)["x"])
+        self.assertEqual(1, layout.window_at(windows, 8.3)["x"])
+
+
 class GeometryTest(unittest.TestCase):
     def test_the_crop_is_even_and_inside_the_source(self):
         value = layout.validate(draft(slot_height=852), spec(), W, H)
@@ -125,6 +184,18 @@ class GeometryTest(unittest.TestCase):
         self.assertEqual(0, crop["h"] % 2)
         self.assertLessEqual(crop["x"] + crop["w"], W)
         self.assertLessEqual(crop["y"] + crop["h"], H)
+
+    def test_each_scene_has_its_own_crop_and_the_worst_upscale_counts(self):
+        windows = [
+            {"start": 0, "x": 0.0, "y": 0.0, "w": 1.0},
+            {"start": 8.3, "x": 0.3, "y": 0.2, "w": 0.4},
+        ]
+        value = layout.validate(draft(windows=windows), spec(), W, H)
+        geometry = layout.geometry(spec(), value, W, H)
+        self.assertEqual([0.0, 8.3], [c["start"] for c in geometry["crops"]])
+        self.assertGreater(geometry["crops"][0]["w"], geometry["crops"][1]["w"])
+        self.assertAlmostEqual(1080 / geometry["crops"][1]["w"], geometry["upscale"], places=2)
+        self.assertTrue(any("장면 2" in w for w in geometry["warnings"]))
 
     def test_upscaling_is_warned(self):
         value = layout.validate(draft(windows=[{"x": 0.3, "y": 0.3, "w": 0.4}]), spec(), W, H)

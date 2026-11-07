@@ -159,7 +159,14 @@ def run_for_clip(
     return _finish(conn, cfg, clip, out, latency_ms, cue_count, bool(subtitle_path), 1)
 
 
-def resolve(conn: psycopg.Connection, cfg: config.Config, source_path: str, raw_layout: dict) -> dict:
+def clip_duration(clip: dict) -> float:
+    """클립 길이(초) — 조합 클립이면 조각 합(브릿지 제외). 장면 시작 초가 이 시간 위에 있다."""
+    return float(clip["total_sec"]) if clip.get("total_sec") else float(clip["end_sec"]) - float(clip["start_sec"])
+
+
+def resolve(
+    conn: psycopg.Connection, cfg: config.Config, source_path: str, raw_layout: dict, duration: float | None = None
+) -> dict:
     """명세가 가리키는 템플릿 · 시리즈를 읽고 검증한다. 렌더와 편집 화면(http/layouts.py)이 같은 길을 쓴다.
 
     돌려주는 것: template(행) · spec(검증한 것) · series(행 또는 None) · badge_file · src_w/src_h · layout(정규화) · geometry.
@@ -191,7 +198,7 @@ def resolve(conn: psycopg.Connection, cfg: config.Config, source_path: str, raw_
             raise RenderError(f"시리즈 '{series['name']}' 의 배지 파일이 없다: {series['badge_path']}")
     src_w, src_h = ffmpeg.video_size(str(cfg.source_file(source_path)))
     try:
-        normalized = layouts.validate(raw_layout, spec, src_w, src_h)
+        normalized = layouts.validate(raw_layout, spec, src_w, src_h, duration)
     except layouts.LayoutError as exc:
         raise RenderError(f"편집 명세가 잘못됐다: {exc}") from exc
     return dict(
@@ -222,7 +229,7 @@ def render_card(
     if not ffmpeg.has_filter("ass", cfg.ffmpeg_bin):
         # 카드는 글자 층부터 libass 로 그린다 — 자막을 꺼도 필요하다.
         raise RenderError(f"{cfg.ffmpeg_bin} 에 libass 가 없어 카드의 글자를 그릴 수 없다")
-    resolved = resolve(conn, cfg, clip["source_path"], clip["layout"])
+    resolved = resolve(conn, cfg, clip["source_path"], clip["layout"], clip_duration(clip))
     spec, layout, geometry = resolved["spec"], resolved["layout"], resolved["geometry"]
     if ffmpeg.font_available(spec["font"]) is False:
         raise RenderError(
@@ -258,7 +265,8 @@ def render_card(
     conn.commit()
     started = time.monotonic()
     ffmpeg.render_card(
-        str(source), str(out), ranges, str(png.path), slot["top"], slot["height"], geometry["crop"],
+        str(source), str(out), ranges, str(png.path), slot["top"], slot["height"],
+        [(c["start"], {k: c[k] for k in ("w", "h", "x", "y")}) for c in geometry["crops"]],
         subtitle_path=str(subtitle_path) if subtitle_path else None, binary=cfg.ffmpeg_bin,
     )
     latency_ms = int((time.monotonic() - started) * 1000)
@@ -275,7 +283,10 @@ def render_card(
     conn.execute("update clips set render_spec = %s where id = %s", (Jsonb(snapshot), clip["id"]))
     return _finish(
         conn, cfg, clip, out, latency_ms, cue_count, bool(subtitle_path), max(len(parts), 1),
-        extra={"card": True, "template_id": resolved["template"]["id"], "upscale": geometry["upscale"]},
+        extra={
+            "card": True, "template_id": resolved["template"]["id"], "upscale": geometry["upscale"],
+            "scenes": len(layout["windows"]),
+        },
     )
 
 

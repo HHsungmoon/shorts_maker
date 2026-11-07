@@ -16,7 +16,11 @@
   같은 자리를 가리킨다). 높이는 적지 않는다 — 칸의 비율(1080 : slot_height)에서 나온다. 그래서 칸 높이를 바꾸면
   창의 높이가 함께 바뀌고, 원본 밖으로 넘치면 가운데를 지킨 채 폭을 줄인다(`fit_window`).
 - **by** 는 누가 정했나. `auto`(코드 기본값) · `ai`(P5) · `person`. 🔴 `person` 인 값은 AI 를 다시 돌려도 덮지 않는다.
-- 창은 지금 한 개(클립 전체)다. P5 에서 샷마다 늘어난다 — 그래서 처음부터 목록이고 start/end 를 둔다.
+- 창은 **장면마다 하나**다(2026-11-07, tease §5-10 "장면마다 창"). start 는 클립 안의 초 — 조각을 이어 붙인 시간이고
+  브릿지는 빠진다(편집 화면의 재생 막대와 같은 시간). 첫 창은 0초에서 시작하고, 각 창은 다음 창의 start 까지다.
+  end 는 저장할 때 다음 창의 start 로 채운다(마지막은 null) — 화면이 보낸 end 는 믿지 않는다.
+  장면 경계의 초기값은 `scenes.detect`(ffmpeg 장면 점수)가 내고 사람이 고친다. 🔴 LLM 이 경계 시각을 정하지 않는다.
+- 칸 높이는 클립에 하나다. 카드 모양이 장면마다 바뀌면 안 된다 — 칸 높이를 바꾸면 모든 창이 그 비율로 다시 맞는다.
 
 🔴 **칸 높이 ≤ 1080 이고 창 폭이 원본 1080px 이상이면 확대가 없다**(1080p 원본). 창을 좁게 잡을수록 확대가
 커져 흐려진다 — `geometry` 가 배율과 경고를 돌려주고 편집 화면이 그대로 보여 준다.
@@ -34,6 +38,13 @@ MAX_UPSCALE = 3.0
 SOFT_UPSCALE = 1.2
 # 글자 폭 추정의 여백. 1080 에서 좌우 60 씩 남긴다.
 TEXT_WIDTH = templates.FRAME_W - 120
+# 장면(창)의 최소 길이 · 최대 개수. 0.2초보다 짧은 장면은 눈이 못 따라간다 — 화면이 끌다가 잘못 나눈 것으로 본다.
+# 60개면 30초 클립에 0.5초마다다. 그보다 많으면 화면의 버그다.
+MIN_WINDOW_SEC = 0.2
+MAX_WINDOWS = 60
+# 다시 나눌 때 사람이 잡은 상자가 사람 것으로 남는 몫(`split`). 경계가 조금(5초 장면에서 0.3초) 옮겨진 것은 남고,
+# 장면 여럿을 덮던 상자는 내려간다.
+KEEP_PERSON = 0.8
 
 
 class LayoutError(ValueError):
@@ -156,7 +167,7 @@ def _number(value: object, where: str) -> float:
     return float(value)
 
 
-def validate(raw: object, spec: dict, src_w: int, src_h: int) -> dict:
+def validate(raw: object, spec: dict, src_w: int, src_h: int, duration: float | None = None) -> dict:
     """화면이 보낸 명세를 검사하고 정규화한 사본을 돌려준다.
 
     🔴 창은 **조금 넘친 것은 고치고 말이 안 되는 것은 거절한다.** 화면의 끌기는 부동소수 오차로 원본 밖으로
@@ -194,24 +205,7 @@ def validate(raw: object, spec: dict, src_w: int, src_h: int) -> dict:
         raise LayoutError(f"칸 높이는 이 템플릿에서 {low}~{high} 다 ({int(slot_height)})")
     slot_height = min(_even(slot_height), high - high % 2)
 
-    windows = raw.get("windows")
-    if not isinstance(windows, list) or len(windows) != 1:
-        # TODO: P5 — 샷마다 창. 그때 start/end 가 겹치지 않고 클립을 빈틈없이 덮는지 검사한다.
-        raise LayoutError("창은 지금 하나만 둔다(샷마다 창은 P5)")
-    window = windows[0]
-    if not isinstance(window, dict):
-        raise LayoutError("창은 객체여야 한다")
-    w = _number(window.get("w"), "창 폭")
-    x = _number(window.get("x"), "창 x")
-    y = _number(window.get("y"), "창 y")
-    if not 0 < w <= 1.01 or not -0.01 <= x <= 1 or not -0.01 <= y <= 1:
-        raise LayoutError("창이 원본 밖에 있다")
-    by = window.get("by", "auto")
-    if by not in BY_VALUES:
-        raise LayoutError(f"창의 by 는 {', '.join(BY_VALUES)} 중 하나다")
-    fitted = fit_window(int(slot_height), src_w, src_h, {"x": x, "y": y, "w": min(w, 1.0), "by": by})
-    if templates.FRAME_W / (fitted["w"] * src_w) > MAX_UPSCALE:
-        raise LayoutError(f"창이 너무 좁다 — {MAX_UPSCALE:g}배 넘게 키우면 알아볼 수 없다")
+    fitted = _windows(raw.get("windows"), int(slot_height), src_w, src_h, duration)
 
     subtitles_by = raw.get("subtitles_by", "auto")
     if subtitles_by not in BY_VALUES:
@@ -226,8 +220,92 @@ def validate(raw: object, spec: dict, src_w: int, src_h: int) -> dict:
         "subtitles": subtitles,
         "subtitles_by": subtitles_by,
         "slot_height": int(slot_height),
-        "windows": [fitted],
+        "windows": fitted,
     }
+
+
+def _windows(raw: object, slot_height: int, src_w: int, src_h: int, duration: float | None) -> list[dict]:
+    """장면마다 창 — 검사 · 칸 비율에 맞추기 · end 채우기.
+
+    🔴 시작 초는 **고쳐 주지 않는다**. 순서가 어긋나거나 너무 짧은 장면은 화면이 잘못 나눈 것이라 거절한다 — 조용히
+    합치면 사람이 나눈 경계가 저장하는 순간 사라진다. 창 모양(x · y · w)은 위의 원칙대로 조금 넘친 것만 고친다.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise LayoutError("창이 없다")
+    if len(raw) > MAX_WINDOWS:
+        raise LayoutError(f"장면이 {MAX_WINDOWS}개를 넘는다")
+    out: list[dict] = []
+    for index, window in enumerate(raw):
+        if not isinstance(window, dict):
+            raise LayoutError("창은 객체여야 한다")
+        where = f"장면 {index + 1}"
+        start = _number(window.get("start", 0), f"{where} 시작")
+        if index == 0:
+            if abs(start) > 0.05:
+                raise LayoutError("첫 장면은 0초에서 시작한다")
+            start = 0.0
+        elif start < out[-1]["start"] + MIN_WINDOW_SEC:
+            raise LayoutError(f"{where} 이 앞 장면과 {MIN_WINDOW_SEC:g}초 안에 붙어 있거나 순서가 어긋났다")
+        if index and duration is not None and start > duration - MIN_WINDOW_SEC:
+            raise LayoutError(f"{where} 이 클립 끝({duration:g}초)을 넘는다")
+        w = _number(window.get("w"), f"{where} 창 폭")
+        x = _number(window.get("x"), f"{where} 창 x")
+        y = _number(window.get("y"), f"{where} 창 y")
+        if not 0 < w <= 1.01 or not -0.01 <= x <= 1 or not -0.01 <= y <= 1:
+            raise LayoutError(f"{where} 의 창이 원본 밖에 있다")
+        by = window.get("by", "auto")
+        if by not in BY_VALUES:
+            raise LayoutError(f"창의 by 는 {', '.join(BY_VALUES)} 중 하나다")
+        fitted = fit_window(slot_height, src_w, src_h, {"x": x, "y": y, "w": min(w, 1.0), "by": by})
+        if templates.FRAME_W / (fitted["w"] * src_w) > MAX_UPSCALE:
+            raise LayoutError(f"{where} 의 창이 너무 좁다 — {MAX_UPSCALE:g}배 넘게 키우면 알아볼 수 없다")
+        fitted["start"] = round(start, 3)
+        out.append(fitted)
+    for index, window in enumerate(out):
+        window["end"] = out[index + 1]["start"] if index + 1 < len(out) else None
+    return out
+
+
+def window_at(windows: list[dict], moment: float) -> dict:
+    """클립 안의 moment 초에 쓰는 창."""
+    current = windows[0]
+    for window in windows:
+        if window["start"] <= moment:
+            current = window
+    return current
+
+
+def split(windows: list[dict], starts: list[float], duration: float) -> list[dict]:
+    """장면 경계(starts, 0 부터)대로 창을 다시 나눈다. 새 장면의 상자는 **그 장면 가운데 시각**을 덮던 옛 창의 것이다.
+
+    가운데를 보는 이유: 경계가 조금 옮겨졌을 때 시작 시각으로 고르면 바로 앞 장면의 상자를 물려받는다.
+
+    🔴 사람이 고친 상자(by=person)는 옛 창이 **새 장면 하나와 1:1 로 이어질 때만** 사람 것으로 남는다 — 옛 창의
+    KEEP_PERSON 이상이 그 새 장면 안에 있을 때. 아니면 좌표는 초기값으로 물려주되 auto 로 내려 AI 초점이 고칠 수 있게
+    한다. 클립 4 에서 겪었다(2026-11-07): 창이 하나일 때 클립 전체에 잡은 상자(x 0.18)가 장면 여섯에 사람 것으로
+    퍼져, 그 상자가 맞지 않는 장면 1(3명)의 왼쪽 여백이 0 이 됐고 AI 는 손댈 수 없었다.
+    """
+    spans = [
+        (window["start"], windows[index + 1]["start"] if index + 1 < len(windows) else duration)
+        for index, window in enumerate(windows)
+    ]
+    out = []
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else duration
+        middle = (start + end) / 2
+        base_index = max((i for i, w in enumerate(windows) if w["start"] <= middle), default=0)
+        base = windows[base_index]
+        by = base.get("by", "auto")
+        if by == "person":
+            old_start, old_end = spans[base_index]
+            inside = min(end, old_end) - max(start, old_start)
+            if inside < KEEP_PERSON * (old_end - old_start):
+                by = "auto"
+        out.append({
+            **base, "by": by,
+            "start": round(start, 3), "end": round(end, 3) if index + 1 < len(starts) else None,
+        })
+    return out
 
 
 def crop_px(window: dict, slot_height: int, src_w: int, src_h: int) -> dict:
@@ -248,11 +326,16 @@ def geometry(spec: dict, layout: dict, src_w: int, src_h: int) -> dict:
     slot_height = layout["slot_height"]
     boxes = templates.stack(spec, slot_height)
     low, high = templates.slot_limits(spec)
-    crop = crop_px(layout["windows"][0], slot_height, src_w, src_h)
-    upscale = round(templates.FRAME_W / crop["w"], 2)
+    windows = layout["windows"]
+    crops = [{"start": w["start"]} | crop_px(w, slot_height, src_w, src_h) for w in windows]
+    scales = [round(templates.FRAME_W / c["w"], 2) for c in crops]
+    # 가장 많이 키우는 장면이 이 클립의 화질을 정한다.
+    upscale = max(scales)
     warnings: list[str] = []
-    if upscale > SOFT_UPSCALE:
-        warnings.append(f"원본을 {upscale:g}배 키운다 — 흐려 보일 수 있다")
+    for index, scale in enumerate(scales):
+        if scale > SOFT_UPSCALE:
+            where = f"장면 {index + 1}({crops[index]['start']:g}초~)에서 " if len(crops) > 1 else ""
+            warnings.append(f"{where}원본을 {scale:g}배 키운다 — 흐려 보일 수 있다")
     headline = templates.block_of(spec, "headline")
     if headline:
         for index, line in enumerate(layout["headline"]):
@@ -265,7 +348,8 @@ def geometry(spec: dict, layout: dict, src_w: int, src_h: int) -> dict:
         "safe": {"top": templates.SAFE_TOP, "bottom": templates.SAFE_BOTTOM},
         "boxes": {kind: {"top": box.top, "height": box.height} for kind, box in boxes.items()},
         "slotLimits": [low, high],
-        "crop": crop,
+        # 장면마다 자를 영역(px). start 는 클립 안의 초다.
+        "crops": crops,
         "upscale": upscale,
         "warnings": warnings,
     }

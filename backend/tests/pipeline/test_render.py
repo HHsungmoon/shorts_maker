@@ -235,8 +235,23 @@ class CardRenderTest(RenderTestCase):
         args = card_render.call_args.args
         self.assertEqual([(0.0, 30.0)], args[2])
         self.assertEqual(852, args[5])  # 칸 높이
-        # 칸 852 · 원본 1920×1080 → 원본 높이 전체, 폭 1370(짝수) 를 가운데에서.
-        self.assertEqual({"w": 1370, "h": 1080, "x": 276, "y": 0}, args[6])
+        # 칸 852 · 원본 1920×1080 → 원본 높이 전체, 폭 1370(짝수) 를 가운데에서. 장면이 하나면 0초부터 하나다.
+        self.assertEqual([(0.0, {"w": 1370, "h": 1080, "x": 276, "y": 0})], args[6])
+
+    def test_each_scene_gets_its_own_crop(self):
+        # 장면마다 창(tease §5-10) — 렌더는 (클립 안의 시작 초, crop) 목록을 받는다.
+        clip_id = self.clip(0, 30, None)
+        base = self.with_layout(clip_id)
+        first = base["windows"][0]
+        self.with_layout(
+            clip_id, windows=[first, {"start": 8.27, "x": 0.3, "y": 0.1, "w": 0.5, "by": "person"}]
+        )
+        with mock.patch.object(ffmpeg, "render_card") as card_render:
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        crops = card_render.call_args.args[6]
+        self.assertEqual([0.0, 8.27], [start for start, _ in crops])
+        self.assertEqual(960, crops[1][1]["w"])
+        self.assertEqual(2, self.recorded()["scenes"])
 
     def test_the_snapshot_keeps_the_template_used(self):
         clip_id = self.clip(0, 30, None)

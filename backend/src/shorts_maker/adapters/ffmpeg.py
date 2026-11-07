@@ -125,6 +125,28 @@ def extract_frame(src: str, dst: str, at: float, binary: str = "ffmpeg") -> None
     _run([binary, "-nostdin", "-y", "-ss", f"{at}", "-i", src, "-frames:v", "1", dst], timeout=120)
 
 
+def frame_jpeg(src: str, at: float, width: int, binary: str = "ffmpeg") -> bytes:
+    """원본 at 초의 프레임 한 장을 폭 width 의 JPEG 바이트로. 파일을 남기지 않는다 — 모델에 보내고 버린다(pipeline/focus.py).
+
+    `-ss` 를 입력 앞에 둔다(빠른 탐색). 요즘 ffmpeg 는 앞쪽 키프레임부터 디코드해 정확히 그 시각의 프레임을 준다.
+    """
+    # _run 은 stdout 을 글자로 읽는다 — JPEG 는 바이트라 따로 부른다.
+    try:
+        proc = subprocess.run(
+            [binary, "-hide_banner", "-nostdin", "-loglevel", "error", "-ss", f"{at}", "-i", src,
+             "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", "-f", "image2", "-c:v", "mjpeg", "-"],
+            capture_output=True,
+            timeout=60,
+        )
+    except FileNotFoundError as exc:
+        raise FfmpegError(f"{binary} 를 찾을 수 없다 (brew install ffmpeg)") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise FfmpegError(f"프레임을 뽑다가 시간이 다 됐다({at:.2f}초)") from exc
+    if proc.returncode != 0 or not proc.stdout:
+        raise FfmpegError(f"프레임을 뽑지 못했다({at:.2f}초): {proc.stderr.decode(errors='replace')[-300:]}")
+    return proc.stdout
+
+
 def copy_segment(src: str, dst: str, start: float, end: float, binary: str = "ffmpeg") -> None:
     """구간을 재인코딩 없이 그대로 떠낸다 — 원본 16:9 미리보기용.
 
@@ -300,6 +322,52 @@ def render_parts(
     _run(args, timeout=1800)
 
 
+def scene_scores(
+    src: str, start: float, duration: float, floor: float = 0.05, binary: str = "ffmpeg"
+) -> list[tuple[float, float]]:
+    """원본의 start 부터 duration 초 안에서 장면 점수가 floor 이상인 프레임들 — (구간 안의 초, 점수).
+
+    장면 점수는 ffmpeg select 필터의 `scene` 이다. 프레임마다 **바로 앞 프레임과 그림이 얼마나 달라졌나** 를 0~1 로
+    매긴다(0 = 같은 그림, 1 = 전부 다른 그림). 한 장면 안에서는 사람이 조금 움직이는 정도라 0.001 안팎이고, 편집자의
+    컷에서는 그림이 통째로 바뀌어 0.4 근처가 나온다(클립 4 실측, pipeline/scenes.py).
+
+    - 폭 320 으로 줄여서 잰다. 점수는 그림 전체의 차이라 해상도에 거의 둔하고, 큰 그림의 비교가 시간을 먹는다.
+      30초에 0.8초(1080p 원본 디코드가 대부분이다)
+    - 🔴 시각은 **파일의 pts** 다 — LLM 이 말한 초가 아니다. `-ss` 를 입력 앞에 둬서 구간 시작이 0 이다
+    - 점수는 select 가 붙인 메타데이터를 metadata=print 로 파일에 받는다. stderr 로그를 긁으면 로그 수준과 빌드에
+      따라 줄 모양이 바뀐다
+    """
+    import re
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="sm-scenes-") as tmp:
+        out = Path(tmp) / "scores.txt"
+        _run(
+            [
+                binary, "-hide_banner", "-nostdin", "-nostats",
+                "-ss", f"{start}", "-t", f"{duration}", "-i", src,
+                "-an", "-sn", "-dn",
+                "-vf", (
+                    f"scale=320:-2,select='gte(scene,{floor})',"
+                    f"metadata=print:key=lavfi.scene_score:file='{_escape_filter_path(str(out))}'"
+                ),
+                "-f", "null", "-",
+            ],
+            timeout=max(60, int(duration * 2)),
+        )
+        text = out.read_text(encoding="utf-8") if out.exists() else ""
+    found: list[tuple[float, float]] = []
+    moment: float | None = None
+    for line in text.splitlines():
+        if (hit := re.search(r"pts_time:([-\d.]+)", line)) is not None:
+            moment = float(hit.group(1))
+        elif (hit := re.search(r"lavfi\.scene_score=([\d.]+)", line)) is not None and moment is not None:
+            found.append((moment, float(hit.group(1))))
+            moment = None
+    return found
+
+
 def video_size(src: str) -> tuple[int, int]:
     """원본 영상의 (폭, 높이). 편집 화면의 창은 이 크기에 대한 비율이라 렌더와 미리보기가 같은 값을 써야 한다.
 
@@ -347,7 +415,7 @@ def render_card(
     card_png: str,
     slot_top: int,
     slot_height: int,
-    crop: dict,
+    crops: list[tuple[float, dict]],
     bridge_sec: float = 0.4,
     subtitle_path: str | None = None,
     binary: str = "ffmpeg",
@@ -357,11 +425,21 @@ def render_card(
     단일 컷도 조각 하나짜리로 같은 길을 간다. 조각이 여럿이면 render_parts 처럼 사이에 브릿지가 들어가는데,
     브릿지는 **칸 크기**의 검은 화면이다 — 카드(배지 · 카피 · 출처)는 점프하는 동안에도 그대로 있다.
 
+    crops 는 장면마다 (클립 안의 시작 초, ffmpeg crop 인자) 다. 클립 안의 초는 조각을 이어 붙인 시간이다(브릿지 제외 —
+    편집 화면의 재생 막대와 같은 시간). 첫 장면은 0초에서 시작한다.
+
+    🔴 조각 하나를 **입력 하나**로 읽고, 장면은 그래프 안에서 `split` + `trim` 으로 가른다. 장면마다 `-ss/-t` 입력을
+    따로 열면 영상은 프레임 단위로, 소리는 샘플 단위로 잘려 장면마다 길이가 조금씩 어긋나고, 그게 쌓여 입이 소리와
+    어긋난다(장면 여섯이면 최대 여섯 프레임). trim 은 프레임의 pts 로 가르므로 장면들을 합치면 원래 프레임과 정확히
+    같고, 소리는 조각째로 둔다.
+
     🔴 바탕 PNG 는 `-loop 1 -framerate {원본 fps}` 로 넣는다. overlay 의 출력 프레임률은 바탕(첫 입력)을 따르므로,
     그냥 넣으면 25fps 로 굳어 30fps 원본이 뚝뚝 끊긴다. 끝은 `shortest=1` 이 영상 쪽에 맞춘다.
     """
     if not parts:
         raise FfmpegError("조각이 없다")
+    if not crops or crops[0][0] > 0:
+        raise FfmpegError("첫 장면이 0초에서 시작하지 않는다")
     fps = video_fps(src, binary)
     slot_height = int(slot_height)
 
@@ -377,19 +455,45 @@ def render_card(
     card_index = len(parts) + (2 if bridges else 0)
     args += ["-loop", "1", "-framerate", f"{fps:g}", "-i", card_png]
 
+    def shape(crop: dict) -> str:
+        return (
+            f"crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']},"
+            f"scale=1080:{slot_height},setsar=1,fps={fps:g}"
+        )
+
     chain: list[str] = []
     order: list[str] = []
-    for index in range(len(parts)):
-        chain.append(
-            f"[{index}:v]crop={crop['w']}:{crop['h']}:{crop['x']}:{crop['y']},"
-            f"scale=1080:{slot_height},setsar=1,fps={fps:g}[v{index}]"
-        )
+    offset = 0.0  # 이 조각이 클립 안에서 시작하는 초
+    for index, (start, end) in enumerate(parts):
+        length = end - start
+        # 이 조각에 걸치는 장면들 — (조각 안의 시작, 조각 안의 끝, crop). 조각 시작에 걸친 장면도 포함한다.
+        pieces: list[tuple[float, float | None, dict]] = []
+        for at, (scene_start, crop) in enumerate(crops):
+            scene_end = crops[at + 1][0] if at + 1 < len(crops) else None
+            local_start = max(scene_start - offset, 0.0)
+            local_end = None if scene_end is None else scene_end - offset
+            if local_start >= length or (local_end is not None and local_end <= 0):
+                continue
+            if local_end is not None and local_end >= length:
+                local_end = None
+            pieces.append((round(local_start, 4), None if local_end is None else round(local_end, 4), crop))
+        if len(pieces) == 1:
+            chain.append(f"[{index}:v]{shape(pieces[0][2])}[v{index}]")
+        else:
+            labels = "".join(f"[s{index}_{k}]" for k in range(len(pieces)))
+            chain.append(f"[{index}:v]split={len(pieces)}{labels}")
+            for k, (a, b, crop) in enumerate(pieces):
+                window = f"start={a}" + (f":end={b}" if b is not None else "")
+                chain.append(f"[s{index}_{k}]trim={window},setpts=PTS-STARTPTS,{shape(crop)}[t{index}_{k}]")
+            joined = "".join(f"[t{index}_{k}]" for k in range(len(pieces)))
+            chain.append(f"{joined}concat=n={len(pieces)}:v=1:a=0[v{index}]")
         chain.append(f"[{index}:a]aresample=48000,aformat=channel_layouts=stereo[a{index}]")
         order += [f"[v{index}]", f"[a{index}]"]
         if index < bridges:
             chain.append(f"[{color_index}:v]trim=duration={bridge_sec},setpts=PTS-STARTPTS,setsar=1[bv{index}]")
             chain.append(f"[{silence_index}:a]atrim=duration={bridge_sec},asetpts=PTS-STARTPTS[ba{index}]")
             order += [f"[bv{index}]", f"[ba{index}]"]
+        offset += length
     chain.append(f"{''.join(order)}concat=n={len(parts) + bridges}:v=1:a=1[cv][ca]")
     chain.append(f"[{card_index}:v]format=yuv420p,setsar=1[bg]")
     chain.append(f"[bg][cv]overlay=x=0:y={int(slot_top)}:shortest=1[ov]")
