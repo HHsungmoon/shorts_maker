@@ -27,13 +27,24 @@
 	color: var(--accent);
 }
 
+/* 제목은 자르지 않는다 — 길면 줄을 바꾼다. 상태 · 버튼은 오른쪽에 남는다(2026-11-08). */
 .sm-edit__title {
+	flex: 1 1 280px;
+	min-width: 0;
 	margin: 0;
 	font-size: 20px;
-	max-width: 520px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
+}
+
+/* 고르기 상자의 화살표. 브라우저 기본 화살표는 오른쪽 끝에 붙어 있었다(2026-11-08 스크린샷) — 직접 그리고
+ * 오른쪽 여백을 왼쪽 글자 여백(.field__input 의 11px)과 같게 둔다. */
+.sm-edit select.field__input {
+	appearance: none;
+	padding-right: 34px;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 11px center;
+	background-size: 12px 8px;
 }
 
 .sm-edit__status {
@@ -184,6 +195,8 @@
 
 .sm-edit__phone {
 	position: relative;
+	/* 자막 글자 크기를 폰 폭(cqw)으로 잰다 — 1080 폭 기준 px 를 그대로 줄인다. */
+	container-type: inline-size;
 	width: 100%;
 	aspect-ratio: 1080 / 1920;
 	overflow: hidden;
@@ -219,17 +232,25 @@
 	display: block;
 }
 
+/* 자막 근사 — 렌더의 ASS 스타일(흰 굵은 글자 · 검은 테두리 · 좌우 여백 60)을 흉내 낸다. 줄마다 한 덩어리. */
 .sm-edit__subtitle {
 	position: absolute;
 	left: 50%;
 	transform: translateX(-50%);
-	padding: 1px 8px;
-	font-size: 11px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	max-width: 88.9%;
 	font-weight: 700;
+	line-height: 1.25;
 	color: #fff;
-	background: rgba(0, 0, 0, 0.45);
-	border: 1px dashed rgba(255, 255, 255, 0.7);
-	border-radius: 4px;
+	text-align: center;
+	text-shadow:
+		0 0 2px #000,
+		1px 1px 0 #000,
+		-1px -1px 0 #000,
+		1px -1px 0 #000,
+		-1px 1px 0 #000;
 	white-space: nowrap;
 	pointer-events: none;
 }
@@ -592,4 +613,147 @@
 .sm-edit__warning--error {
 	color: var(--danger-ink);
 	font-weight: 700;
+}
+
+/* ------------------------------------------------------------ 구간 앞뒤 다듬기 (tease §5-10) */
+
+.sm-edit__trim {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 14px;
+}
+
+.sm-edit__trimlabel {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-right: auto;
+	font-size: 13px;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-edit__trimgroup {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.sm-edit__step {
+	min-width: 44px;
+	padding-left: 6px;
+	padding-right: 6px;
+	font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ 칸 높이 — 템플릿 기본값 표시 */
+
+.sm-edit__slider {
+	position: relative;
+	display: block;
+	padding-bottom: 20px;
+}
+
+.sm-edit__slider input {
+	width: 100%;
+	margin: 0;
+}
+
+/* 막대 위의 기본값 자리. 손잡이 폭(약 16px)만큼 양끝이 줄어든 자리에 놓는다. */
+.sm-edit__mark {
+	position: absolute;
+	top: 18px;
+	left: calc(var(--at) * (100% - 16px) + 8px);
+	transform: translateX(-50%);
+	padding: 0 4px;
+	font-size: 11px;
+	line-height: 16px;
+	white-space: nowrap;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+.sm-edit__mark::before {
+	content: "";
+	position: absolute;
+	top: -5px;
+	left: 50%;
+	width: 1px;
+	height: 5px;
+	background: currentColor;
+}
+
+.sm-edit__mark:hover,
+.sm-edit__mark--on {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+/* ------------------------------------------------------------ 자막 줄 (tease §5-10 "자막 고치기") */
+
+.sm-edit__cues {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 360px;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+
+.sm-edit__cue {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 4px;
+	border-radius: 6px;
+}
+
+.sm-edit__cue .field__input {
+	flex: 1;
+	min-width: 0;
+	padding: 5px 8px;
+	font-size: 14px;
+}
+
+.sm-edit__cue--on {
+	background: var(--accent-soft);
+}
+
+.sm-edit__cue--fixed .field__input {
+	border-color: var(--accent-line);
+}
+
+.sm-edit__cuetime {
+	flex: 0 0 46px;
+	padding: 0;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+.sm-edit__cuetime:hover {
+	color: var(--accent);
+}
+
+.sm-edit__cueundo {
+	flex: 0 0 auto;
+	padding: 0 4px;
+	font-size: 15px;
+	color: var(--text-muted);
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+.sm-edit__cueundo:hover {
+	color: var(--accent);
 }

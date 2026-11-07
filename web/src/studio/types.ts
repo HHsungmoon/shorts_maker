@@ -199,6 +199,31 @@ export interface ClipLayout {
 	subtitles_by: LayoutBy;
 	slot_height: number;
 	windows: ClipWindow[];
+	/** 사람이 고친 자막 문구(tease §5-10 "자막 고치기"). 줄의 원본 시각(at)과 원래 문구(was)가 열쇠다. */
+	subtitle_edits: SubtitleEdit[];
+}
+
+export interface SubtitleEdit {
+	/** 줄의 원본 시각 — 첫 단어의 시작(원본 절대 초). */
+	at: number;
+	/** 원래 문구. 대사가 바뀌면 이것이 달라져 고친 것이 쓰이지 않는다. */
+	was: string;
+	/** 고친 문구. 비었으면 그 줄을 뺀다. */
+	text: string;
+}
+
+/** 자막 한 줄(고치기 전). 시각은 편집 화면의 시간(조각을 그냥 이은 시간, 브릿지 없음)이다. */
+export interface SubtitleCue {
+	start: number;
+	end: number;
+	at: number | null;
+	text: string;
+}
+
+/** 다듬는 중인 구간 — 클립(조합 클립이면 첫 조각)의 처음과 (마지막 조각의) 끝, 원본 절대 초. */
+export interface ClipTrim {
+	start: number;
+	end: number;
 }
 
 export interface LayoutBox {
@@ -256,6 +281,8 @@ export interface ClipEditorState {
 		rendered: boolean;
 		/** 조합 클립의 조각들. 조각이 하나뿐이면 빈 목록이고 start~end 를 돈다. */
 		parts: { ordinal: number; start_sec: number; end_sec: number }[];
+		/** 처음 · 끝을 옮길 수 있는 범위(원본 절대 초) — 그 조각의 청크 안. */
+		bounds: [number, number];
 		renderedAs: "card" | "blur" | null;
 		renderedAt: string | null;
 	};

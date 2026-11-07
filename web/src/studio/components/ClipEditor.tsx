@@ -6,6 +6,7 @@ import {
 	deleteClipLayout,
 	deleteSeriesBadge,
 	fetchClipLayout,
+	fetchClipSubtitles,
 	focusClipScenes,
 	previewClipLayout,
 	renderClip,
@@ -15,16 +16,18 @@ import {
 } from "../api";
 import { useAuth } from "../AuthContext";
 import { useAsync } from "../../shared/useAsync";
-import { time } from "../../shared/format";
 import type {
 	ClipEditorState,
 	ClipLayout,
+	ClipTrim,
 	ClipWindow,
 	FocusHow,
 	LayoutGeometry,
 	SceneFocus,
 	SceneSplit,
 	ShortsTemplate,
+	SubtitleCue,
+	SubtitleEdit,
 } from "../types";
 import type { SourceView } from "../SourcePage";
 import "../editor.css";
@@ -44,6 +47,9 @@ import "../editor.css";
  * 장면마다 창(2026-11-07, tease §5-10): 재생 막대가 장면 칸으로 나뉜다. 상자는 **지금 재생 위치의 장면**의 것이고,
  * 고치면 그 장면 전체에 든다. 장면 경계의 초기값은 서버가 ffmpeg 장면 점수로 잡는다(처음 여는 초안이면 열 때 한 번).
  * 시간은 모두 **클립 안의 초**다 — 조각을 이어 붙인 시간이고 브릿지는 빠진다(서버 render · scenes 와 같은 규칙).
+ *
+ * 구간 앞뒤 다듬기 · 자막 고치기(2026-11-08, tease §5-10): 처음 · 끝을 옮기면 저장 전에도 재생 · 장면 · 자막이 새 구간을
+ * 따른다(서버 호출에 trim 을 함께 보낸다). 저장하면 명세와 구간이 한 번에 쓰인다. 자막은 문구만 고친다 — 시간은 그대로다.
  */
 
 const FRAME_W = 1080;
@@ -58,6 +64,21 @@ const MIN_SCENE_SEC = 0.2;
 const SNAP_SEC = 0.25;
 // 미리보기 요청을 미루는 시간. 글자를 칠 때마다 ffmpeg 를 돌리지 않는다(같은 명세는 서버가 캐시한다).
 const PREVIEW_DELAY_MS = 350;
+// 서버 cutting.TRIM_MIN_PART_SEC · TRIM_MAX_CLIP_SEC 와 같은 값. 조각은 1초 이상, 클립은 쇼츠 상한(3분) 이하.
+const TRIM_MIN_PART_SEC = 1;
+const TRIM_MAX_SEC = 180;
+// 서버 layout.SUBTITLE_TEXT_MAX · subtitles.LINE_CHARS 와 같은 값. 한 줄에 16자쯤, 두 줄로 접힌다.
+const SUBTITLE_TEXT_MAX = 60;
+const SUBTITLE_LINE_CHARS = 16;
+// 자막 줄을 다시 읽기 전에 기다리는 시간 — 처음 · 끝을 0.1초씩 여러 번 누를 때 매번 읽지 않는다.
+const SUBTITLE_DELAY_MS = 300;
+// 처음 · 끝을 옮기는 단추. 0.1초는 단어 하나, 1초는 문장 조각 하나쯤이다.
+const TRIM_STEPS: [string, number][] = [
+	["−1초", -1],
+	["−0.1", -0.1],
+	["+0.1", 0.1],
+	["+1초", 1],
+];
 // 자주 쓰는 칸 비율. 칸 높이 옆에 "약 5:4" 처럼 적어 원티드 숏폼과 견줘 보게 한다.
 const RATIOS: [string, number][] = [
 	["16:9", 607.5],
@@ -120,11 +141,42 @@ interface Timeline {
 	toClip: (s: number) => number;
 }
 
-function makeTimeline(clip: ClipEditorState["clip"]): Timeline {
-	const ranges: Range[] =
-		clip.parts.length > 0
-			? clip.parts.map((p) => [p.start_sec, p.end_sec] as const)
-			: [[clip.start_sec, clip.end_sec] as const];
+/** 저장된 구간들(원본 절대 초). 서버 render.clip_ranges 와 같은 규칙 — 조각이 둘 이상일 때만 조각이다. */
+function clipRanges(clip: ClipEditorState["clip"]): Range[] {
+	return clip.parts.length > 0
+		? clip.parts.map((p) => [p.start_sec, p.end_sec] as const)
+		: [[clip.start_sec, clip.end_sec] as const];
+}
+
+/** 다듬은 구간 — 첫 조각의 처음과 마지막 조각의 끝만 바뀐다(서버 cutting.trim_ranges 와 같은 규칙). */
+function trimRanges(base: Range[], trim: ClipTrim | null): Range[] {
+	if (!trim) {
+		return base;
+	}
+	const out = base.map(([a, b]) => [a, b]);
+	out[0][0] = trim.start;
+	out[out.length - 1][1] = trim.end;
+	return out.map(([a, b]) => [a, b] as const);
+}
+
+/**
+ * 처음을 offset 초 옮긴 뒤의 장면들. 장면 시작 초는 클립 안의 초라 함께 옮긴다. 새 0초를 덮는 장면이 첫 장면이 되고
+ * (0초 뒤 MIN_SCENE_SEC 안에서 시작하는 장면도 첫 장면으로 당긴다 — 그보다 짧은 장면은 없다), 끝 밖으로 나간 장면은 빠진다.
+ */
+function retime(windows: ClipWindow[], offset: number, total: number): ClipWindow[] {
+	const shifted = windows.map((w) => ({ ...w, start: Math.round((w.start - offset) * 1000) / 1000 }));
+	let first = 0;
+	shifted.forEach((w, i) => {
+		if (w.start < MIN_SCENE_SEC) {
+			first = i;
+		}
+	});
+	return shifted
+		.filter((w, i) => i === first || (i > first && w.start <= total - MIN_SCENE_SEC))
+		.map((w, i) => (i === 0 ? { ...w, start: 0 } : w));
+}
+
+function makeTimeline(ranges: Range[]): Timeline {
 	const total = ranges.reduce((sum, [a, b]) => sum + (b - a), 0);
 	return {
 		ranges,
@@ -165,6 +217,33 @@ function sceneAt(windows: ClipWindow[], t: number): number {
 
 function seconds(t: number): string {
 	return `${t.toFixed(1)}초`;
+}
+
+/** 원본 시각 "4:18.2" — 구간을 0.1초 단위로 다듬으니 소수 한 자리까지 보인다. */
+function clockLabel(sec: number): string {
+	const tenths = Math.round(sec * 10);
+	const minutes = Math.floor(tenths / 600);
+	const rest = (tenths % 600) / 10;
+	return `${minutes}:${rest.toFixed(1).padStart(4, "0")}`;
+}
+
+/** 이 줄에 붙는 고친 문구. 서버 subtitles.apply_edits 와 같은 열쇠 — 원본 시각과 원래 문구가 둘 다 맞아야 한다. */
+function editFor(edits: SubtitleEdit[], cue: SubtitleCue): SubtitleEdit | undefined {
+	return cue.at === null ? undefined : edits.find((e) => Math.abs(e.at - (cue.at ?? 0)) <= 0.0005 && e.was === cue.text);
+}
+
+/** 두 줄로 접기. 서버 subtitles.wrap 과 같은 규칙 — 가운데에서 가장 가까운 띄어쓰기에서 접는다. */
+function wrapSubtitle(text: string): string[] {
+	if (text.length <= SUBTITLE_LINE_CHARS) {
+		return [text];
+	}
+	const target = Math.floor(text.length / 2);
+	const spaces = [...text].flatMap((ch, i) => (ch === " " ? [i] : []));
+	if (spaces.length === 0) {
+		return [text.slice(0, target), text.slice(target)];
+	}
+	const cut = spaces.reduce((best, i) => (Math.abs(i - target) < Math.abs(best - target) ? i : best));
+	return [text.slice(0, cut), text.slice(cut + 1)];
 }
 
 const BY_LABEL: Record<ClipWindow["by"], string> = { auto: "기본값", ai: "AI", person: "사람이 고침" };
@@ -228,6 +307,14 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	// 마지막 장면 나누기의 결과(컷 · 번쩍임). 경계를 끌 때 컷에 붙이는 데 쓴다 — 저장하지 않는다.
 	const [sceneInfo, setSceneInfo] = useState<SceneSplit["scenes"] | null>(null);
 	const [sceneNote, setSceneNote] = useState<string | null>(null);
+	const [trimNote, setTrimNote] = useState<string | null>(null);
+	// 다듬는 중인 구간(원본 절대 초). null 이면 저장된 구간 그대로다. 명세와 함께 저장된다.
+	const [trim, setTrimState] = useState<ClipTrim | null>(null);
+	const trimRef = useRef<ClipTrim | null>(null);
+	const setTrim = (value: ClipTrim | null) => {
+		trimRef.current = value;
+		setTrimState(value);
+	};
 	const setDirty = (value: boolean) => {
 		dirtyRef.current = value;
 		setDirtyState(value);
@@ -235,6 +322,9 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	useEffect(() => {
 		if (data && !dirtyRef.current) {
 			setDraft(data.layout);
+			// 저장하고 다시 읽으면 서버의 구간이 새 구간이다.
+			trimRef.current = null;
+			setTrimState(null);
 		}
 	}, [data]);
 
@@ -247,7 +337,61 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	};
 
 	const clipInfo = data?.clip;
-	const timeline = useMemo(() => (clipInfo ? makeTimeline(clipInfo) : null), [clipInfo]);
+	const timeline = useMemo(
+		() => (clipInfo ? makeTimeline(trimRanges(clipRanges(clipInfo), trim)) : null),
+		[clipInfo, trim],
+	);
+
+	// 구간을 옮긴 뒤 보여 줄 자리(클립 안의 초). 🔴 새 구간이 화면에 들어간 **뒤에** 옮긴다 — 재생기는 옛 구간 밖의 시각을
+	// 구간 안으로 되돌린다(RegionStage.step). 자식(RegionStage)의 효과가 부모보다 먼저 돌아 그때는 새 구간을 안다.
+	const pendingSeek = useRef<number | null>(null);
+	const seekClip = useCallback(
+		(t: number, line: Timeline) => {
+			const at = clamp(t, 0, line.total);
+			setClock(at);
+			const video = document.getElementById(`sm-edit-video-${id}`) as HTMLVideoElement | null;
+			if (video) {
+				video.currentTime = line.toSource(at);
+			}
+		},
+		[id],
+	);
+	useEffect(() => {
+		if (pendingSeek.current !== null && timeline) {
+			seekClip(pendingSeek.current, timeline);
+			pendingSeek.current = null;
+		}
+	}, [timeline, seekClip]);
+
+	// ------------------------------------------------------------ 자막 줄(고치기 전)
+	// 구간이 바뀌면 다시 읽는다. 문구를 고치는 것은 명세(subtitle_edits)라 서버를 부르지 않는다.
+	const [cues, setCues] = useState<SubtitleCue[] | null>(null);
+	const [cueError, setCueError] = useState<string | null>(null);
+	const cueKey = timeline ? JSON.stringify(timeline.ranges) : null;
+	useEffect(() => {
+		if (!cueKey) {
+			return;
+		}
+		let alive = true;
+		const timer = window.setTimeout(() => {
+			fetchClipSubtitles(id, trimRef.current)
+				.then((next) => {
+					if (alive) {
+						setCues(next.cues);
+						setCueError(null);
+					}
+				})
+				.catch((error: unknown) => {
+					if (alive) {
+						setCueError(error instanceof Error ? error.message : String(error));
+					}
+				});
+		}, SUBTITLE_DELAY_MS);
+		return () => {
+			alive = false;
+			window.clearTimeout(timer);
+		};
+	}, [cueKey, id]);
 
 	// **지금의** 초안. 미루어 둔 미리보기 요청과 늦게 오는 AI 초점 응답이 보낼 때 · 받을 때의 최신 명세를 읽게 한다.
 	const draftRef = useRef(draft);
@@ -264,7 +408,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			setFocusing(true);
 			setSceneNote("AI 가 장면마다 사람을 찾고 있습니다 — 10~20초 걸립니다");
 			try {
-				const next = await focusClipScenes(id, layout);
+				const next = await focusClipScenes(id, layout, trimRef.current);
 				const current = draftRef.current;
 				const same =
 					current !== null &&
@@ -304,7 +448,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			return;
 		}
 		autoSplit.current = id;
-		splitClipScenes(id, draft)
+		splitClipScenes(id, draft, trimRef.current)
 			.then((next) => {
 				setSceneInfo(next.scenes);
 				// 기다리는 동안 사람이 고치기 시작했으면 덮지 않는다(AI 초점도 부르지 않는다).
@@ -348,7 +492,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			if (!current) {
 				return;
 			}
-			previewClipLayout(id, current)
+			previewClipLayout(id, current, trimRef.current)
 				.then((next) => {
 					// 늦게 온 옛 응답이 최신 미리보기를 덮지 않게 한다.
 					if (mine === seq.current) {
@@ -391,7 +535,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	const cardUrl = preview?.cardUrl ?? data.cardUrl;
 	const srcW = data.source.width;
 	const srcH = data.source.height;
-	const line = timeline ?? makeTimeline(data.clip);
+	const line = timeline ?? makeTimeline(clipRanges(data.clip));
 	const scenes = draft.windows;
 	const scene = sceneAt(scenes, clock);
 	const win = scenes[scene];
@@ -479,11 +623,98 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			return { windows: previous.windows.map((w, i) => (i === index ? { ...w, start } : w)) };
 		});
 
+	// ------------------------------------------------------------ 구간 앞뒤 다듬기
+	const base = clipRanges(data.clip);
+	const ranges = line.ranges;
+	const first = ranges[0];
+	const last = ranges[ranges.length - 1];
+	const lastFrom = line.total - (last[1] - last[0]); // 마지막 조각이 시작하는 클립 안의 초
+
+	// 처음을 start, 끝을 end 로(원본 절대 초). 청크 안 · 조각 1초 이상 · 180초 이하로 맞추고, 장면 시작 초를 함께 옮긴다.
+	// show 는 옮긴 뒤 보여 줄 쪽 — 처음을 옮겼으면 첫 프레임, 끝을 옮겼으면 끝 2초 앞(재생을 누르면 끝이 들린다).
+	const changeTrim = (start: number, end: number, show: "start" | "end") => {
+		const [low, high] = data.clip.bounds;
+		const single = ranges.length === 1;
+		const s0 = Math.round(clamp(start, low, (single ? end : first[1]) - TRIM_MIN_PART_SEC) * 1000) / 1000;
+		const e0 = Math.round(clamp(end, (single ? s0 : last[0]) + TRIM_MIN_PART_SEC, high) * 1000) / 1000;
+		const next = trimRanges(base, { start: s0, end: e0 });
+		const total = next.reduce((sum, [a, b]) => sum + (b - a), 0);
+		if (total > TRIM_MAX_SEC + 1e-6) {
+			setTrimNote(`쇼츠는 ${TRIM_MAX_SEC}초까지입니다 — 더 늘릴 수 없습니다`);
+			return;
+		}
+		const offset = s0 - first[0];
+		const grown = e0 - last[1];
+		if (Math.abs(offset) < 0.0005 && Math.abs(grown) < 0.0005) {
+			setTrimNote(
+				s0 <= low + 0.0005 || e0 >= high - 0.0005
+					? "대사를 받은 범위의 끝입니다 — 더 늘릴 수 없습니다"
+					: "조각은 1초보다 짧아질 수 없습니다",
+			);
+			return;
+		}
+		setTrimNote(null);
+		edit((previous) => ({ windows: retime(previous.windows, offset, total) }));
+		const saved = Math.abs(s0 - base[0][0]) < 0.0005 && Math.abs(e0 - base[base.length - 1][1]) < 0.0005;
+		setTrim(saved ? null : { start: s0, end: e0 });
+		// 장면 나누기가 찾은 컷도 같이 옮긴다(경계를 끌 때 붙는 자리). 처음 · 끝에 낀 장면의 길이도 옮긴 만큼 줄거나 는다.
+		setSceneInfo((info) => {
+			if (!info) {
+				return info;
+			}
+			const head = info.headFlash === null ? null : info.headFlash - offset;
+			const tail = info.tailFlash === null ? null : info.tailFlash + grown;
+			return {
+				...info,
+				cuts: info.cuts.map((cut) => ({ ...cut, t: cut.t - offset })),
+				headFlash: head !== null && head > 0.01 ? head : null,
+				tailFlash: tail !== null && tail > 0.01 ? tail : null,
+			};
+		});
+		pendingSeek.current = show === "start" ? 0 : Math.max(total - 2, 0);
+	};
+
+	const nudgeStart = (delta: number) => changeTrim(first[0] + delta, last[1], "start");
+	const nudgeEnd = (delta: number) => changeTrim(first[0], last[1] + delta, "end");
+	const startHere = () => {
+		if (clock > first[1] - first[0]) {
+			setTrimNote("재생 위치가 첫 조각 밖입니다 — 처음은 첫 조각 안에서만 옮깁니다");
+			return;
+		}
+		changeTrim(line.toSource(clock), last[1], "start");
+	};
+	const endHere = () => {
+		if (clock < lastFrom) {
+			setTrimNote("재생 위치가 마지막 조각 밖입니다 — 끝은 마지막 조각 안에서만 옮깁니다");
+			return;
+		}
+		changeTrim(first[0], line.toSource(clock), "end");
+	};
+
+	// ------------------------------------------------------------ 자막 고치기
+	// 문구만 고친다 — 줄의 시간은 서버가 대사에서 만든 그대로다. 원래 문구로 되돌리면 고친 것에서 뺀다.
+	const setCueText = (cue: SubtitleCue, text: string) => {
+		const at = cue.at;
+		if (at === null) {
+			return;
+		}
+		edit((previous) => {
+			const rest = previous.subtitle_edits.filter((e) => !(Math.abs(e.at - at) <= 0.0005 && e.was === cue.text));
+			return { subtitle_edits: text === cue.text ? rest : [...rest, { at, was: cue.text, text }] };
+		});
+	};
+	const cueNow = cues?.find((cue) => clock >= cue.start && clock < cue.end) ?? null;
+	const subtitleNow = cueNow ? (editFor(draft.subtitle_edits, cueNow)?.text ?? cueNow.text) : null;
+	// 구간 밖이거나 대사가 바뀌어 맞는 줄이 없는 고친 것. 지우지 않는다 — 구간을 되돌리면 다시 붙는다.
+	const unusedEdits = cues ? draft.subtitle_edits.filter((e) => !cues.some((cue) => editFor([e], cue))).length : 0;
+	const slotBase = template ? slotDefault(template) : null;
+	const subtitleSize = Number(template?.spec.blocks.find((b) => b.type === "slot")?.subtitle_size ?? 58);
+
 	// 장면을 (다시) 나누고 AI 초점을 맞춘다. 새 장면은 그 장면 가운데를 덮던 상자를 물려받는다. 사람이 고친 상자는
 	// 새 장면과 1:1 일 때만 사람 것으로 남고(서버 layout.split), 나머지는 AI 가 다시 맞춘다.
 	const resplit = () =>
 		act(async () => {
-			const next = await splitClipScenes(id, draft);
+			const next = await splitClipScenes(id, draft, trimRef.current);
 			setSceneInfo(next.scenes);
 			setSceneNote(null);
 			setDraft(next.layout);
@@ -499,9 +730,11 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			}
 		});
 
+	// 구간은 그대로 둔다 — 다시 읽을 때(act 가 reloadToken 을 올린다) 서버의 새 구간과 함께 비워진다. 지금 비우면 다시
+	// 읽기 전까지 옛 구간 위에 새 장면 시각이 놓인다.
 	const save = () =>
 		act(async () => {
-			const next = await saveClipLayout(id, draft);
+			const next = await saveClipLayout(id, draft, trim);
 			setDirty(false);
 			setDraft(next.layout);
 		});
@@ -509,7 +742,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	const saveAndRender = () =>
 		act(async () => {
 			if (dirty || !data.saved) {
-				const next = await saveClipLayout(id, draft);
+				const next = await saveClipLayout(id, draft, trim);
 				setDirty(false);
 				setDraft(next.layout);
 			}
@@ -530,13 +763,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 				<Link className="sm-edit__back" to={`/studio/sources/${sourceId}/clips`}>
 					← 완성 클립
 				</Link>
-				<h2 className="sm-edit__title" title={data.clip.title ?? undefined}>
-					{data.clip.title ?? `클립 ${data.clip.id}`}
-				</h2>
-				<span className="sm-meta">
-					{Math.round(data.clip.total_sec ?? data.clip.end_sec - data.clip.start_sec)}초 · {time(data.clip.start_sec)}
-					{data.clip.parts.length > 1 ? " 외 이어붙임" : `–${time(data.clip.end_sec)}`}
-				</span>
+				<h2 className="sm-edit__title">{data.clip.title ?? `클립 ${data.clip.id}`}</h2>
 				<span className="sm-edit__status">
 					{!data.saved && !dirty && <span className="sm-edit__chip">처음 여는 초안</span>}
 					{dirty && <span className="sm-edit__chip sm-edit__chip--warn">저장 안 됨</span>}
@@ -546,11 +773,6 @@ export function ClipEditor({ view }: { view: SourceView }) {
 					{data.saved && !dirty && !data.stale && <span className="sm-edit__chip sm-edit__chip--ok">렌더와 같음</span>}
 				</span>
 				<span className="sm-actions sm-actions--end">
-					{data.saved && (
-						<button type="button" className="button button--small" onClick={dropCard}>
-							카드 쓰지 않기
-						</button>
-					)}
 					<button type="button" className="button button--small" onClick={save}>
 						저장
 					</button>
@@ -586,6 +808,46 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							onWindow={changeWindow}
 							onBoundary={moveBoundary}
 						/>
+						{/* 구간 — 원본 어디부터 어디까지인가. 처음 · 끝을 0.1초 · 1초씩 옮기거나 재생 위치로 자른다. */}
+						<div className="sm-edit__trim">
+							<span className="sm-edit__trimlabel">
+								구간 {clockLabel(first[0])}–{clockLabel(last[1])}
+								{ranges.length > 1 ? ` · 조각 ${ranges.length}개` : ""} · {seconds(line.total)}
+								{trim && <span className="sm-edit__chip sm-edit__chip--warn">다듬음</span>}
+							</span>
+							<span className="sm-edit__trimgroup">
+								<span className="sm-meta">처음</span>
+								{TRIM_STEPS.map(([label, delta]) => (
+									<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeStart(delta)}>
+										{label}
+									</button>
+								))}
+								<button type="button" className="button button--small" onClick={startHere} title="재생 위치를 클립의 처음으로">
+									여기부터
+								</button>
+							</span>
+							<span className="sm-edit__trimgroup">
+								<span className="sm-meta">끝</span>
+								{TRIM_STEPS.map(([label, delta]) => (
+									<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeEnd(delta)}>
+										{label}
+									</button>
+								))}
+								<button type="button" className="button button--small" onClick={endHere} title="재생 위치를 클립의 끝으로">
+									여기까지
+								</button>
+							</span>
+							{trim && (
+								<button
+									type="button"
+									className="button button--small"
+									onClick={() => changeTrim(base[0][0], base[base.length - 1][1], "start")}
+								>
+									저장된 구간으로
+								</button>
+							)}
+						</div>
+						{trimNote && <p className="sm-meta sm-edit__scenenote">{trimNote}</p>}
 						<div className="sm-edit__scenetools">
 							<span className="sm-edit__scenelabel">
 								장면 {scene + 1}/{scenes.length} · {seconds(win.start)}–{seconds(sceneEnd)}
@@ -620,7 +882,24 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							<p className="sm-meta sm-edit__scenenote">
 								{sceneInfo.headFlash !== null && `클립 처음 ${sceneInfo.headFlash.toFixed(2)}초는 앞 장면입니다. `}
 								{sceneInfo.tailFlash !== null && `클립 끝 ${sceneInfo.tailFlash.toFixed(2)}초에 다음 장면이 잠깐 보입니다. `}
-								구간 끝을 장면 경계에 맞추면 없어집니다.
+								{sceneInfo.headFlash !== null && (
+									<button
+										type="button"
+										className="button button--small"
+										onClick={() => changeTrim(first[0] + (sceneInfo.headFlash ?? 0), last[1], "start")}
+									>
+										처음을 장면 경계로
+									</button>
+								)}
+								{sceneInfo.tailFlash !== null && (
+									<button
+										type="button"
+										className="button button--small"
+										onClick={() => changeTrim(first[0], last[1] - (sceneInfo.tailFlash ?? 0), "end")}
+									>
+										끝을 장면 경계로
+									</button>
+								)}
 							</p>
 						)}
 					</div>
@@ -641,6 +920,9 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						previewing={previewing && canAct}
 						videoSource={data}
 						timeline={line}
+						subtitle={draft.subtitles ? subtitleNow : null}
+						subtitleSize={subtitleSize}
+						font={template?.spec.font ?? "sans-serif"}
 					/>
 				</div>
 
@@ -712,14 +994,28 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							<span>
 								칸 높이 <em className="sm-edit__count">{draft.slot_height}px · {ratioLabel(draft.slot_height)}</em>
 							</span>
-							<input
-								type="range"
-								min={limits[0]}
-								max={limits[1]}
-								step={2}
-								value={draft.slot_height}
-								onChange={(event) => setSlot(Number(event.target.value))}
-							/>
+							<span className="sm-edit__slider">
+								<input
+									type="range"
+									min={limits[0]}
+									max={limits[1]}
+									step={2}
+									value={draft.slot_height}
+									onChange={(event) => setSlot(Number(event.target.value))}
+								/>
+								{/* 템플릿 기본 칸 높이 자리. 끌어 보다가 처음 모양으로 돌아올 길이다. */}
+								{slotBase !== null && limits[1] > limits[0] && (
+									<button
+										type="button"
+										className={`sm-edit__mark${draft.slot_height === slotBase ? " sm-edit__mark--on" : ""}`}
+										style={{ "--at": (slotBase - limits[0]) / (limits[1] - limits[0]) } as CSSProperties}
+										title={`템플릿 기본 칸 높이 ${slotBase}px — 누르면 돌아갑니다`}
+										onClick={() => setSlot(slotBase)}
+									>
+										기본 {slotBase}
+									</button>
+								)}
+							</span>
 							<span className="sm-meta">
 								{limits[0]}–{limits[1]}. 위·아래 글자가 유튜브 화면에 가리지 않는 범위입니다. 상자의 위·아래 변을 끌어도 바뀝니다.
 							</span>
@@ -737,6 +1033,10 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								가운데 · 가장 크게
 							</button>
 						</div>
+					</section>
+
+					<section className="sm-edit__group">
+						<h3>자막</h3>
 						<label className="sm-edit__check">
 							<input
 								type="checkbox"
@@ -748,6 +1048,65 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								<em className="sm-meta"> — 원본 화면에 자막이 박혀 있으면 끕니다. 자막은 칸 안 아래쪽에 들어갑니다.</em>
 							</span>
 						</label>
+						{draft.subtitles &&
+							(cueError ? (
+								<p className="sm-meta">자막 줄을 읽지 못했습니다 — {cueError}</p>
+							) : cues === null ? (
+								<p className="sm-meta">자막 줄을 읽는 중…</p>
+							) : cues.length === 0 ? (
+								<p className="sm-meta">이 구간에는 대사가 없습니다.</p>
+							) : (
+								<>
+									<p className="sm-meta">
+										문구만 고칩니다 — 시간은 그대로입니다. 비우면 그 줄을 뺍니다. 시각을 누르면 그 자리로 갑니다.
+									</p>
+									<ol className="sm-edit__cues">
+										{cues.map((cue) => {
+											const fixed = editFor(draft.subtitle_edits, cue);
+											const value = fixed?.text ?? cue.text;
+											const on = cue === cueNow;
+											return (
+												<li
+													key={`${cue.at ?? "b"}-${cue.start}`}
+													className={`sm-edit__cue${on ? " sm-edit__cue--on" : ""}${fixed ? " sm-edit__cue--fixed" : ""}`}
+												>
+													<button
+														type="button"
+														className="sm-edit__cuetime"
+														onClick={() => seekClip(cue.start + 0.01, line)}
+													>
+														{seconds(cue.start)}
+													</button>
+													<input
+														className="field__input"
+														value={value}
+														maxLength={SUBTITLE_TEXT_MAX}
+														disabled={cue.at === null}
+														placeholder="(이 줄 빼기)"
+														onChange={(event) => setCueText(cue, event.target.value)}
+													/>
+													{fixed && (
+														<button
+															type="button"
+															className="sm-edit__cueundo"
+															title={`원래 문구로 — ${cue.text}`}
+															aria-label="원래 문구로"
+															onClick={() => setCueText(cue, cue.text)}
+														>
+															↺
+														</button>
+													)}
+												</li>
+											);
+										})}
+									</ol>
+									{unusedEdits > 0 && (
+										<p className="sm-meta">
+											고친 줄 {unusedEdits}개는 지금 구간에 맞는 줄이 없어 쓰이지 않습니다(구간을 되돌리면 다시 붙습니다).
+										</p>
+									)}
+								</>
+							))}
 					</section>
 
 					{(previewError || geometry.warnings.length > 0) && (
@@ -757,6 +1116,21 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								<li key={warning}>{warning}</li>
 							))}
 						</ul>
+					)}
+
+					{data.saved && (
+						<section className="sm-edit__group">
+							<h3>카드 지우기</h3>
+							<p className="sm-meta">
+								저장한 카드 설정을 지우고, 다음 렌더부터 예전 방식(위아래 블러 · 자막만)으로 만듭니다. 이미 구운
+								영상은 다시 렌더할 때까지 그대로입니다.
+							</p>
+							<div className="sm-edit__row">
+								<button type="button" className="button button--small" onClick={dropCard}>
+									카드 지우고 예전 방식으로
+								</button>
+							</div>
+						</section>
 					)}
 
 				</div>
@@ -886,6 +1260,9 @@ function Phone({
 	previewing,
 	videoSource,
 	timeline,
+	subtitle,
+	subtitleSize,
+	font,
 }: {
 	cardUrl: string | null;
 	geometry: LayoutGeometry;
@@ -894,6 +1271,10 @@ function Phone({
 	previewing: boolean;
 	videoSource: ClipEditorState;
 	timeline: Timeline;
+	/** 지금 시각의 자막(고친 문구). 없거나 자막을 껐으면 null. */
+	subtitle: string | null;
+	subtitleSize: number;
+	font: string;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	// 그리기 고리는 한 번만 돌리고, 창 · 칸 높이는 이 ref 로 읽는다(바뀔 때마다 고리를 새로 세우지 않는다).
@@ -955,9 +1336,20 @@ function Phone({
 					height={Math.round((540 * draft.slot_height) / FRAME_W)}
 					style={{ top: pct(top), height: pct(draft.slot_height) }}
 				/>
-				{draft.subtitles && (
-					<span className="sm-edit__subtitle" style={{ bottom: pct(FRAME_H - (top + draft.slot_height) + 36) }}>
-						우리 자막 자리
+				{/* 🔴 브라우저가 그린 근사다(tease §5-10 "자막 고치기") — 문구와 자리를 보는 용도이고 글꼴 · 줄바꿈의 정답은 렌더다.
+				    크기는 1080 폭 기준 px 을 폰 폭(cqw)으로 줄인다. */}
+				{subtitle && (
+					<span
+						className="sm-edit__subtitle"
+						style={{
+							bottom: pct(FRAME_H - (top + draft.slot_height) + 36),
+							fontSize: `calc(${subtitleSize} / ${FRAME_W} * 100cqw)`,
+							fontFamily: `"${font}", sans-serif`,
+						}}
+					>
+						{wrapSubtitle(subtitle).map((text, index) => (
+							<span key={index}>{text}</span>
+						))}
 					</span>
 				)}
 				<span className="sm-edit__safe" style={{ top: 0, height: pct(geometry.safe.top) }} />

@@ -2,6 +2,7 @@ import { request } from "../shared/client";
 import type {
 	ClipEditorState,
 	ClipLayout,
+	ClipTrim,
 	LayoutPreview,
 	PromptCatalog,
 	PromptStandard,
@@ -25,6 +26,7 @@ import type {
 	ShortsStatus,
 	ShortsUtterance,
 	SttFix,
+	SubtitleCue,
 	TranscriptDiff,
 	TranscriptOrigin,
 	YoutubeState,
@@ -437,8 +439,9 @@ export function fetchClipLayout(clipId: number): Promise<ClipEditorState> {
 	return request<ClipEditorState>(`/api/clips/${clipId}/layout`);
 }
 
-export function saveClipLayout(clipId: number, layout: ClipLayout): Promise<ClipEditorState> {
-	return request<ClipEditorState>(`/api/clips/${clipId}/layout`, { method: "PUT", body: { layout } });
+/** 명세를 저장한다. trim 이 있으면 다듬은 구간도 같은 트랜잭션으로 쓴다(tease §5-10 "구간 앞뒤 다듬기"). */
+export function saveClipLayout(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<ClipEditorState> {
+	return request<ClipEditorState>(`/api/clips/${clipId}/layout`, { method: "PUT", body: { layout, trim } });
 }
 
 /** 명세를 지운다 — 다음 렌더는 예전의 블러 렌더다. */
@@ -447,21 +450,27 @@ export function deleteClipLayout(clipId: number): Promise<{ layout: null }> {
 }
 
 /** 저장하지 않은 명세로 글자 층을 그린다. 🔴 행동이다(ffmpeg) — 보기 전용은 부르지 않는다. */
-export function previewClipLayout(clipId: number, layout: ClipLayout): Promise<LayoutPreview> {
-	return request<LayoutPreview>(`/api/clips/${clipId}/layout/preview`, { method: "POST", body: { layout } });
+export function previewClipLayout(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<LayoutPreview> {
+	return request<LayoutPreview>(`/api/clips/${clipId}/layout/preview`, { method: "POST", body: { layout, trim } });
 }
 
 /** 클립을 장면으로 나눠 보낸 초안의 창을 장면마다 하나로 나눈다. 저장하지 않는다(ffmpeg 를 돌려 POST 다). */
-export function splitClipScenes(clipId: number, layout: ClipLayout): Promise<SceneSplit> {
-	return request<SceneSplit>(`/api/clips/${clipId}/layout/scenes`, { method: "POST", body: { layout } });
+export function splitClipScenes(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<SceneSplit> {
+	return request<SceneSplit>(`/api/clips/${clipId}/layout/scenes`, { method: "POST", body: { layout, trim } });
 }
 
 /**
  * [AI 초점] — 사람이 잡지 않은 장면마다 사람을 찾아 상자를 맞춘다. 저장하지 않는다. 🔴 유료 호출이다(Gemini 1회,
  * 클립 4 에서 17초 · 약 20원) — 편집 화면을 열 때 저절로 부르는 것은 처음 여는 초안의 장면 나누기 뒤 한 번뿐이다.
  */
-export function focusClipScenes(clipId: number, layout: ClipLayout): Promise<SceneFocus> {
-	return request<SceneFocus>(`/api/clips/${clipId}/layout/focus`, { method: "POST", body: { layout } });
+export function focusClipScenes(clipId: number, layout: ClipLayout, trim: ClipTrim | null = null): Promise<SceneFocus> {
+	return request<SceneFocus>(`/api/clips/${clipId}/layout/focus`, { method: "POST", body: { layout, trim } });
+}
+
+/** 자막 줄(고치기 전). trim 을 주면 다듬는 중인 구간으로 만든다. DB 만 읽는다(GET) — 보기 전용도 부른다. */
+export function fetchClipSubtitles(clipId: number, trim: ClipTrim | null = null): Promise<{ cues: SubtitleCue[] }> {
+	const query = trim ? `?start=${trim.start}&end=${trim.end}` : "";
+	return request<{ cues: SubtitleCue[] }>(`/api/clips/${clipId}/subtitles${query}`);
 }
 
 export function createSeries(name: string, templateId: number | null): Promise<ShortsSeries> {
