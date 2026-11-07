@@ -188,7 +188,7 @@ class StageCallTest(SchemaTestCase):
     STAGES = (
         "ping", "chunk", "stt", "segment", "describe", "overview", "rank", "cut", "render",
         "caption", "embed", "retrieve", "cluster", "judge", "classify", "locate", "download", "preview",
-        "upload", "livechat", "comment", "reply", "reaction", "analytics", "scenes", "focus",
+        "upload", "livechat", "comment", "reply", "reaction", "analytics", "scenes", "focus", "copy",
     )
 
     def test_rejects_unknown_stage(self):

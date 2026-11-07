@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from . import deps
 from .deps import connect, rows
 from ..adapters import ffmpeg
-from ..pipeline import card, cutting, focus, layout as layouts, render, scenes, templates
+from ..pipeline import card, cutting, focus, headlines, layout as layouts, render, scenes, subtitles, templates
 
 # 🔴 접두사·의존성을 두지 않는다(모듈 머리 주석).
 router = APIRouter()
@@ -94,7 +94,8 @@ def _series_rows(conn: psycopg.Connection) -> list[dict]:
 def _clip(conn: psycopg.Connection, clip_id: int) -> dict:
     clip = conn.execute(
         """select cl.id, cl.title, cl.start_sec, cl.end_sec, cl.total_sec, cl.rendered, cl.layout, cl.render_spec,
-                  sg.chunk_id, s.id as source_id, s.path as source_path, s.channel, s.series_id as source_series_id
+                  sg.chunk_id, s.id as source_id, s.path as source_path, s.channel, s.context,
+                  s.series_id as source_series_id
            from clips cl
            join segments sg on sg.id = cl.segment_id
            join chunks ch on ch.id = sg.chunk_id
@@ -210,6 +211,8 @@ def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, err
             "id": clip["source_id"], "width": resolved["src_w"], "height": resolved["src_h"],
             "channel": clip["channel"], "seriesId": clip["source_series_id"],
             "videoUrl": f"/api/clips/{clip['id']}/source",
+            # 한 프레임의 길이(단축키 ←/→). 못 읽으면 30 이다(ffmpeg.video_fps).
+            "fps": ffmpeg.video_fps(str(deps.cfg.source_file(clip["source_path"]))),
         },
         "layout": resolved["layout"],
         "saved": saved,
@@ -494,6 +497,36 @@ def focus_scenes(clip_id: int, body: LayoutIn) -> dict:
         "layout": resolved["layout"], "geometry": resolved["geometry"],
         "focus": {"scenes": found["scenes"], "called": found["called"], "latencyMs": found["latencyMs"]},
     }
+
+
+@router.post("/clips/{clip_id}/layout/copy")
+def suggest_copy(clip_id: int, body: LayoutIn) -> dict:
+    """[AI 카피 후보] — 보낸 명세의 템플릿 · 구간 · 고친 자막으로 카피 후보 다섯을 받는다(`pipeline/headlines.py`).
+    저장하지 않는다 — 화면이 고른 후보를 카피 칸에 넣는다.
+
+    대사는 **고친 자막 문구를 적용한 것**이다 — 사람이 고친 오타가 카피로 번지지 않게. 실패하면 502(카피는 그대로).
+
+    🔴 유료 호출이라 POST 다 — 보기 전용은 메서드로 403 이 난다.
+    """
+    with connect() as conn:
+        clip = _clip(conn, clip_id)
+        _source_size(clip)
+        parts = _parts(conn, clip_id)
+        ranges = _ranges(conn, clip, parts, body.trim)
+        current = _resolve(conn, clip, body.layout, ranges)
+        cues = subtitles.apply_edits(
+            render.clip_cues(conn, clip, parts, ranges, bridges=False), current["layout"]["subtitle_edits"]
+        )
+        try:
+            found = headlines.run(
+                conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, spec=current["spec"],
+                title=clip["title"], context=clip["context"], transcript=" ".join(c.text for c in cues),
+            )
+        except headlines.NothingToWrite as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except headlines.HeadlineError as exc:
+            raise HTTPException(502, str(exc)) from exc
+    return found
 
 
 @router.get("/clips/{clip_id}/subtitles")

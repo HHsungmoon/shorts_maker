@@ -350,6 +350,47 @@ class TrimTest(LayoutApiTestCase):
         self.assertEqual([0.0, 3000.0], self.opened()["clip"]["bounds"])
 
 
+class CopyTest(LayoutApiTestCase):
+    """[AI 카피 후보] — 저장하지 않고, 대사는 고친 자막 문구를 적용한 것이다."""
+
+    def setUp(self):
+        super().setUp()
+        with store.connect(self.url) as conn:
+            conn.execute(
+                "insert into utterances (chunk_id, idx, start_sec, end_sec, text) values (%s, 0, 12, 20, '수능체제 기준으로')",
+                (self.chunk_id,),
+            )
+            conn.commit()
+
+    def test_candidates_use_the_fixed_subtitles_and_nothing_is_saved(self):
+        layout = self.opened()["layout"] | {
+            "subtitle_edits": [{"at": 12.0, "was": "수능체제 기준으로", "text": "수능최저 기준으로"}]
+        }
+        raw = json.dumps({"candidates": [{"lines": ["수능최저가", "기준이다"], "angle": "결론", "quote": "수능최저 기준으로"}]})
+        with mock.patch.object(gemini, "generate_json", return_value=(raw, {"input_tokens": 10}, 900)) as model:
+            response = self.client.post(f"/api/clips/{self.clip_id}/layout/copy", json={"layout": layout})
+        self.assertEqual(200, response.status_code, response.text)
+        prompt = model.call_args.args[1]
+        self.assertIn("수능최저 기준으로", prompt)
+        self.assertNotIn("수능체제", prompt)
+        self.assertEqual([["수능최저가", "기준이다"]], [c["lines"] for c in response.json()["candidates"]])
+        self.assertIsNone(self.stored("select layout from clips where id = %s", self.clip_id)["layout"])
+
+    def test_a_range_without_dialog_is_refused_before_calling(self):
+        with mock.patch.object(gemini, "generate_json") as model:
+            response = self.client.post(
+                f"/api/clips/{self.clip_id}/layout/copy",
+                json={"layout": self.opened()["layout"], "trim": {"start": 25.0, "end": 35.0}},
+            )
+        self.assertEqual(422, response.status_code)
+        model.assert_not_called()
+
+    def test_a_model_failure_is_a_bad_gateway(self):
+        with mock.patch.object(gemini, "generate_json", side_effect=RuntimeError("quota")):
+            response = self.client.post(f"/api/clips/{self.clip_id}/layout/copy", json={"layout": self.opened()["layout"]})
+        self.assertEqual(502, response.status_code)
+
+
 class SeriesTest(LayoutApiTestCase):
     def test_a_series_name_is_unique(self):
         self.assertEqual(200, self.client.post("/api/series", json={"name": "왓츠인 마이 AI"}).status_code)
@@ -401,6 +442,12 @@ class ReadonlyTest(LayoutApiTestCase):
                 403, self.client.post(f"/api/clips/{self.clip_id}/layout/scenes", json={"layout": draft}).status_code
             )
         probe.assert_not_called()
+        # AI 카피도 유료 호출이다.
+        with mock.patch.object(gemini, "generate_json") as model:
+            self.assertEqual(
+                403, self.client.post(f"/api/clips/{self.clip_id}/layout/copy", json={"layout": draft}).status_code
+            )
+        model.assert_not_called()
         # AI 초점은 유료 호출이다.
         with mock.patch.object(gemini, "generate_json") as model:
             self.assertEqual(
