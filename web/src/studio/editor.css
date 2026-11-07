@@ -72,17 +72,106 @@
 	border-radius: var(--radius);
 }
 
-/* 왼쪽 폰(고정 폭) · 오른쪽 편집. 좁으면 위아래로 쌓는다. */
+/* 왼쪽 설정 · 오른쪽 보기 줄(원본 무대 → 폰 결과). 무대가 한 단을 통째로 쓰던 때는 16:9 무대가 600px 넘게 커져
+ * 설정이 화면 아래로 밀렸다(2026-11-06 크롬 확인). 좁으면 설정이 아래로 내려간다. */
 .sm-edit__grid {
 	display: grid;
-	grid-template-columns: 320px minmax(0, 1fr);
+	grid-template-columns: 340px minmax(0, 1fr);
+	grid-template-areas: "form view";
 	gap: 20px;
 	align-items: start;
 }
 
-@media (max-width: 960px) {
+.sm-edit__grid > .sm-edit__form {
+	grid-area: form;
+}
+
+.sm-edit__grid > .sm-edit__view {
+	grid-area: view;
+}
+
+@media (max-width: 1280px) {
 	.sm-edit__grid {
 		grid-template-columns: minmax(0, 1fr);
+		grid-template-areas:
+			"view"
+			"form";
+	}
+
+	.sm-edit__grid > .sm-edit__form {
+		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+	}
+}
+
+/* 보기 줄. 무대와 폰의 폭을 원본 비율(--src-ar) : 9/16 로 나누면 둘의 세로 길이가 같아진다 — flex-basis 0 이면
+ * 남은 폭이 grow 비율대로 나뉜다. 접기 버튼(24px)과 틈 둘(10px)은 고정 폭이라 나누기 전에 빠진다. */
+.sm-edit__view {
+	--fold-w: 24px;
+	--view-gap: 10px;
+	display: flex;
+	gap: var(--view-gap);
+	align-items: flex-start;
+	min-width: 0;
+}
+
+.sm-edit__view > .sm-edit__main {
+	flex: var(--src-ar) 1 0;
+}
+
+.sm-edit__view > .sm-edit__phonewrap {
+	flex: 0.5625 1 0;
+	min-width: 0;
+	/* 접어서 폰이 커져도 화면 세로를 넘지 않게. 110px 은 위 탭 · 편집 머리 줄 몫이다 — 사이트 머리는 스크롤로 넘긴다(2026-11-07, 더 크게). */
+	max-width: calc((100vh - 110px) * 9 / 16);
+}
+
+/* 접으면 폰이 화면 세로가 허락하는 만큼(위 max-width) 커지고, 무대는 남은 폭을 다 쓴다. 무대를 반으로 고정하면
+ * 폰이 상한에 걸린 뒤 오른쪽이 비었다(2026-11-07 스크린샷). 폰은 줄 폭의 60% 를 넘지 않는다 — 무대가 너무 작으면 상자를 못 잡는다. */
+.sm-edit__view--folded > .sm-edit__main {
+	flex: 1 1 0;
+}
+
+.sm-edit__view--folded > .sm-edit__phonewrap {
+	flex: 0 0 min(calc((100vh - 110px) * 9 / 16), 60%);
+}
+
+.sm-edit__fold {
+	flex: 0 0 var(--fold-w);
+	align-self: stretch;
+	padding: 0;
+	font-size: 18px;
+	line-height: 1;
+	color: var(--text-muted);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	cursor: pointer;
+}
+
+.sm-edit__fold:hover {
+	color: var(--accent);
+	border-color: var(--accent-line);
+}
+
+@media (max-width: 720px) {
+	.sm-edit__view {
+		flex-direction: column;
+	}
+
+	.sm-edit__view > .sm-edit__main,
+	.sm-edit__view--folded > .sm-edit__main {
+		flex: none;
+		width: 100%;
+	}
+
+	.sm-edit__view > .sm-edit__phonewrap {
+		flex: none;
+		width: min(300px, 100%);
+		margin: 0 auto;
+	}
+
+	.sm-edit__fold {
+		display: none;
 	}
 }
 
@@ -301,9 +390,10 @@
 
 .sm-edit__form {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	grid-template-columns: minmax(0, 1fr);
 	gap: 14px;
 	align-items: start;
+	min-width: 0;
 }
 
 .sm-edit__group {
@@ -379,11 +469,22 @@
 
 .sm-edit__badge {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 10px;
 	padding: 8px;
 	background: var(--bg);
 	border-radius: var(--radius);
+}
+
+.sm-edit__badge > .sm-meta {
+	flex: 1 1 160px;
+	min-width: 0;
+}
+
+/* 모양 칸이 좁으면 버튼이 칸 밖으로 넘쳤다(2026-11-06). 줄을 감아 버튼을 아래로 내린다. */
+.sm-edit__badge .button {
+	white-space: nowrap;
 }
 
 .sm-edit__badge img {
@@ -406,11 +507,4 @@
 .sm-edit__warning--error {
 	color: var(--danger-ink);
 	font-weight: 700;
-}
-
-.sm-edit__result video {
-	width: 220px;
-	aspect-ratio: 9 / 16;
-	background: #000;
-	border-radius: var(--radius);
 }

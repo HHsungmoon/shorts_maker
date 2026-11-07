@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-	clipUrl,
 	createSeries,
 	deleteClipLayout,
 	deleteSeriesBadge,
@@ -122,6 +121,8 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	// 🔴 사람이 고치고 아직 저장하지 않았나. 잡이 끝나며 화면이 다시 읽혀도(reloadToken) 고치던 것을 덮지 않는다.
 	const dirtyRef = useRef(false);
 	const [dirty, setDirtyState] = useState(false);
+	// 원본 무대를 접었나. 화면 상태라 저장하지 않는다.
+	const [folded, setFolded] = useState(false);
 	const setDirty = (value: boolean) => {
 		dirtyRef.current = value;
 		setDirtyState(value);
@@ -311,144 +312,153 @@ export function ClipEditor({ view }: { view: SourceView }) {
 			)}
 
 			<div className="sm-edit__grid">
-				<Phone
-					cardUrl={cardUrl}
-					geometry={geometry}
-					draft={draft}
-					background={template?.spec.background ?? "#FFFFFF"}
-					previewing={previewing && canAct}
-					videoSource={data}
-				/>
-
-				<div className="sm-edit__main">
-					<RegionStage
-						data={data}
-						draft={draft}
-						limits={limits}
-						onWindow={(next, slot) => edit(slot === undefined ? { windows: [next] } : { windows: [next], slot_height: slot })}
-					/>
-
-					<div className="sm-edit__form">
-						<section className="sm-edit__group">
-							<h3>모양</h3>
-							<label className="sm-edit__field">
-								<span>템플릿</span>
-								<select
-									className="field__input"
-									value={draft.template_id}
-									onChange={(event) => pickTemplate(Number(event.target.value))}
-								>
-									{data.templates.map((t) => (
-										<option key={t.id} value={t.id} disabled={t.error !== null}>
-											{t.name}
-											{t.error ? " (잘못된 템플릿)" : ""}
-										</option>
-									))}
-								</select>
-							</label>
-							<SeriesField data={data} draft={draft} onSeries={pickSeries} act={act} />
-						</section>
-
-						<section className="sm-edit__group">
-							<h3>카피 · 출처</h3>
-							{Array.from({ length: headline.lines }, (_, index) => {
-								const value = draft.headline[index] ?? "";
-								const over = headline.maxChars > 0 && value.replace(/\s/g, "").length > headline.maxChars;
-								return (
-									<label className="sm-edit__field" key={index}>
-										<span>
-											카피 {index + 1}줄
-											<em className={`sm-edit__count${over ? " sm-edit__count--over" : ""}`}>
-												{value.replace(/\s/g, "").length}/{headline.maxChars}자
-											</em>
-										</span>
-										<input
-											className="field__input"
-											value={value}
-											maxLength={40}
-											placeholder={index === 0 ? "첫 줄(검은 글자)" : "둘째 줄(검은 띠)"}
-											onChange={(event) => {
-												const lines = Array.from({ length: headline.lines }, (_, i) => draft.headline[i] ?? "");
-												lines[index] = event.target.value;
-												edit({ headline: lines });
-											}}
-										/>
-									</label>
-								);
-							})}
-							<label className="sm-edit__field">
-								<span>출처</span>
-								<input
-									className="field__input"
-									value={draft.credit}
-									maxLength={60}
-									placeholder="출처 : 채널 원티드"
-									onChange={(event) => edit({ credit: event.target.value })}
-								/>
-							</label>
-						</section>
-
-						<section className="sm-edit__group">
-							<h3>영상 칸</h3>
-							<label className="sm-edit__field">
-								<span>
-									칸 높이 <em className="sm-edit__count">{draft.slot_height}px · {ratioLabel(draft.slot_height)}</em>
-								</span>
-								<input
-									type="range"
-									min={limits[0]}
-									max={limits[1]}
-									step={2}
-									value={draft.slot_height}
-									onChange={(event) => setSlot(Number(event.target.value))}
-								/>
-								<span className="sm-meta">
-									{limits[0]}–{limits[1]}. 위·아래 글자가 유튜브 화면에 가리지 않는 범위입니다. 상자의 위·아래 변을 끌어도 바뀝니다.
-								</span>
-							</label>
-							<div className="sm-edit__row">
-								<span className={`sm-edit__scale${upscale > SOFT_UPSCALE ? " sm-edit__scale--warn" : ""}`}>
-									원본 {Math.round(win.w * srcW)}px 폭 → 1080 · {upscale <= 1 ? "확대 없음" : `${upscale.toFixed(2)}배 확대`}
-								</span>
-								<button
-									type="button"
-									className="button button--small"
-									onClick={() => edit({ windows: [fitWindow(draft.slot_height, srcW, srcH)] })}
-								>
-									가운데 · 가장 크게
-								</button>
-							</div>
-							<label className="sm-edit__check">
-								<input
-									type="checkbox"
-									checked={draft.subtitles}
-									onChange={(event) => edit({ subtitles: event.target.checked, subtitles_by: "person" })}
-								/>
-								<span>
-									우리 자막 넣기
-									<em className="sm-meta"> — 원본 화면에 자막이 박혀 있으면 끕니다. 자막은 칸 안 아래쪽에 들어갑니다.</em>
-								</span>
-							</label>
-						</section>
-
-						{(previewError || geometry.warnings.length > 0) && (
-							<ul className="sm-edit__warnings">
-								{previewError && <li className="sm-edit__warning--error">{previewError}</li>}
-								{geometry.warnings.map((warning) => (
-									<li key={warning}>{warning}</li>
-								))}
-							</ul>
-						)}
-
-						{data.clip.renderedAs && (
-							<section className="sm-edit__group sm-edit__result">
-								<h3>
-									구운 영상 <em className="sm-meta">({data.clip.renderedAs === "card" ? "카드" : "예전 블러"})</em>
-								</h3>
-								<video controls preload="metadata" src={clipUrl(data.clip.id, data.clip.renderedAt)} />
-							</section>
-						)}
+				{/* 무대(입력)와 폰(결과)을 한 줄에. 폭을 원본 비율 : 9/16 로 나눠 둘의 세로 길이를 맞춘다(--src-ar).
+				    접으면 무대가 반으로 줄고 폰이 커진다 — 상자는 대강 잡고 결과를 크게 볼 때. */}
+				<div
+					className={`sm-edit__view${folded ? " sm-edit__view--folded" : ""}`}
+					style={{ "--src-ar": data.source.width / data.source.height } as CSSProperties}
+				>
+					<div className="sm-edit__main">
+						<RegionStage
+							data={data}
+							draft={draft}
+							limits={limits}
+							onWindow={(next, slot) => edit(slot === undefined ? { windows: [next] } : { windows: [next], slot_height: slot })}
+						/>
 					</div>
+					<button
+						type="button"
+						className="sm-edit__fold"
+						title={folded ? "원본 영상 펼치기" : "원본 영상 접고 결과 크게 보기"}
+						aria-label={folded ? "원본 영상 펼치기" : "원본 영상 접기"}
+						onClick={() => setFolded((value) => !value)}
+					>
+						{folded ? "›" : "‹"}
+					</button>
+					<Phone
+						cardUrl={cardUrl}
+						geometry={geometry}
+						draft={draft}
+						background={template?.spec.background ?? "#FFFFFF"}
+						previewing={previewing && canAct}
+						videoSource={data}
+					/>
+				</div>
+
+				{/* 설정은 무대 아래가 아니라 한 단을 따로 쓴다 — 아래에 두면 상자를 끌면서 칸 높이 · 카피를 볼 수 없다(2026-11-06).
+				    자리(왼쪽 설정 · 가운데 폰 · 오른쪽 무대)는 editor.css 의 grid-template-areas 가 정한다. */}
+				<div className="sm-edit__form">
+					<section className="sm-edit__group">
+						<h3>모양</h3>
+						<label className="sm-edit__field">
+							<span>템플릿</span>
+							<select
+								className="field__input"
+								value={draft.template_id}
+								onChange={(event) => pickTemplate(Number(event.target.value))}
+							>
+								{data.templates.map((t) => (
+									<option key={t.id} value={t.id} disabled={t.error !== null}>
+										{t.name}
+										{t.error ? " (잘못된 템플릿)" : ""}
+									</option>
+								))}
+							</select>
+						</label>
+						<SeriesField data={data} draft={draft} onSeries={pickSeries} act={act} />
+					</section>
+
+					<section className="sm-edit__group">
+						<h3>카피 · 출처</h3>
+						{Array.from({ length: headline.lines }, (_, index) => {
+							const value = draft.headline[index] ?? "";
+							const over = headline.maxChars > 0 && value.replace(/\s/g, "").length > headline.maxChars;
+							return (
+								<label className="sm-edit__field" key={index}>
+									<span>
+										카피 {index + 1}줄
+										<em className={`sm-edit__count${over ? " sm-edit__count--over" : ""}`}>
+											{value.replace(/\s/g, "").length}/{headline.maxChars}자
+										</em>
+									</span>
+									<input
+										className="field__input"
+										value={value}
+										maxLength={40}
+										placeholder={index === 0 ? "첫 줄(검은 글자)" : "둘째 줄(검은 띠)"}
+										onChange={(event) => {
+											const lines = Array.from({ length: headline.lines }, (_, i) => draft.headline[i] ?? "");
+											lines[index] = event.target.value;
+											edit({ headline: lines });
+										}}
+									/>
+								</label>
+							);
+						})}
+						<label className="sm-edit__field">
+							<span>출처</span>
+							<input
+								className="field__input"
+								value={draft.credit}
+								maxLength={60}
+								placeholder="출처 : 채널 원티드"
+								onChange={(event) => edit({ credit: event.target.value })}
+							/>
+						</label>
+					</section>
+
+					<section className="sm-edit__group">
+						<h3>영상 칸</h3>
+						<label className="sm-edit__field">
+							<span>
+								칸 높이 <em className="sm-edit__count">{draft.slot_height}px · {ratioLabel(draft.slot_height)}</em>
+							</span>
+							<input
+								type="range"
+								min={limits[0]}
+								max={limits[1]}
+								step={2}
+								value={draft.slot_height}
+								onChange={(event) => setSlot(Number(event.target.value))}
+							/>
+							<span className="sm-meta">
+								{limits[0]}–{limits[1]}. 위·아래 글자가 유튜브 화면에 가리지 않는 범위입니다. 상자의 위·아래 변을 끌어도 바뀝니다.
+							</span>
+						</label>
+						<div className="sm-edit__row">
+							<span className={`sm-edit__scale${upscale > SOFT_UPSCALE ? " sm-edit__scale--warn" : ""}`}>
+								원본 {Math.round(win.w * srcW)}px 폭 → 1080 · {upscale <= 1 ? "확대 없음" : `${upscale.toFixed(2)}배 확대`}
+							</span>
+							<button
+								type="button"
+								className="button button--small"
+								onClick={() => edit({ windows: [fitWindow(draft.slot_height, srcW, srcH)] })}
+							>
+								가운데 · 가장 크게
+							</button>
+						</div>
+						<label className="sm-edit__check">
+							<input
+								type="checkbox"
+								checked={draft.subtitles}
+								onChange={(event) => edit({ subtitles: event.target.checked, subtitles_by: "person" })}
+							/>
+							<span>
+								우리 자막 넣기
+								<em className="sm-meta"> — 원본 화면에 자막이 박혀 있으면 끕니다. 자막은 칸 안 아래쪽에 들어갑니다.</em>
+							</span>
+						</label>
+					</section>
+
+					{(previewError || geometry.warnings.length > 0) && (
+						<ul className="sm-edit__warnings">
+							{previewError && <li className="sm-edit__warning--error">{previewError}</li>}
+							{geometry.warnings.map((warning) => (
+								<li key={warning}>{warning}</li>
+							))}
+						</ul>
+					)}
+
 				</div>
 			</div>
 		</div>
