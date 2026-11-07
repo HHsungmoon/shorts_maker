@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from . import deps
 from .deps import connect, rows
 from ..adapters import ffmpeg
-from ..pipeline import card, layout as layouts, render, templates
+from ..pipeline import card, focus, layout as layouts, render, scenes, templates
 
 # 🔴 접두사·의존성을 두지 않는다(모듈 머리 주석).
 router = APIRouter()
@@ -107,7 +107,7 @@ def _source_size(clip: dict) -> tuple[int, int]:
 
 def _resolve(conn: psycopg.Connection, clip: dict, raw: dict) -> dict:
     try:
-        return render.resolve(conn, deps.cfg, clip["source_path"], raw)
+        return render.resolve(conn, deps.cfg, clip["source_path"], raw, render.clip_duration(clip))
     except render.RenderError as exc:
         raise HTTPException(422, str(exc)) from exc
     except ffmpeg.FfmpegError as exc:
@@ -131,13 +131,22 @@ def _default(conn: psycopg.Connection, clip: dict, src: tuple[int, int]) -> dict
     )
 
 
+def _parts(conn: psycopg.Connection, clip_id: int) -> list[dict]:
+    return rows(
+        conn, "select ordinal, start_sec, end_sec from clip_parts where clip_id = %s order by ordinal", (clip_id,)
+    )
+
+
+def _ranges(clip: dict, parts: list[dict]) -> list[tuple[float, float]]:
+    """클립이 원본에서 차지하는 구간들 — 렌더(render.render_card)와 같은 규칙이다(조각이 둘 이상일 때만 조각)."""
+    if len(parts) > 1:
+        return [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+    return [(float(clip["start_sec"]), float(clip["end_sec"]))]
+
+
 def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, error: str | None = None) -> dict:
     """편집 화면 한 벌 — 클립 · 원본 · 명세 · 자리 · 목록 · 그려 둔 글자 층."""
-    parts = rows(
-        conn,
-        "select ordinal, start_sec, end_sec from clip_parts where clip_id = %s order by ordinal",
-        (clip["id"],),
-    )
+    parts = _parts(conn, clip["id"])
     series = resolved["series"]
     cached = card.lookup(
         deps.cfg, resolved["spec"], resolved["layout"], series["name"] if series else None, resolved["badge_file"]
@@ -157,6 +166,8 @@ def _view(conn: psycopg.Connection, clip: dict, resolved: dict, saved: bool, err
         "clip": {
             "id": clip["id"], "title": clip["title"], "start_sec": clip["start_sec"], "end_sec": clip["end_sec"],
             "total_sec": clip["total_sec"], "rendered": clip["rendered"],
+            # 장면 시작 초가 놓이는 시간의 길이(조각 합, 브릿지 제외).
+            "duration": render.clip_duration(clip),
             # 조합 클립의 조각들. 화면의 재생기가 이 순서로 돈다(조각 하나뿐이면 start~end).
             "parts": parts if len(parts) > 1 else [],
             "renderedAs": ("card" if snapshot else "blur") if clip["rendered"] else None,
@@ -323,7 +334,9 @@ def get_layout(clip_id: int) -> dict:
         src = _source_size(clip)
         if clip["layout"] is not None:
             try:
-                resolved = render.resolve(conn, deps.cfg, clip["source_path"], clip["layout"])
+                resolved = render.resolve(
+                    conn, deps.cfg, clip["source_path"], clip["layout"], render.clip_duration(clip)
+                )
                 return _view(conn, clip, resolved, saved=True)
             except render.RenderError as exc:
                 # 저장된 명세가 지금은 풀리지 않는다(템플릿이 지워졌다 등). 화면이 열리지 않으면 고칠 길도 없다 —
@@ -385,6 +398,62 @@ def preview_layout(clip_id: int, body: LayoutIn) -> dict:
         except ffmpeg.FfmpegError as exc:
             raise HTTPException(500, f"미리보기를 그리지 못했습니다: {exc}") from exc
     return {"layout": resolved["layout"], "geometry": resolved["geometry"], "cardUrl": f"/api/cards/{png.name}"}
+
+
+@router.post("/clips/{clip_id}/layout/scenes")
+def split_scenes(clip_id: int, body: LayoutIn) -> dict:
+    """클립을 장면으로 나눠 **보낸 명세의 창**을 장면마다 하나로 다시 나눈다. 저장하지 않는다 — 화면이 초안에 넣는다.
+
+    장면 경계는 ffmpeg 장면 점수로 잡는다(`pipeline/scenes.py`, LLM 0회). 새 장면의 상자는 그 장면 가운데를 덮던
+    옛 상자를 물려받는다 — 사람이 고친 상자를 잃지 않는다(`layout.split`).
+
+    🔴 ffmpeg 를 돌리는 행동이라 POST 다 — 보기 전용은 메서드로 403 이 난다. 편집 화면을 여는 GET 에서 돌리지 않는
+    이유도 같다.
+    """
+    with connect() as conn:
+        clip = _clip(conn, clip_id)
+        _source_size(clip)
+        current = _resolve(conn, clip, body.layout)
+        try:
+            found = scenes.detect(
+                conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, source_path=clip["source_path"],
+                ranges=_ranges(clip, _parts(conn, clip_id)),
+            )
+        except ffmpeg.FfmpegError as exc:
+            raise HTTPException(500, f"장면을 나누지 못했습니다: {exc}") from exc
+        windows = layouts.split(current["layout"]["windows"], found["starts"], found["duration"])
+        resolved = _resolve(conn, clip, current["layout"] | {"windows": windows})
+    return {"layout": resolved["layout"], "geometry": resolved["geometry"], "scenes": found}
+
+
+@router.post("/clips/{clip_id}/layout/focus")
+def focus_scenes(clip_id: int, body: LayoutIn) -> dict:
+    """[AI 초점] — 보낸 명세의 장면마다 사람을 찾아 창을 맞춘다(`pipeline/focus.py`). 저장하지 않는다.
+
+    사람이 잡은 창(by=person)은 건드리지 않고 모델에도 보내지 않는다. Gemini 1회(장면마다 프레임 세 장), 클립 4 에서
+    17초 · 약 20원. 실패하면 502 — 창은 그대로이고 화면이 이유를 보인다.
+
+    🔴 유료 호출이라 POST 다 — 보기 전용은 메서드로 403 이 난다. 편집 화면을 여는 GET 에서 부르지 않는다.
+    """
+    with connect() as conn:
+        clip = _clip(conn, clip_id)
+        _source_size(clip)
+        current = _resolve(conn, clip, body.layout)
+        try:
+            found = focus.run(
+                conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, source_path=clip["source_path"],
+                ranges=_ranges(clip, _parts(conn, clip_id)), layout=current["layout"],
+                src_w=current["src_w"], src_h=current["src_h"],
+            )
+        except ffmpeg.FfmpegError as exc:
+            raise HTTPException(500, f"프레임을 뽑지 못했습니다: {exc}") from exc
+        except focus.FocusError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        resolved = _resolve(conn, clip, current["layout"] | {"windows": found["windows"]})
+    return {
+        "layout": resolved["layout"], "geometry": resolved["geometry"],
+        "focus": {"scenes": found["scenes"], "called": found["called"], "latencyMs": found["latencyMs"]},
+    }
 
 
 @router.get("/cards/{name}")

@@ -6,6 +6,7 @@
   3. 배지는 이미지 바이트를 직접 보고 받는다(헤더만 믿지 않는다).
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,7 @@ from unittest import mock
 from fastapi.testclient import TestClient
 from psycopg.types.json import Jsonb
 
-from shorts_maker.adapters import ffmpeg
+from shorts_maker.adapters import ffmpeg, gemini
 from shorts_maker.db import store
 from shorts_maker.http import auth, deps, server
 
@@ -174,6 +175,77 @@ class PreviewTest(LayoutApiTestCase):
         self.assertEqual(404, self.client.get("/api/cards/abc.png").status_code)
 
 
+class ScenesTest(LayoutApiTestCase):
+    """장면 나누기(tease §5-10 "장면마다 창") — ffmpeg 장면 점수로 경계를 잡고 보낸 명세의 창을 장면마다 나눈다."""
+
+    def split(self, draft: dict, scores) -> dict:
+        with mock.patch.object(ffmpeg, "scene_scores", return_value=scores) as probe:
+            response = self.client.post(f"/api/clips/{self.clip_id}/layout/scenes", json={"layout": draft})
+        self.assertEqual(200, response.status_code, response.text)
+        # 클립 10~40초 = 원본 그 구간을 잰다.
+        self.assertEqual((10.0, 30.0), probe.call_args.args[1:3])
+        return response.json()
+
+    def test_the_draft_is_split_at_the_cuts_without_saving(self):
+        draft = self.opened()["layout"]
+        body = self.split(draft, [(8.27, 0.39), (19.28, 0.41), (29.95, 0.46)])
+        windows = body["layout"]["windows"]
+        self.assertEqual([0.0, 8.27, 19.28], [w["start"] for w in windows])
+        # 새 장면은 옛 상자를 물려받는다 — 나누기만 해서는 화면이 바뀌지 않는다.
+        self.assertEqual({draft["windows"][0]["x"]}, {w["x"] for w in windows})
+        self.assertEqual(3, len(body["geometry"]["crops"]))
+        self.assertAlmostEqual(0.05, body["scenes"]["tailFlash"], places=2)
+        self.assertIsNone(self.stored("select layout from clips where id = %s", self.clip_id)["layout"])
+        self.assertEqual(1, self.stored("select count(*) as n from stage_calls where stage = 'scenes'")["n"])
+
+    def test_a_split_layout_saves_and_reopens(self):
+        draft = self.split(self.opened()["layout"], [(8.27, 0.39)])["layout"]
+        draft["windows"][1] |= {"x": 0.2, "by": "person"}
+        response = self.client.put(f"/api/clips/{self.clip_id}/layout", json={"layout": draft})
+        self.assertEqual(200, response.status_code, response.text)
+        reopened = self.opened()["layout"]["windows"]
+        self.assertEqual([0.0, 8.27], [w["start"] for w in reopened])
+        self.assertEqual("person", reopened[1]["by"])
+
+    def test_a_scene_past_the_clip_end_is_refused(self):
+        draft = self.opened()["layout"]
+        draft["windows"] = [draft["windows"][0], draft["windows"][0] | {"start": 31.0}]
+        self.assertEqual(422, self.client.put(f"/api/clips/{self.clip_id}/layout", json={"layout": draft}).status_code)
+
+
+class FocusTest(LayoutApiTestCase):
+    """AI 초점(tease §5-10 "포커스 규칙") — 장면마다 사람을 찾아 창을 맞춘다. 저장하지 않는다."""
+
+    CLOSE_UP = {"scene": 1, "people": [{"box_2d": [53, 362, 1000, 804], "head_2d": [52, 483, 501, 680]}], "speaker": 0}
+
+    def focus(self, draft: dict, **model) -> object:
+        with (
+            mock.patch.object(ffmpeg, "frame_jpeg", return_value=b"jpeg"),
+            mock.patch.object(gemini, "generate_json", **model) as called,
+        ):
+            response = self.client.post(f"/api/clips/{self.clip_id}/layout/focus", json={"layout": draft})
+        self.called = called
+        return response
+
+    def test_the_draft_gets_ai_windows_without_saving(self):
+        reply = (json.dumps({"scenes": [self.CLOSE_UP]}), {"input_tokens": 900}, 1200)
+        response = self.focus(self.opened()["layout"], return_value=reply)
+        self.assertEqual(200, response.status_code, response.text)
+        body = response.json()
+        window = body["layout"]["windows"][0]
+        self.assertEqual("ai", window["by"])
+        # 원본 가운데(0.5)가 아니라 사람의 가운데(0.582)다.
+        self.assertAlmostEqual(0.582, window["x"] + window["w"] / 2, places=2)
+        self.assertEqual("one", body["focus"]["scenes"][0]["how"])
+        self.assertIsNone(self.stored("select layout from clips where id = %s", self.clip_id)["layout"])
+        self.assertEqual(1, self.stored("select count(*) as n from stage_calls where stage = 'focus'")["n"])
+
+    def test_a_model_failure_is_a_bad_gateway_that_says_why(self):
+        response = self.focus(self.opened()["layout"], side_effect=gemini.GeminiError("일일 할당량"))
+        self.assertEqual(502, response.status_code)
+        self.assertIn("일일 할당량", response.json()["detail"])
+
+
 class SeriesTest(LayoutApiTestCase):
     def test_a_series_name_is_unique(self):
         self.assertEqual(200, self.client.post("/api/series", json={"name": "왓츠인 마이 AI"}).status_code)
@@ -217,6 +289,18 @@ class ReadonlyTest(LayoutApiTestCase):
         draft = self.opened()["layout"]
         self.assertEqual(403, self.client.post(f"/api/clips/{self.clip_id}/layout/preview", json={"layout": draft}).status_code)
         self.assertEqual(403, self.client.put(f"/api/clips/{self.clip_id}/layout", json={"layout": draft}).status_code)
+        # 장면 나누기도 ffmpeg 를 돌리는 행동이다.
+        with mock.patch.object(ffmpeg, "scene_scores") as probe:
+            self.assertEqual(
+                403, self.client.post(f"/api/clips/{self.clip_id}/layout/scenes", json={"layout": draft}).status_code
+            )
+        probe.assert_not_called()
+        # AI 초점은 유료 호출이다.
+        with mock.patch.object(gemini, "generate_json") as model:
+            self.assertEqual(
+                403, self.client.post(f"/api/clips/{self.clip_id}/layout/focus", json={"layout": draft}).status_code
+            )
+        model.assert_not_called()
         self.still.assert_not_called()
 
     def test_readonly_sees_a_card_an_admin_already_drew(self):

@@ -152,22 +152,34 @@ DAILY_QUOTA_HINT = (
 )
 
 
-def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tuple[str, dict, int]:
+def generate_json(
+    cfg: config.Config, prompt: str, response_schema: dict, images: list[tuple[str, bytes]] | None = None
+) -> tuple[str, dict, int]:
     """JSON 을 강제해서 한 번 호출한다. (본문, 사용량, 소요 ms) 를 돌려준다.
 
     response_schema 를 쓰는 이유는 편의가 아니라 **런타임 동작**이다 — 응답이 스키마로
     강제되면 "JSON 이 깨져서 재시도" 라는 실패 경로 자체가 사라진다. 우리가 검증해야 할 건
     형식이 아니라 내용(인덱스가 실제로 존재하는가)만 남는다(§12).
+
+    images: (이름표, JPEG 바이트) 목록. 이름표 글 바로 뒤에 그 그림이 붙는다 — 프롬프트가 "장면 2 의 B" 처럼 그림을
+    가리킬 수 있게. 그림이 있으면 저해상도로 보낸다(아래 실측).
     """
     import logging
     import time
 
     from google.genai import types
 
-    config = types.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=response_schema,
-    )
+    settings: dict = {"response_mime_type": "application/json", "response_schema": response_schema}
+    contents: object = prompt
+    if images:
+        # 🔴 저해상도. 클립 4(장면 6 × 프레임 3, 폭 768) 실측(2026-11-07): 기본 해상도 입력 20,123 토큰 → 저해상도
+        # 5,075 토큰. 사람 상자 좌표 차이는 1000 기준 5 안쪽, 말하는 사람 판단은 같았다(pipeline/focus.py).
+        settings["media_resolution"] = types.MediaResolution.MEDIA_RESOLUTION_LOW
+        parts: list = [prompt]
+        for label, data in images:
+            parts += [label, types.Part.from_bytes(data=data, mime_type="image/jpeg")]
+        contents = parts
+    config = types.GenerateContentConfig(**settings)
     active = client(cfg)
     started = time.monotonic()
 
@@ -176,7 +188,7 @@ def generate_json(cfg: config.Config, prompt: str, response_schema: dict) -> tup
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             response = active.models.generate_content(
-                model=cfg.gemini_model, contents=prompt, config=config
+                model=cfg.gemini_model, contents=contents, config=config
             )
             break
         except Exception as exc:
