@@ -264,6 +264,26 @@ class CardRenderTest(RenderTestCase):
         self.assertEqual("잡소리", snapshot["series"]["name"])
         self.assertTrue(self.recorded()["card"])
 
+    def test_the_snapshot_keeps_the_range_rendered(self):
+        # 구간만 다듬어도 "렌더한 영상과 다름" 이 뜨는 근거(http/layouts._stale).
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id)
+        with mock.patch.object(ffmpeg, "render_card"):
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        snapshot = self.conn.execute("select render_spec from clips where id = %s", (clip_id,)).fetchone()["render_spec"]
+        self.assertEqual([[0.0, 30.0]], snapshot["ranges"])
+
+    def test_edited_subtitle_text_is_burned(self):
+        # "0번 발화"(0~10초)는 단어 시각이 없어 발화 하나가 한 줄이다 — 원본 시각 0.0 이 열쇠.
+        clip_id = self.clip(0, 30, None)
+        self.with_layout(clip_id, subtitle_edits=[{"at": 0.0, "was": "0번 발화", "text": "영번 발화"}])
+        with mock.patch.object(ffmpeg, "render_card") as card_render:
+            render.run_for_clip(self.conn, self.cfg, clip_id, force=True)
+        text = Path(card_render.call_args.kwargs["subtitle_path"]).read_text(encoding="utf-8")
+        self.assertIn("영번 발화", text)
+        self.assertNotIn("0번 발화", text)
+        self.assertIn("0:00:00.00,0:00:10.00", text)
+
     def test_the_layout_can_turn_subtitles_off(self):
         # 원본 화면에 자막이 박혀 있으면 우리 자막을 끈다 — 잡소리 원본이 그렇다.
         clip_id = self.clip(0, 30, None)

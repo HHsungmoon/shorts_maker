@@ -116,5 +116,42 @@ class AssOutputTest(unittest.TestCase):
         self.assertEqual(len([l for l in body.splitlines() if l.startswith("Dialogue")]), 2)
 
 
+class EditTest(unittest.TestCase):
+    """사람이 고친 문구(tease §5-10 "자막 고치기") — 원본 시각과 원래 문구가 열쇠, 시간은 그대로."""
+
+    def cues(self, clip_start=1200.0):
+        return sub.build_cues(
+            [utterance(0, 1201.0, 1203.0, "수능체제 기준으로"), utterance(1, 1204.0, 1206.0, "다음 말")],
+            clip_start=clip_start, clip_end=1260.0,
+        )
+
+    def test_a_cue_remembers_where_its_first_word_was_in_the_source(self):
+        # 구간 처음을 1202 로 다듬어 첫 줄이 잘려도 열쇠는 그대로 원본 시각이다(시작은 0 으로 잘린다).
+        self.assertEqual([1201.0, 1204.0], [c.at for c in self.cues()])
+        trimmed = self.cues(clip_start=1202.0)
+        self.assertEqual((0.0, 1201.0), (trimmed[0].start, trimmed[0].at))
+
+    def test_the_text_changes_and_the_time_does_not(self):
+        out = sub.apply_edits(self.cues(), [{"at": 1201.0, "was": "수능체제 기준으로", "text": "수능최저 기준으로"}])
+        self.assertEqual(["수능최저 기준으로", "다음 말"], [c.text for c in out])
+        self.assertEqual((1.0, 3.0), (out[0].start, out[0].end))
+
+    def test_an_emptied_line_is_dropped(self):
+        out = sub.apply_edits(self.cues(), [{"at": 1204.0, "was": "다음 말", "text": ""}])
+        self.assertEqual(["수능체제 기준으로"], [c.text for c in out])
+
+    def test_an_edit_for_a_sentence_that_changed_is_not_used(self):
+        # 대사를 갈아 끼워 같은 시각에 다른 문장이 왔다 — 시각만 보고 붙이면 엉뚱한 줄이 바뀐다.
+        out = sub.apply_edits(self.cues(), [{"at": 1201.0, "was": "수능 체제 기준으로", "text": "엉뚱한 문구"}])
+        self.assertEqual(["수능체제 기준으로", "다음 말"], [c.text for c in out])
+
+    def test_the_editor_timeline_has_no_bridges(self):
+        # 편집 화면의 재생 막대는 조각을 그냥 잇는다 — 브릿지 줄도 브릿지만큼 미는 것도 없다.
+        parts = [[utterance(0, 0.0, 5.0, "첫")], [utterance(1, 600.0, 605.0, "둘")]]
+        cues = sub.build_part_cues(parts, [(0.0, 10.0), (600.0, 610.0)], bridges=False)
+        self.assertEqual([("첫", 0.0), ("둘", 10.0)], [(c.text, c.start) for c in cues])
+        self.assertEqual([0.0, 600.0], [c.at for c in cues])
+
+
 if __name__ == "__main__":
     unittest.main()

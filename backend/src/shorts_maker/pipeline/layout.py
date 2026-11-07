@@ -9,7 +9,8 @@
       "credit": "출처 : 채널 원티드",
       "subtitles": true, "subtitles_by": "auto",
       "slot_height": 853,
-      "windows": [{"start": 0, "end": null, "x": 0.16, "y": 0.0, "w": 0.67, "by": "person"}]
+      "windows": [{"start": 0, "end": null, "x": 0.16, "y": 0.0, "w": 0.67, "by": "person"}],
+      "subtitle_edits": [{"at": 258.433, "was": "수능체제 기준으로", "text": "수능최저 기준으로"}]
     }
 
 - **창(window)** 은 원본에서 칸에 보여 줄 영역이다. x · y · w 는 원본 폭 · 높이에 대한 **비율**이다(해상도가 바뀌어도
@@ -21,6 +22,9 @@
   end 는 저장할 때 다음 창의 start 로 채운다(마지막은 null) — 화면이 보낸 end 는 믿지 않는다.
   장면 경계의 초기값은 `scenes.detect`(ffmpeg 장면 점수)가 내고 사람이 고친다. 🔴 LLM 이 경계 시각을 정하지 않는다.
 - 칸 높이는 클립에 하나다. 카드 모양이 장면마다 바뀌면 안 된다 — 칸 높이를 바꾸면 모든 창이 그 비율로 다시 맞는다.
+- **subtitle_edits** 는 사람이 고친 자막 문구다(2026-11-08, tease §5-10 "자막 고치기"). 줄은 렌더할 때 대사에서 만들고,
+  고친 것은 줄의 원본 시각(at, 첫 단어의 시작 · 원본 절대 초)과 원래 문구(was)를 열쇠로 붙인다(`subtitles.apply_edits`).
+  시간은 고치지 않는다. text 가 빈 문자열이면 그 줄을 뺀다.
 
 🔴 **칸 높이 ≤ 1080 이고 창 폭이 원본 1080px 이상이면 확대가 없다**(1080p 원본). 창을 좁게 잡을수록 확대가
 커져 흐려진다 — `geometry` 가 배율과 경고를 돌려주고 편집 화면이 그대로 보여 준다.
@@ -45,6 +49,10 @@ MAX_WINDOWS = 60
 # 다시 나눌 때 사람이 잡은 상자가 사람 것으로 남는 몫(`split`). 경계가 조금(5초 장면에서 0.3초) 옮겨진 것은 남고,
 # 장면 여럿을 덮던 상자는 내려간다.
 KEEP_PERSON = 0.8
+# 고친 자막 한 줄의 상한 · 고친 줄 수의 상한. 자막 한 줄은 두 줄 32자로 접힌다(subtitles.MAX_CHARS) — 60자는 오타를
+# 고친 것이 아니라 붙여넣기 사고다. 300줄이면 3분 클립의 모든 줄을 고치고도 남는다.
+SUBTITLE_TEXT_MAX = 60
+SUBTITLE_EDITS_MAX = 300
 
 
 class LayoutError(ValueError):
@@ -158,6 +166,7 @@ def default(
         "subtitles_by": "auto",
         "slot_height": slot_height,
         "windows": [fit_window(slot_height, src_w, src_h)],
+        "subtitle_edits": [],
     }
 
 
@@ -221,7 +230,37 @@ def validate(raw: object, spec: dict, src_w: int, src_h: int, duration: float | 
         "subtitles_by": subtitles_by,
         "slot_height": int(slot_height),
         "windows": fitted,
+        "subtitle_edits": _subtitle_edits(raw.get("subtitle_edits", [])),
     }
+
+
+def _subtitle_edits(raw: object) -> list[dict]:
+    """고친 자막 — 검사 · 정리. 고치지 않은 줄(원래 문구와 같다)은 버리고, 같은 시각이 둘이면 뒤의 것을 남긴다.
+
+    원래 문구(was)는 손대지 않는다 — 렌더가 만든 줄의 문구와 글자 그대로 맞춰 보는 열쇠다.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise LayoutError("고친 자막은 목록이어야 한다")
+    if len(raw) > SUBTITLE_EDITS_MAX:
+        raise LayoutError(f"고친 자막이 {SUBTITLE_EDITS_MAX}줄을 넘는다")
+    out: dict[float, dict] = {}
+    for edit in raw:
+        if not isinstance(edit, dict):
+            raise LayoutError("고친 자막은 객체여야 한다")
+        at = round(_number(edit.get("at"), "고친 자막의 시각"), 3)
+        was, text = edit.get("was"), edit.get("text")
+        if not isinstance(was, str) or not isinstance(text, str):
+            raise LayoutError("고친 자막의 문구는 문자열이어야 한다")
+        text = " ".join(text.split())
+        if len(text) > SUBTITLE_TEXT_MAX:
+            raise LayoutError(f"자막 한 줄이 {SUBTITLE_TEXT_MAX}자를 넘는다")
+        if text == " ".join(was.split()):
+            out.pop(at, None)
+            continue
+        out[at] = {"at": at, "was": was, "text": text}
+    return [out[at] for at in sorted(out)]
 
 
 def _windows(raw: object, slot_height: int, src_w: int, src_h: int, duration: float | None) -> list[dict]:

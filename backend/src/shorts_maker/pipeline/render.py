@@ -61,13 +61,40 @@ def load_parts(conn: psycopg.Connection, clip_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def part_utterances(conn: psycopg.Connection, part: dict) -> list[dict]:
+def range_utterances(conn: psycopg.Connection, chunk_id: int, start: float, end: float) -> list[dict]:
     rows = conn.execute(
         """select idx, start_sec, end_sec, text, words from utterances
            where chunk_id = %s and end_sec > %s and start_sec < %s order by idx""",
-        (part["chunk_id"], part["start_sec"], part["end_sec"]),
+        (chunk_id, start, end),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def part_utterances(conn: psycopg.Connection, part: dict) -> list[dict]:
+    return range_utterances(conn, part["chunk_id"], part["start_sec"], part["end_sec"])
+
+
+def clip_ranges(clip: dict, parts: list[dict]) -> list[tuple[float, float]]:
+    """클립이 원본에서 차지하는 구간들. 조각이 둘 이상일 때만 조각이고, 아니면 클립의 start~end 다."""
+    if len(parts) > 1:
+        return [(float(p["start_sec"]), float(p["end_sec"])) for p in parts]
+    return [(float(clip["start_sec"]), float(clip["end_sec"]))]
+
+
+def clip_cues(
+    conn: psycopg.Connection, clip: dict, parts: list[dict], ranges: list[tuple[float, float]], *, bridges: bool = True
+) -> list[subtitles.Cue]:
+    """카드 클립의 자막 줄(고치기 전). 렌더와 편집 화면이 같은 길로 만든다 — 편집 화면이 고친 줄이 렌더에서 맞는 줄에 붙는다.
+
+    ranges 는 `clip_ranges` 와 같은 모양이고 구간을 다듬는 중이면 다듬은 값이다(`cutting.trim_ranges`). 편집 화면은
+    브릿지가 없는 시간을 쓴다(`bridges=False`).
+    """
+    if len(ranges) > 1:
+        return subtitles.build_part_cues(
+            [range_utterances(conn, p["chunk_id"], a, b) for p, (a, b) in zip(parts, ranges)], ranges, bridges=bridges
+        )
+    start, end = ranges[0]
+    return subtitles.build_cues(range_utterances(conn, clip["chunk_id"], start, end), start, end)
 
 
 def render_combined(
@@ -242,20 +269,11 @@ def render_card(
         series["name"] if series else None, resolved["badge_file"],
     )
 
-    ranges = [(float(p["start_sec"]), float(p["end_sec"])) for p in parts] if len(parts) > 1 else [
-        (float(clip["start_sec"]), float(clip["end_sec"]))
-    ]
+    ranges = clip_ranges(clip, parts)
     subtitle_path, cue_count = None, 0
     if layout["subtitles"] and burn_subtitles:
-        if len(parts) > 1:
-            cues = subtitles.build_part_cues([part_utterances(conn, p) for p in parts], ranges)
-        else:
-            rows = conn.execute(
-                """select idx, start_sec, end_sec, text, words from utterances
-                   where chunk_id = %s and end_sec > %s and start_sec < %s order by idx""",
-                (clip["chunk_id"], clip["start_sec"], clip["end_sec"]),
-            ).fetchall()
-            cues = subtitles.build_cues([dict(r) for r in rows], ranges[0][0], ranges[0][1])
+        # 사람이 고친 문구를 붙인다(시각은 그대로, 비운 줄은 빠진다 — tease §5-10 "자막 고치기").
+        cues = subtitles.apply_edits(clip_cues(conn, clip, parts, ranges), layout["subtitle_edits"])
         if cues:
             subtitle_path = card_subtitles(cues, out_dir / f"clip{clip['id']:03d}.ass", spec, geometry)
             cue_count = len(cues)
@@ -276,6 +294,8 @@ def render_card(
         "template": {"id": resolved["template"]["id"], "name": resolved["template"]["name"], "spec": spec},
         "series": {k: series[k] for k in ("id", "name", "badge_path")} if series else None,
         "source": {"width": resolved["src_w"], "height": resolved["src_h"]},
+        # 원본에서 구운 구간. 구간만 다듬어도 "렌더한 영상과 다름" 이 뜨게 한다(http/layouts._view).
+        "ranges": [[round(a, 3), round(b, 3)] for a, b in ranges],
         "card": png.name,
         "subtitles": bool(subtitle_path),
         "rendered_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

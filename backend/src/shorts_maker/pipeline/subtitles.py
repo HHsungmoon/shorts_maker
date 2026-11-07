@@ -30,6 +30,9 @@ class Cue:
     start: float
     end: float
     text: str
+    # 줄의 **원본 시각** — 첫 단어의 시작(원본 절대 초, 구간 처음으로 자르기 전 값). 사람이 고친 문구를 이 줄에 다시
+    # 붙이는 열쇠다(`apply_edits`). 브릿지 줄처럼 대사가 아닌 줄은 None.
+    at: float | None = None
 
 
 def _words_of(utterance: dict) -> list[dict]:
@@ -58,7 +61,8 @@ def build_cues(
         if not buffer:
             return
         text = "".join(w["text"] for w in buffer).strip()
-        start = max(buffer[0]["start"], clip_start) - clip_start
+        first = buffer[0]["start"]
+        start = max(first, clip_start) - clip_start
         end = min(buffer[-1]["end"], clip_end) - clip_start
         buffer.clear()
         if not text or end <= start:
@@ -66,7 +70,7 @@ def build_cues(
         # 너무 짧게 스치는 자막은 읽히지 않는다. 다음 자막을 밀지 않는 선에서 살짝 늘린다.
         if end - start < MIN_SEC:
             end = min(start + MIN_SEC, clip_end - clip_start)
-        cues.append(Cue(round(start, 3), round(end, 3), text))
+        cues.append(Cue(round(start, 3), round(end, 3), text, round(float(first), 3)))
 
     for utterance in utterances:
         if utterance["end_sec"] <= clip_start or utterance["start_sec"] >= clip_end:
@@ -156,6 +160,7 @@ def build_part_cues(
     parts: list[tuple[float, float]],
     bridge_sec: float = 0.4,
     bridge_text: str = "{position}에서 이어집니다",
+    bridges: bool = True,
 ) -> list[Cue]:
     """조각들을 이어붙인 **하나의 타임라인** 기준 자막을 만든다.
 
@@ -165,6 +170,9 @@ def build_part_cues(
     🔴 브릿지 카드의 글자도 **같은 자막 파일**에 넣는다. 점프를 숨기지 않고 읽히게 만드는 쪽이
     낫다 — 시청자는 "편집됐다" 를 알고 봐야 한다(tease §5-6). 별도 필터를 쓰지 않아 필터 그래프도
     단순해진다.
+
+    `bridges=False` 는 편집 화면의 시간이다 — 재생 막대는 조각을 그냥 이어 붙이고 브릿지가 없다(장면 시작 초와 같은
+    시간). 그때는 브릿지 줄도, 브릿지만큼 미는 것도 없다.
     """
     if len(part_utterances) != len(parts):
         raise ValueError(f"조각 수가 안 맞는다: 발화 {len(part_utterances)}, 범위 {len(parts)}")
@@ -172,9 +180,9 @@ def build_part_cues(
     offset = 0.0
     for index, (utterances, (start, end)) in enumerate(zip(part_utterances, parts)):
         for cue in build_cues(utterances, start, end):
-            cues.append(Cue(round(cue.start + offset, 3), round(cue.end + offset, 3), cue.text))
+            cues.append(Cue(round(cue.start + offset, 3), round(cue.end + offset, 3), cue.text, cue.at))
         offset += end - start
-        if index < len(parts) - 1:
+        if bridges and index < len(parts) - 1:
             # 다음 조각이 원본의 어디인지 알려준다. 분만 쓰면 같은 분 안의 점프가 "0분에서"가 되어
             # 이상하다 — 영상 위치는 사람들이 늘 mm:ss 로 말한다.
             at = parts[index + 1][0]
@@ -184,3 +192,30 @@ def build_part_cues(
             )
             offset += bridge_sec
     return cues
+
+
+# 고친 줄을 원래 줄에 붙일 때의 시각 허용치. 둘 다 소수 셋째 자리로 반올림한 값이라 같은 줄이면 0 이다.
+EDIT_AT_TOLERANCE = 0.0005
+
+
+def apply_edits(cues: list[Cue], edits: list[dict]) -> list[Cue]:
+    """사람이 고친 문구를 줄에 붙인다(tease §5-10 "자막 고치기"). 시작 · 끝은 그대로 — 문구만 바뀐다.
+
+    줄은 **원본 시각(at)과 원래 문구(was)가 둘 다 맞을 때만** 고친다. 대사를 갈아 끼우면(출처 · 교정 사전) 같은 시각에
+    다른 문장이 올 수 있다 — 시각만 보면 엉뚱한 줄에 붙는다. 맞는 줄이 없는 고침은 조용히 쓰이지 않는다(편집 화면이
+    개수로 알린다). 고친 문구가 비었으면 그 줄을 뺀다.
+    """
+    if not edits:
+        return cues
+    out: list[Cue] = []
+    for cue in cues:
+        hit = None
+        if cue.at is not None:
+            hit = next(
+                (e for e in edits if abs(e["at"] - cue.at) <= EDIT_AT_TOLERANCE and e["was"] == cue.text), None
+            )
+        if hit is None:
+            out.append(cue)
+        elif hit["text"]:
+            out.append(Cue(cue.start, cue.end, hit["text"], cue.at))
+    return out

@@ -145,6 +145,29 @@ class ValidateTest(unittest.TestCase):
         with self.assertRaises(layout.LayoutError):
             self.check(draft(subtitles_by="robot"))
 
+    def test_subtitle_edits_are_tidied(self):
+        # 공백은 접고, 고치지 않은 줄은 버리고, 같은 줄을 두 번 고치면 뒤의 것이 남는다. 원래 문구는 글자 그대로 둔다.
+        edits = [
+            {"at": 12.0004, "was": "다음  말", "text": "다음 말"},
+            {"at": 3.5, "was": "수능체제 기준으로", "text": "수능최저  기준"},
+            {"at": 3.5, "was": "수능체제 기준으로", "text": " 수능최저 기준으로 "},
+        ]
+        out = self.check(draft(subtitle_edits=edits))["subtitle_edits"]
+        self.assertEqual([{"at": 3.5, "was": "수능체제 기준으로", "text": "수능최저 기준으로"}], out)
+
+    def test_an_emptied_subtitle_line_is_kept_as_an_edit(self):
+        out = self.check(draft(subtitle_edits=[{"at": 1, "was": "음", "text": "  "}]))["subtitle_edits"]
+        self.assertEqual([{"at": 1.0, "was": "음", "text": ""}], out)
+
+    def test_a_runaway_subtitle_line_is_refused(self):
+        with self.assertRaises(layout.LayoutError):
+            self.check(draft(subtitle_edits=[{"at": 1, "was": "음", "text": "가" * 61}]))
+
+    def test_a_layout_saved_before_subtitle_edits_still_opens(self):
+        value = draft()
+        del value["subtitle_edits"]
+        self.assertEqual([], self.check(value)["subtitle_edits"])
+
 
 class SplitTest(unittest.TestCase):
     def test_new_scenes_inherit_the_box_covering_their_middle(self):
