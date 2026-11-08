@@ -487,9 +487,20 @@
 	font-variant-numeric: tabular-nums;
 }
 
-.sm-edit__scenenote {
+/* 알림 한 칸 — 결과 · 막힌 이유 · 장면 경계 고치기. */
+.sm-edit__notes {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.sm-edit__notes p {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
 	margin: 0;
-	font-size: 12px;
+	font-size: 13px;
 }
 
 /* ------------------------------------------------------------ 설정 */
@@ -551,15 +562,59 @@
 	min-width: 0;
 }
 
-.sm-edit__check {
+/* 칸 제목 줄 — 제목(켜고 끄기를 품을 수 있다) 왼쪽, [설명 보기] 오른쪽. */
+.sm-edit__grouphead {
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
+	justify-content: space-between;
 	gap: 8px;
-	font-size: 14px;
 }
 
-.sm-edit__check em {
-	font-style: normal;
+.sm-edit__headcheck {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+}
+
+.sm-edit__headcheck input {
+	width: 16px;
+	height: 16px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+
+/* 자막을 끄면 줄 목록을 숨기지 않고 흐리게 — 고친 문구가 사라진 것처럼 보이지 않게. */
+.sm-edit__cueset {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.sm-edit__cueset:disabled {
+	opacity: 0.45;
+}
+
+/* 출처 — 템플릿이 정한 틀("출처 :") 은 글자로, 이름만 칸으로. */
+.sm-edit__affix {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-edit__affix .field__input {
+	flex: 1;
+	min-width: 0;
+}
+
+.sm-edit__affixtext {
+	flex: none;
+	font-size: 14px;
+	color: var(--text-muted);
 }
 
 .sm-edit__scale {
@@ -758,12 +813,12 @@
 	color: var(--accent);
 }
 
-/* ------------------------------------------------------------ 단축키 안내 */
+/* ------------------------------------------------------------ 단축키 · 쓰는 법 말풍선 */
 
 .sm-edit__keys {
-	margin: 0;
-	font-size: 12px;
-	line-height: 1.9;
+	margin-bottom: 8px !important;
+	padding-left: 0 !important;
+	list-style: none;
 }
 
 .sm-edit__keys kbd {

@@ -16,6 +16,7 @@ import {
 	uploadSeriesBadge,
 } from "../api";
 import { useAuth } from "../AuthContext";
+import { Hint } from "../../shared/Hint";
 import { useAsync } from "../../shared/useAsync";
 import type {
 	ClipEditorState,
@@ -290,6 +291,36 @@ function slotDefault(template: ShortsTemplate): number | null {
 		return null;
 	}
 	return clamp(even(Number(block.default)), template.slotLimits[0], template.slotLimits[1]);
+}
+
+/**
+ * 출처 문구의 틀. 템플릿의 출처 블록 글("출처 : {channel}")을 채널 이름 앞 · 뒤로 가른다(2026-11-08).
+ * 사람은 이름만 고친다 — "원티드" 를 "Wanted" 로 바꾸는 정도. 틀까지 아무렇게나 치면 클립마다 출처 모양이 달라진다.
+ * 틀에 {channel} 이 없으면 null — 그때만 문구 전체를 고치는 칸을 쓴다.
+ */
+function creditFrame(template: ShortsTemplate | undefined): [string, string] | null {
+	const text = template?.spec.blocks.find((b) => b.type === "credit")?.text;
+	if (typeof text !== "string" || !text.includes("{channel}")) {
+		return null;
+	}
+	const [head, tail] = text.split("{channel}", 2);
+	return [head, tail ?? ""];
+}
+
+/** 저장된 출처 문구에서 이름만. 틀과 맞지 않는 옛 문구(손으로 친 것)는 통째로 이름 칸에 보인다. */
+function creditName(credit: string, frame: [string, string] | null): string {
+	if (frame && credit.startsWith(frame[0]) && credit.endsWith(frame[1]) && credit.length >= frame[0].length + frame[1].length) {
+		return credit.slice(frame[0].length, credit.length - frame[1].length);
+	}
+	return credit;
+}
+
+/** 이름을 틀에 끼운다. 이름이 비면 출처를 넣지 않는다(빈 문자열 — 카드에 출처 줄이 없다). */
+function creditOf(name: string, frame: [string, string] | null): string {
+	if (!frame) {
+		return name;
+	}
+	return name.trim() ? `${frame[0]}${name}${frame[1]}` : "";
 }
 
 function headlineBlock(template: ShortsTemplate | undefined): { lines: number; maxChars: number } {
@@ -597,6 +628,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	}
 
 	const template = data.templates.find((t) => t.id === draft.template_id);
+	const creditBox = creditFrame(template);
 	const limits: [number, number] = template?.slotLimits ?? data.geometry.slotLimits;
 	// 새 미리보기가 아직 없으면 서버가 열 때 준 것(이미 그려 둔 PNG · 자리). 보기 전용은 이것뿐이다.
 	const geometry = preview?.geometry ?? data.geometry;
@@ -615,7 +647,10 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	const pickTemplate = (templateId: number, patch: Partial<ClipLayout> = {}) => {
 		const next = data.templates.find((t) => t.id === templateId);
 		const slot = next ? (slotDefault(next) ?? draft.slot_height) : draft.slot_height;
+		// 출처 틀이 템플릿마다 다를 수 있다 — 이름은 그대로 두고 새 틀에 끼운다.
+		const name = creditName(draft.credit, creditFrame(template));
 		edit({
+			credit: creditOf(name, creditFrame(next)),
 			...patch,
 			template_id: templateId,
 			slot_height: slot,
@@ -1030,25 +1065,29 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							</span>
 							<span className="sm-edit__trimgroup">
 								<span className="sm-meta">처음</span>
-								{TRIM_STEPS.map(([label, delta]) => (
-									<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeStart(delta)}>
-										{label}
+								<span className="button-group">
+									{TRIM_STEPS.map(([label, delta]) => (
+										<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeStart(delta)}>
+											{label}
+										</button>
+									))}
+									<button type="button" className="button button--small" onClick={startHere} title="재생 위치를 클립의 처음으로 (I)">
+										여기부터
 									</button>
-								))}
-								<button type="button" className="button button--small" onClick={startHere} title="재생 위치를 클립의 처음으로">
-									여기부터
-								</button>
+								</span>
 							</span>
 							<span className="sm-edit__trimgroup">
 								<span className="sm-meta">끝</span>
-								{TRIM_STEPS.map(([label, delta]) => (
-									<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeEnd(delta)}>
-										{label}
+								<span className="button-group">
+									{TRIM_STEPS.map(([label, delta]) => (
+										<button key={label} type="button" className="button button--small sm-edit__step" onClick={() => nudgeEnd(delta)}>
+											{label}
+										</button>
+									))}
+									<button type="button" className="button button--small" onClick={endHere} title="재생 위치를 클립의 끝으로 (O)">
+										여기까지
 									</button>
-								))}
-								<button type="button" className="button button--small" onClick={endHere} title="재생 위치를 클립의 끝으로">
-									여기까지
-								</button>
+								</span>
 							</span>
 							{trim && (
 								<button
@@ -1060,48 +1099,51 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								</button>
 							)}
 						</div>
-						{trimNote && <p className="sm-meta sm-edit__scenenote">{trimNote}</p>}
 						<div className="sm-edit__scenetools">
 							<span className="sm-edit__scenelabel">
 								장면 {scene + 1}/{scenes.length} · {seconds(win.start)}–{seconds(sceneEnd)}
 							</span>
-							<button type="button" className="button button--small" onClick={splitHere}>
-								여기서 나누기
-							</button>
-							{scene > 0 && (
-								<button type="button" className="button button--small" onClick={mergeWithPrevious}>
-									앞 장면과 합치기
+							<span className="button-group">
+								<button type="button" className="button button--small" onClick={splitHere} title="지금 재생 위치에서 장면을 나눕니다 (S)">
+									여기서 나누기
 								</button>
-							)}
-							{scenes.length > 1 && (
-								<button type="button" className="button button--small" onClick={sameBoxEverywhere}>
-									모든 장면에 이 상자
+								{scene > 0 && (
+									<button type="button" className="button button--small" onClick={mergeWithPrevious}>
+										앞 장면과 합치기
+									</button>
+								)}
+								{scenes.length > 1 && (
+									<button type="button" className="button button--small" onClick={sameBoxEverywhere}>
+										모든 장면에 이 상자
+									</button>
+								)}
+							</span>
+							<span className="button-group">
+								<button type="button" className="button button--small" onClick={resplit}>
+									{scenes.length > 1 ? "장면 다시 나누기" : "장면 나누기"}
 								</button>
-							)}
-							<button type="button" className="button button--small" onClick={resplit}>
-								{scenes.length > 1 ? "장면 다시 나누기" : "장면 나누기"}
-							</button>
-							<button
-								type="button"
-								className="button button--small"
-								onClick={refocus}
-								title="사람이 고치지 않은 장면마다 사람을 찾아 상자를 맞춥니다 — 여럿이면 모두, 둘이면 말하는 사람, 한 명이면 그 사람(Gemini 1회)"
-							>
-								{focusing ? "AI 찾는 중…" : "AI 초점"}
-							</button>
+								<button
+									type="button"
+									className="button button--small"
+									onClick={refocus}
+									title="사람이 고치지 않은 장면마다 사람을 찾아 상자를 맞춥니다 (Gemini 1회)"
+								>
+									{focusing ? "AI 찾는 중…" : "AI 초점"}
+								</button>
+							</span>
+							<Hint label="단축키 · 쓰는 법">
+								<ShortcutGuide />
+							</Hint>
 						</div>
-						{sceneNote && <p className="sm-meta sm-edit__scenenote">{sceneNote}</p>}
-						<p className="sm-meta sm-edit__keys">
-							단축키 — <kbd>스페이스</kbd> 재생 · <kbd>←</kbd>
-							<kbd>→</kbd> 한 프레임(<kbd>Shift</kbd> 1초) · <kbd>S</kbd> 여기서 나누기 · <kbd>I</kbd>
-							<kbd>O</kbd> 여기부터 · 여기까지 · <kbd>{MOD}Z</kbd> 되돌리기 · <kbd>{MOD}⇧Z</kbd> 다시 ·{" "}
-							<kbd>{MOD}S</kbd> 저장
-						</p>
-						{sceneInfo && (sceneInfo.headFlash !== null || sceneInfo.tailFlash !== null) && (
-							<p className="sm-meta sm-edit__scenenote">
-								{sceneInfo.headFlash !== null && `클립 처음 ${sceneInfo.headFlash.toFixed(2)}초는 앞 장면입니다. `}
-								{sceneInfo.tailFlash !== null && `클립 끝 ${sceneInfo.tailFlash.toFixed(2)}초에 다음 장면이 잠깐 보입니다. `}
-								{sceneInfo.headFlash !== null && (
+						{/* 알림은 한 칸에 모은다 — 결과 · 막힌 이유 · 장면 경계 고치기. 늘 깔린 설명은 두지 않는다(2026-11-08) —
+						    쓰는 법 · 단축키는 장면 줄 끝의 [단축키 · 쓰는 법] 말풍선에 있다. */}
+						{(trimNote || sceneNote || sceneInfo?.headFlash != null || sceneInfo?.tailFlash != null) && (
+						<div className="sm-edit__notes">
+							{trimNote && <p className="sm-meta">{trimNote}</p>}
+							{sceneNote && <p className="sm-meta">{sceneNote}</p>}
+							{sceneInfo && sceneInfo.headFlash !== null && (
+								<p className="sm-meta">
+									클립 처음 {sceneInfo.headFlash.toFixed(2)}초는 앞 장면입니다.
 									<button
 										type="button"
 										className="button button--small"
@@ -1109,8 +1151,11 @@ export function ClipEditor({ view }: { view: SourceView }) {
 									>
 										처음을 장면 경계로
 									</button>
-								)}
-								{sceneInfo.tailFlash !== null && (
+								</p>
+							)}
+							{sceneInfo && sceneInfo.tailFlash !== null && (
+								<p className="sm-meta">
+									클립 끝 {sceneInfo.tailFlash.toFixed(2)}초에 다음 장면이 잠깐 보입니다.
 									<button
 										type="button"
 										className="button button--small"
@@ -1118,8 +1163,9 @@ export function ClipEditor({ view }: { view: SourceView }) {
 									>
 										끝을 장면 경계로
 									</button>
-								)}
-							</p>
+								</p>
+							)}
+						</div>
 						)}
 					</div>
 					<button
@@ -1245,13 +1291,27 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						})}
 						<label className="sm-edit__field">
 							<span>출처</span>
-							<input
-								className="field__input"
-								value={draft.credit}
-								maxLength={60}
-								placeholder="출처 : 채널 원티드"
-								onChange={(event) => edit({ credit: event.target.value }, "credit")}
-							/>
+							{creditBox ? (
+								<span className="sm-edit__affix">
+									{creditBox[0].trim() && <span className="sm-edit__affixtext">{creditBox[0].trim()}</span>}
+									<input
+										className="field__input"
+										value={creditName(draft.credit, creditBox)}
+										maxLength={40}
+										placeholder="비우면 출처를 넣지 않습니다"
+										onChange={(event) => edit({ credit: creditOf(event.target.value, creditBox) }, "credit")}
+									/>
+									{creditBox[1].trim() && <span className="sm-edit__affixtext">{creditBox[1].trim()}</span>}
+								</span>
+							) : (
+								<input
+									className="field__input"
+									value={draft.credit}
+									maxLength={60}
+									placeholder="출처 : 채널 원티드"
+									onChange={(event) => edit({ credit: event.target.value }, "credit")}
+								/>
+							)}
 						</label>
 					</section>
 
@@ -1303,20 +1363,31 @@ export function ClipEditor({ view }: { view: SourceView }) {
 					</section>
 
 					<section className="sm-edit__group">
-						<h3>자막</h3>
-						<label className="sm-edit__check">
-							<input
-								type="checkbox"
-								checked={draft.subtitles}
-								onChange={(event) => edit({ subtitles: event.target.checked, subtitles_by: "person" })}
-							/>
-							<span>
-								우리 자막 넣기
-								<em className="sm-meta"> — 원본 화면에 자막이 박혀 있으면 끕니다. 자막은 칸 안 아래쪽에 들어갑니다.</em>
-							</span>
-						</label>
-						{draft.subtitles &&
-							(cueError ? (
+						{/* 켜고 끄기는 제목 줄에. 끄면 줄 목록을 숨기지 않고 흐리게만 한다 — 고친 문구가 사라진 것처럼 보이지 않게,
+						    다시 켤 때 무엇이 들어갈지 보이게(2026-11-08). */}
+						<div className="sm-edit__grouphead">
+							<h3>
+								<label className="sm-edit__headcheck">
+									자막 추가
+									<input
+										type="checkbox"
+										checked={draft.subtitles}
+										onChange={(event) => edit({ subtitles: event.target.checked, subtitles_by: "person" })}
+									/>
+								</label>
+							</h3>
+							<Hint>
+								<ul>
+									<li>원본 화면에 자막이 박혀 있으면 끕니다. 자막은 영상 칸 안 아래쪽에 들어갑니다.</li>
+									<li>문구만 고칩니다 — 시작 · 끝 시간은 그대로입니다.</li>
+									<li>문구를 비우면 그 줄을 뺍니다. ↺ 는 원래 문구로 돌립니다.</li>
+									<li>시각을 누르면 그 자리로 갑니다.</li>
+									<li>폰 미리보기의 자막은 근사입니다. 글꼴 · 줄바꿈의 정답은 렌더 결과입니다.</li>
+								</ul>
+							</Hint>
+						</div>
+						<fieldset className="sm-edit__cueset" disabled={!draft.subtitles}>
+						{cueError ? (
 								<p className="sm-meta">자막 줄을 읽지 못했습니다 — {cueError}</p>
 							) : cues === null ? (
 								<p className="sm-meta">자막 줄을 읽는 중…</p>
@@ -1324,9 +1395,6 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								<p className="sm-meta">이 구간에는 대사가 없습니다.</p>
 							) : (
 								<>
-									<p className="sm-meta">
-										문구만 고칩니다 — 시간은 그대로입니다. 비우면 그 줄을 뺍니다. 시각을 누르면 그 자리로 갑니다.
-									</p>
 									<ol className="sm-edit__cues">
 										{cues.map((cue) => {
 											const fixed = editFor(draft.subtitle_edits, cue);
@@ -1373,7 +1441,8 @@ export function ClipEditor({ view }: { view: SourceView }) {
 										</p>
 									)}
 								</>
-							))}
+							)}
+						</fieldset>
 					</section>
 
 					{(previewError || geometry.warnings.length > 0) && (
@@ -1403,6 +1472,30 @@ export function ClipEditor({ view }: { view: SourceView }) {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/**
+ * [단축키 · 쓰는 법] 말풍선의 내용. 화면에 늘 깔던 단축키 줄을 여기로 옮겼다(2026-11-08 — 무대 아래가 지저분했다).
+ * 🔴 키를 바꾸면 Shortcuts 의 onKey 와 이 목록을 함께 고친다.
+ */
+function ShortcutGuide() {
+	return (
+		<>
+			<ul className="sm-edit__keys">
+				<li><kbd>스페이스</kbd> 재생 · 멈춤</li>
+				<li><kbd>←</kbd><kbd>→</kbd> 한 프레임 · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1초</li>
+				<li><kbd>S</kbd> 지금 자리에서 장면 나누기</li>
+				<li><kbd>I</kbd> 여기부터 · <kbd>O</kbd> 여기까지</li>
+				<li><kbd>{MOD}Z</kbd> 되돌리기 · <kbd>{MOD}⇧Z</kbd> 다시 · <kbd>{MOD}S</kbd> 저장</li>
+			</ul>
+			<ul>
+				<li>글자를 치는 칸 안에서는 되돌리기 · 다시 · 저장만 듣습니다.</li>
+				<li>상자: 안쪽을 끌면 옮기기, 모서리는 크기, 위 · 아래 변은 칸 높이.</li>
+				<li>재생 막대의 칸을 누르면 그 장면, 경계를 끌면 장면 경계가 옮겨집니다.</li>
+				<li>되돌리기는 최근 100번까지이고, 저장한 것은 되돌리지 않습니다.</li>
+			</ul>
+		</>
 	);
 }
 
