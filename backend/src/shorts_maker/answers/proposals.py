@@ -8,8 +8,9 @@ gemini 엔진에서는 rank(Gemini)가 대사 수백 줄을 읽고 후보 N 개�
 여기서는 그 일을 셋으로 나눈다. **AI 는 판단하고 코드는 통제한다.**
 
     ① 위치 찾기  Jev 1회   구간마다 "여기에 답이 있나"(Noul) + "어느 줄이 답의 핵심인가"(Choice, 줄 번호가 선택지)
-    ② 범위 뽑기  코드      핵심 줄 둘레에서 **자를 수 있는 범위를 전부** 만든다 — 끊기지 않은 발화 안, 예산 이내,
-                           앞을 가리키지 않는 문장 첫머리에서 시작, 문장이 끝나는 곳에서 끝
+    ② 범위 뽑기  코드      핵심 줄 둘레(앞뒤 예산 안)에서 **자를 수 있는 범위를 넉넉히** 만든다 — 끊기지 않은
+                           발화 안, 예산 이내, 앞을 가리키지 않는 문장 첫머리에서 시작, 문장이 끝나는 곳에서 끝.
+                           핵심 줄을 품지 않아도 된다 — 답의 몸통(예시)이 핵심 줄 뒤에 있을 수 있다
     ③ 판정      Jev ×N    범위마다 judge.judge_jev — 자립(Noul) · 답함(Noul) · 완성도(Score), 병렬
     ④ 고르기    코드      합격 → 점수 순, **서로 많이 겹치는 것은 하나만**, 상위 N 개(SHORTS_ANSWER_CANDIDATES)
 
@@ -51,18 +52,19 @@ ANCHOR_GAP_LINES = 3
 # 구간 Noul 이 0.1~0.2 인 곳의 줄은 무게가 1등의 1/10 안팎이었다.
 ANCHOR_FLOOR = 0.25
 
-# 끝점을 핵심 줄에서 몇 줄까지 내려가 찾을까. 실측(서강대 45줄): 발화 하나가 평균 5.8초라 60초 예산이면
-# 10줄 안팎이다. 뒤는 답의 나머지가 들어갈 자리다.
-# 🔴 시작점은 줄 수로 묶지 않는다 — **예산(초) 안이면 끝까지 거슬러 찾는다**(ranges_around).
-MAX_FWD_LINES = 8
-# 핵심 줄 하나에서 시작점·끝점 후보를 각각 몇 개까지. 3 × 4 = 12 범위가 상한이다.
-STARTS_PER_ANCHOR = 3
-ENDS_PER_ANCHOR = 4
+# 핵심 줄 하나에서 시작점을 몇 개까지(핵심 줄에서 가까운 순), 시작점 하나에서 끝점을 몇 개까지(짧은·중간·긴
+# 것으로 고르게). 6 × 3 = 18 범위가 핵심 줄 하나의 상한이다. 시작점·끝점을 찾는 범위는 줄 수가 아니라
+# **초**로 묶는다(ranges_around) — 말 빠르기가 영상마다 달라 줄 수로는 들어갈 시간을 정할 수 없다.
+STARTS_PER_ANCHOR = 6
+ENDS_PER_START = 3
 # 이보다 짧으면 숏폼이 아니라 인용이다.
 MIN_SEC = 8.0
 # 판정할 범위 수 상한. 🔴 Jev 한도는 조직별 초당 요청·토큰이다(docs.typesafe.ai/models#rate-limits) —
 # 넘으면 429 이고 어댑터가 기다렸다 다시 보낸다. 이 상한이 한 번의 답하기가 몰아 보내는 양을 묶는다.
-MAX_SPANS = 48
+# 48 → 96 (2026-11-08, 범위가 핵심 줄을 품지 않아도 되게 바꾸면서). 실측(원티드·서강대 질문 12개): 판정이
+# 질문당 평균 25회에서 40회 안팎(최대 64회)으로, 시간은 0.4~1초 늘었다. 판정 한 번이 1천 토큰 안팎이라
+# 답하기 한 번에 2원에서 4원 정도가 된다.
+MAX_SPANS = 96
 JUDGE_WORKERS = 8
 
 # 조합(흩어진 답 잇기) 재료는 앵커마다 답하는 단일 범위 위에서 몇 개까지, 지은 짝은 몇 개까지 판정할까.
@@ -91,7 +93,8 @@ class Located:
 
 @dataclass
 class Span:
-    """판정할 후보 하나. `ranges` 는 (시작 줄, 끝 줄) 이고 시간 순이다."""
+    """판정할 후보 하나. `ranges` 는 (시작 줄, 끝 줄) 이고 시간 순이다. `anchor` 는 이 범위를 뽑은 핵심 줄 —
+    범위 안에 없을 수도 있다(ranges_around)."""
 
     ranges: list[tuple[int, int]]
     anchor: int
@@ -217,6 +220,15 @@ def ranges_around(anchor: int, lines: list[dict], budget_sec: float) -> list[tup
     "좋은 시작점" 보다 무르다 — 접속어로 시작해도 된다. 이어진 발화의 첫 줄도 좋은 시작점이다.
     끝점: 문장을 끝내는 줄(cutting.ends_sentence), 또는 이어진 발화의 마지막 줄.
 
+    🔴 **범위가 핵심 줄을 품지 않아도 된다.** 핵심 줄은 "답이 있는 자리" 이고 범위는 그 둘레의 창 —
+    핵심 줄 앞으로 예산만큼, 뒤로 예산의 절반까지 — 에서 시작한다. 처음엔 모든 범위가 핵심 줄을 품었다.
+    실측(2026-11-05, 원티드 삼성 면접 "자기소개서나 이력서에 경험을 효과적으로 작성하는 방법은?"): Jev 가
+    핵심으로 짚은 줄은 주장("합격과 불합격을 가르는 건 숫자로 증명했는가, 디테일이 반영됐는가", 5:31)이었고
+    답의 몸통인 카페 알바 예시("월 평균 200명 응대… 매출·만족도 15%·20% 상향")는 그 36~78초 뒤였다. 주장을
+    품고는 예시가 60초 예산에 들어가지 않아, 판정한 범위 33개 중 예시가 든 것이 **하나도 없었다.** 예시
+    범위(5:50~6:49)를 손으로 만들어 판정시키자 합격 84점으로 그때 1등(74점)보다 높았다 — 판정은 맞았고
+    입력이 모자랐던 것이다. Gemini 엔진도 같은 질문에서 주장과 결론만 고르고 예시를 건너뛰었다.
+
     🔴 **구간 경계는 넘는다. 끊긴 곳은 넘지 않는다.** 범위는 같은 청크의 발화 번호가 1씩 이어지는 동안만
     늘어난다 — 그 안이면 시간상 붙어 있어 조각 안에 점프가 없다. 구간은 주제 경계일 뿐이고 말은 거기서
     끊기지 않는다(ranking.LEAD_IN_SHOULDER 주석과 같은 이야기).
@@ -235,16 +247,17 @@ def ranges_around(anchor: int, lines: list[dict], budget_sec: float) -> list[tup
     while _continues(by_line[last], by_line.get(last + 1)):
         last += 1
 
-    # 🔴 시작점은 **초로** 거슬러 찾는다. 처음엔 6줄로 묶었다. 실측(2026-10-31, 원티드 AI 강연 "메타 에이전트가
+    # 🔴 창은 **초로** 잡는다. 처음엔 핵심 줄에서 6줄로 묶었다. 실측(2026-10-31, 원티드 AI 강연 "메타 에이전트가
     # 없으면 성능이 어떻게 되나요?"): 발화가 2~5초로 짧아 6줄이 20초 남짓이었고, 그 안의 줄은 전부
     # "그래서·근데" 로 시작하거나 앞 줄이 "~알 수 있고" 로 이어졌다. 시작점이 핵심 줄 "똑같이 성능이 많이
-    # 떨어집니다." 하나뿐이라 무엇이 떨어지는지가 빠진 후보만 나왔다(자립 0.11). 말 빠르기는 영상마다 달라서
-    # 줄 수로는 맥락이 들어갈 시간을 정할 수 없다.
+    # 떨어집니다." 하나뿐이라 무엇이 떨어지는지가 빠진 후보만 나왔다(자립 0.11).
+    # 뒤쪽을 예산의 절반에서 끊는 이유: 그보다 뒤에서 시작하면 핵심 줄과 이어진 이야기가 아니라 다음 이야기다.
+    head, tail = by_line[anchor]["start_sec"], by_line[anchor]["end_sec"]
     starts: list[int] = []
-    for n in range(anchor, first - 1, -1):
-        if by_line[anchor]["end_sec"] - by_line[n]["start_sec"] > budget_sec:
-            break
+    for n in range(first, last + 1):
         line = by_line[n]
+        if not head - budget_sec <= line["start_sec"] <= tail + budget_sec / 2:
+            continue
         # 🔴 접속어("그래서·근데")로 시작하는 줄은 시작점으로 둔다 — 막는 것은 앞을 가리키는 말뿐이다
         # (cutting.points_back). 같은 실측에서 정답 시작점이 "그래서 요거를 디딤돌이라 하는데…" 였다.
         # 강연 말투는 줄마다 "그래서·근데" 가 붙어 다 막으면 고를 자리가 남지 않는다. 어색함은 판정이
@@ -253,21 +266,21 @@ def ranges_around(anchor: int, lines: list[dict], budget_sec: float) -> list[tup
             continue
         if n == first or cutting.ends_sentence(by_line[n - 1]["text"]):
             starts.append(n)
-            if len(starts) == STARTS_PER_ANCHOR:
-                break
-    ends: list[int] = []
-    for n in range(anchor, min(last, anchor + MAX_FWD_LINES) + 1):
-        if n == last or cutting.ends_sentence(by_line[n]["text"]):
-            ends.append(n)
-            if len(ends) == ENDS_PER_ANCHOR:
-                break
+    # 핵심 줄에서 가까운 시작점부터 쓴다 — 상한에 걸리면 먼 쪽이 빠진다.
+    starts.sort(key=lambda n: abs(by_line[n]["start_sec"] - head))
 
     out: list[tuple[int, int]] = []
-    for start in starts or [anchor]:
-        for end in ends or [anchor]:
-            length = by_line[end]["end_sec"] - by_line[start]["start_sec"]
-            if MIN_SEC <= length <= budget_sec:
-                out.append((start, end))
+    for start in starts[:STARTS_PER_ANCHOR]:
+        ends = [
+            n for n in range(start, last + 1)
+            if (n == last or cutting.ends_sentence(by_line[n]["text"]))
+            and MIN_SEC <= by_line[n]["end_sec"] - by_line[start]["start_sec"] <= budget_sec
+        ]
+        # 🔴 끝점은 가까운 것부터 몇 개가 아니라 **짧은·중간·긴 것으로 고르게** 고른다. 가까운 것부터 세면
+        # "글쎄요." 같은 짧은 문장 끝이 자리를 다 먹어 범위가 전부 짧아진다(같은 카페 예시 실측).
+        k = min(ENDS_PER_START, len(ends))
+        picked = sorted({ends[round(i * (len(ends) - 1) / max(1, k - 1))] for i in range(k)})
+        out += [(start, end) for end in picked]
     if not out:
         # 예산 안에 드는 조합이 없다(발화 하나가 길거나 문장 끝이 멀다). 핵심 줄 하나를 내고
         # 예산은 enforce_budget 이 발화 단위로 맞춘다.

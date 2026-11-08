@@ -123,6 +123,37 @@ class RangesTest(unittest.TestCase):
         starts = {start for start, _ in proposals.ranges_around(2, lines, 40.0)}
         self.assertNotIn(1, starts)
 
+    def test_a_range_may_leave_the_anchor_out_to_reach_the_example_after_it(self):
+        # 🔴 실측(원티드 삼성 면접 "자소서에 경험을 효과적으로 쓰는 법"): 핵심 줄은 주장이었고 답의 몸통인 카페
+        # 예시는 그 뒤였다. 주장을 품으면 예시가 예산에 안 들어가 예시가 든 범위가 하나도 판정받지 못했다.
+        lines = [
+            line(0, "합격을 가르는 건 숫자로 증명했는가입니다.", start=0.0, length=20.0),
+            line(1, "자소서에는 비슷한 얘기가 많아요.", start=20.0, length=5.0),
+            line(2, "예를 들면 카페에서 월 200명을 응대했고", start=25.0, length=20.0),
+            line(3, "매출이 15% 올랐다고 쓰는 겁니다.", start=45.0, length=20.0),
+        ]
+        ranges = proposals.ranges_around(0, lines, 60.0)
+        self.assertNotIn((0, 3), ranges)  # 65초 — 예산을 넘는다
+        self.assertIn((1, 3), ranges)
+
+    def test_a_range_never_starts_far_past_the_anchor(self):
+        # 핵심 줄 끝에서 예산의 절반보다 뒤에서 시작하면 다음 이야기다.
+        lines = [
+            line(0, "답입니다.", start=0.0, length=10.0),
+            line(1, "자세히 설명합니다.", start=10.0, length=30.0),
+            line(2, "다른 이야기입니다.", start=40.0, length=10.0),
+        ]
+        starts = {start for start, _ in proposals.ranges_around(0, lines, 40.0)}
+        self.assertNotIn(2, starts)
+        self.assertIn(1, starts)
+
+    def test_ends_spread_over_short_and_long(self):
+        # 🔴 가까운 문장 끝부터 세면 짧은 문장들이 자리를 다 먹어 범위가 전부 짧아진다.
+        lines = [line(n, f"{n}번째입니다.", length=5.0) for n in range(12)]
+        ends = sorted(end for start, end in proposals.ranges_around(0, lines, 60.0) if start == 0)
+        self.assertEqual(len(ends), proposals.ENDS_PER_START)
+        self.assertEqual(ends[-1], 11)  # 가장 긴 것(60초)이 들어 있다
+
     def test_every_range_fits_the_budget_and_the_floor(self):
         lines = [line(n, f"{n}번째입니다.") for n in range(12)]
         for start, end in proposals.ranges_around(6, lines, 20.0):
