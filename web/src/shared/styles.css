@@ -364,6 +364,94 @@ img {
 	font-size: 15px;
 }
 
+/* 붙은 단추 묶음 — 같은 일을 하는 단추 여럿(−1초 · −0.1 · +0.1 · +1초)을 한 덩어리로. 떨어진 단추가 줄줄이 놓이면
+   무엇이 한 묶음인지 안 보이고 줄이 지저분해진다(2026-11-08, 편집 화면). 안의 단추는 .button 그대로다. */
+.button-group {
+	display: inline-flex;
+	align-items: stretch;
+}
+
+.button-group > .button {
+	border-radius: 0;
+	margin-left: -1px;
+}
+
+.button-group > .button:first-child {
+	margin-left: 0;
+	border-top-left-radius: var(--radius);
+	border-bottom-left-radius: var(--radius);
+}
+
+.button-group > .button:last-child {
+	border-top-right-radius: var(--radius);
+	border-bottom-right-radius: var(--radius);
+}
+
+.button-group > .button:hover:not(:disabled) {
+	position: relative;
+	z-index: 1;
+}
+
+/* 설명 보기(shared/Hint.tsx) — 연한 글자 단추와, 누르면 뜨는 말풍선. */
+.hint {
+	position: relative;
+	display: inline-flex;
+}
+
+.hint__button {
+	padding: 2px 4px;
+	border: 0;
+	background: none;
+	color: var(--text-muted);
+	font-size: 13px;
+	text-decoration: underline dotted;
+	text-underline-offset: 3px;
+	cursor: pointer;
+	opacity: 0.8;
+}
+
+.hint__button:hover,
+.hint__button[aria-expanded="true"] {
+	color: var(--accent);
+	opacity: 1;
+}
+
+.hint__pop {
+	position: absolute;
+	top: calc(100% + 6px);
+	z-index: 20;
+	width: max-content;
+	max-width: min(340px, 80vw);
+	padding: 10px 12px;
+	background: var(--surface);
+	color: var(--text);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	box-shadow: 0 6px 20px rgba(20, 26, 46, 0.12);
+	font-size: 13px;
+	font-weight: 400;
+	line-height: 1.6;
+	text-align: left;
+	white-space: normal;
+}
+
+.hint__pop--end {
+	right: 0;
+}
+
+.hint__pop--start {
+	left: 0;
+}
+
+.hint__pop ul {
+	margin: 0;
+	padding-left: 16px;
+}
+
+.hint__pop li + li {
+	margin-top: 4px;
+}
+
 .button--danger {
 	color: var(--danger);
 	border-color: var(--danger-line);
