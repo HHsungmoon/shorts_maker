@@ -19,7 +19,7 @@ from shorts_maker import standards
 from shorts_maker.answers import judge, reactions, routing
 from shorts_maker.db import store
 from shorts_maker.http import deps, prompt_catalog, server
-from shorts_maker.pipeline import cutting, ranking, segmentation
+from shorts_maker.pipeline import concepts, cutting, ideas, ranking, segmentation
 
 from ..support import make_config, reset_db
 
@@ -35,7 +35,7 @@ class CatalogTest(unittest.TestCase):
     def test_the_catalog_reads_the_live_templates(self):
         # 사본이 아니라 모듈의 그 상수여야 한다 — 템플릿을 고치면 화면이 바로 따라온다.
         live = {
-            "segment": segmentation.PROMPT_TEMPLATE, "rank": ranking.FIXED_PROMPT,
+            "segment": segmentation.PROMPT_TEMPLATE, "ideas": ideas.PROMPT, "rank": ranking.FIXED_PROMPT,
             "cut": cutting.PROMPT_TEMPLATE, "select": routing.PROMPT,
             "answer": ranking.ANSWER_PROMPT, "judge": judge.PROMPT, "reaction": reactions.PROMPT,
         }
@@ -47,7 +47,7 @@ class CatalogTest(unittest.TestCase):
         """🔴 구간 분할과 답 구간 찾기에는 안 들어간다(standards.py 머리 주석)."""
         found = {s["key"]: s["usesStandard"] for s in prompt_catalog.stages()}
         self.assertEqual(found, {
-            "segment": False, "rank": True, "cut": True,
+            "segment": False, "ideas": True, "rank": True, "cut": True,
             "select": False, "answer": True, "judge": True, "reaction": False,
         })
 
@@ -74,6 +74,12 @@ class CatalogTest(unittest.TestCase):
         editable = {layer["key"] for layer in prompt_catalog.LAYERS if layer["editable"]}
         self.assertEqual(editable, {"standard", "reaction", "context"})
 
+    def test_the_concept_goes_into_the_rank_and_the_cut(self):
+        """관리자 숏폼의 컨셉(tease §5-11)은 4층 칸이다. 추천은 컨셉 셋을 모두 늘어놓는다(사람이 고르는 칸이 아니다)."""
+        found = {s["key"] for s in prompt_catalog.STAGES if "concept_block" in prompt_catalog.slots(s["template"])}
+        self.assertEqual(found, {"rank", "cut"})
+        self.assertEqual("request", prompt_catalog.LAYER_OF["concept_block"])
+
     def test_only_the_reaction_summary_takes_the_guide(self):
         found = {s["key"] for s in prompt_catalog.stages() if s["usesReaction"]}
         self.assertEqual(found, {"reaction"})
@@ -95,10 +101,16 @@ class PromptsApiTest(ApiTestCase):
     def test_the_list_carries_every_stage_and_the_standard(self):
         body = self.client.get("/api/prompts").json()
         self.assertEqual([s["key"] for s in body["stages"]],
-                         ["segment", "rank", "cut", "select", "answer", "judge", "reaction"])
+                         ["segment", "ideas", "rank", "cut", "select", "answer", "judge", "reaction"])
         self.assertEqual(body["standard"]["body"], "")
         self.assertEqual(body["reaction"]["body"], "")
         self.assertEqual(body["standard"]["maxChars"], standards.MAX_CHARS)
+
+    def test_the_list_shows_the_concept_texts(self):
+        # 관리자 숏폼의 컨셉 셋(tease §5-11) — 글 원문 그대로. 화면은 보이기만 한다.
+        body = self.client.get("/api/prompts").json()
+        self.assertEqual([c["key"] for c in body["concepts"]], list(concepts.KEYS))
+        self.assertEqual(body["concepts"][1]["goal"], concepts.BY_KEY["viral"]["goal"])
 
     def test_saving_a_standard_shows_up_in_the_list(self):
         saved = self.client.put("/api/prompts/standard", json={"body": "숫자가 있는 발화를 우선한다"})

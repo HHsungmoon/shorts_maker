@@ -29,7 +29,7 @@ from ..adapters import ytdlp, ffmpeg
 from ..answers import answer, clusters, events, livechat, reactions, report, suggest
 from . import auth, deps, layouts, prompt_catalog, youtube
 from ..pipeline import (
-    captions, cutting, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
+    captions, concepts, cutting, ideas, ingest, media, orchestrate, overview, ranking, render, segmentation, stt,
     transcript_diff, transcripts, upload,
 )
 from ..db import store
@@ -111,7 +111,7 @@ def get_source(source_id: int) -> dict:
             # 뽑은 것이 한 목록에 섞이면 "클립 3" 이라는 이름만으로는 구분할 수가 없다.
             # 질문에서 나온 것은 대표 문장이, 기준에서 나온 것은 그때 쓴 기준 문장이 이름이 된다.
             """select cl.*, sg.description,
-                      r.criteria_prompt, r.route,
+                      r.criteria_prompt, r.route, r.concept,
                       qc.canonical_text as question,
                       (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
                from clips cl
@@ -149,7 +149,11 @@ def get_source(source_id: int) -> dict:
             (source_id,),
         )
         left = stt.remaining(conn, source_id)
+        segment_ids = {segment["id"] for chunk in chunks for segment in chunk["segments"]}
         return {
+            # 관리자 숏폼(tease §5-11). 컨셉 셋은 코드의 글이고, 추천은 최신 한 행이다(없으면 null).
+            "concepts": concepts.catalog(),
+            "ideas": ideas.latest(conn, source_id, segment_ids),
             "transcripts": transcripts.counts(conn, source_id),
             "stt": {
                 "spans": spans,
@@ -221,6 +225,16 @@ class ChunkIn(BaseModel):
 
 class RankIn(BaseModel):
     criteria: str | None = None
+    # 관리자 숏폼의 컨셉(brand · viral · info, tease §5-11). 비우면 컨셉 없이 고른다(CLI · 이전 화면과 같다).
+    concept: str | None = None
+
+
+def _concept(body: RankIn) -> str | None:
+    """🔴 잡을 띄우기 **전에** 거른다 — 큐에 넣은 뒤 실패하면 사람은 한참 기다린 뒤에야 오타를 안다."""
+    try:
+        return concepts.check(body.concept)
+    except concepts.ConceptError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 class ReviewIn(BaseModel):
@@ -566,12 +580,31 @@ def draft_overview(source_id: int) -> dict:
 
 @router.post("/sources/{source_id}/rank")
 def run_rank(source_id: int, body: RankIn) -> dict:
+    concept = _concept(body)
+
     def work() -> dict:
         with connect() as conn:
-            run_id = ranking.run_for_source(conn, deps.cfg, source_id, body.criteria)
+            run_id = ranking.run_for_source(conn, deps.cfg, source_id, body.criteria, concept)
         return {"runId": run_id}
 
     return submit("rank", f"source {source_id}", work)
+
+
+@router.post("/sources/{source_id}/ideas")
+def run_ideas(source_id: int) -> dict:
+    """[추천 받기] — 영상을 읽고 컨셉마다 적합도 · 숏폼 주제를 받는다(`pipeline/ideas.py`, Gemini 1회, tease §5-11).
+    결과는 `source_ideas` 에 덧붙고 상세(`GET /api/sources/{id}` 의 ideas)로 읽는다. 🔴 유료 호출이라 POST 다."""
+    with connect() as conn:
+        if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
+            raise HTTPException(404, "source not found")
+        if not ranking.load_segments(conn, source_id):
+            raise HTTPException(409, "구간이 없어 추천할 수 없습니다 — 영상 준비를 먼저 끝내세요")
+
+    def work() -> dict:
+        with connect() as conn:
+            return {"ideaId": ideas.run_for_source(conn, deps.cfg, source_id)}
+
+    return submit("ideas", f"source {source_id}", work)
 
 
 @router.post("/runs/{run_id}/segments/{segment_id}/cut")
@@ -604,10 +637,11 @@ def run_render(clip_id: int, force: bool = False, subtitles: bool = True) -> dic
 @router.post("/sources/{source_id}/pipeline")
 def run_pipeline(source_id: int, body: RankIn, resegment: bool = False) -> dict:
     """[3]→[5]→[6]→[7] 을 한 잡으로. 구간이 이미 있으면 다시 나누지 않는다(§3)."""
+    concept = _concept(body)
 
     def work() -> dict:
         with connect() as conn:
-            return orchestrate.run_all(conn, deps.cfg, source_id, body.criteria, resegment)
+            return orchestrate.run_all(conn, deps.cfg, source_id, body.criteria, resegment, concept=concept)
 
     return submit("pipeline", f"source {source_id}", work)
 

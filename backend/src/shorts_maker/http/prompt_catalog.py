@@ -21,7 +21,7 @@ import psycopg
 
 from .. import standards
 from ..answers import judge, reactions, routing
-from ..pipeline import cutting, ranking, segmentation
+from ..pipeline import concepts, cutting, ideas, ranking, segmentation
 
 # 층. 화면이 이 순서로 설명한다.
 LAYERS = [
@@ -34,7 +34,7 @@ LAYERS = [
     {"key": "context", "label": "3. 영상 개요", "who": "영상마다", "editable": True,
      "note": "그 영상이 무엇인지. 영상 준비 탭에서 적습니다"},
     {"key": "request", "label": "4. 이번 요청", "who": "매번", "editable": False,
-     "note": "기준 입력칸의 글, 또는 시청자 질문"},
+     "note": "관리자 숏폼의 컨셉(브랜딩 · 바이럴 · 정보성 — 글은 아래 '컨셉 셋')과 기준 입력칸의 글, 또는 시청자 질문"},
     {"key": "auto", "label": "자동", "who": "파이프라인", "editable": False,
      "note": "대사 · 구간 목록 · 예산 같은 값. 사람이 채우지 않습니다"},
 ]
@@ -47,6 +47,11 @@ LAYER_OF = {
     "comments": "auto",
     "context_block": "context",
     "criteria_block": "request",
+    # 관리자 숏폼의 컨셉(tease §5-11). 고르는 것은 관리자가 매번, 글은 concepts.py — 그래서 4층이다.
+    "concept_block": "request",
+    # 추천은 컨셉 셋을 모두 늘어놓는다. 사람이 고르는 칸이 아니다.
+    "concept_list": "auto",
+    "per_concept": "auto",
     "question": "request",
     "text": "request",
     "segment_block": "auto",
@@ -70,6 +75,9 @@ STAGES = [
     {"key": "segment", "name": "구간 분할", "path": "영상 준비", "module": "pipeline/segmentation.py",
      "template": segmentation.PROMPT_TEMPLATE,
      "why": "구간은 모든 기준이 다시 쓰는 중립 자산입니다. 취향이 섞이면 기준을 바꿀 때마다 전사부터 다시 해야 합니다"},
+    {"key": "ideas", "name": "숏폼 추천", "path": "기준 경로", "module": "pipeline/ideas.py",
+     "template": ideas.PROMPT,
+     "why": "이 영상으로 어떤 컨셉의 숏폼을 만들지는 선호입니다"},
     {"key": "rank", "name": "기준 순위", "path": "기준 경로", "module": "pipeline/ranking.py",
      "template": ranking.FIXED_PROMPT,
      "why": "어떤 구간을 좋게 볼지는 선호입니다"},
@@ -138,6 +146,8 @@ def build(conn: psycopg.Connection) -> dict:
     return {
         "layers": LAYERS,
         "stages": stages(),
+        # 관리자 숏폼의 컨셉 셋(tease §5-11) — 고르기 · 자르기 · AI 카피에 들어가는 글 원문. 보이기만 한다.
+        "concepts": concepts.catalog(),
         "standard": {
             "body": row["body"] if row else "",
             "updatedAt": row["created_at"] if row else None,
