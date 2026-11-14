@@ -120,6 +120,8 @@ export interface ShortsRun {
 	prompt: string | null;
 	/** 질문 답하기가 고른 길('retrieval' | 'rank'). 선정 run 은 null. */
 	route: string | null;
+	/** 관리자 숏폼의 컨셉(tease §5-11). 질문 경로 · 컨셉 이전의 선정 run 은 null. */
+	concept: ConceptKey | null;
 	created_at: string;
 	error: string | null;
 	ranked: {
@@ -162,6 +164,8 @@ export interface ShortsClip {
 	/** 이 클립을 만든 run 의 기준 문장. 질문에서 나온 클립은 대표 문장과 같다. */
 	criteria_prompt: string | null;
 	route: string | null;
+	/** 그 클립을 고른 run 의 컨셉(tease §5-11). 질문 경로 · 컨셉 이전의 클립은 null. */
+	concept: ConceptKey | null;
 	description: string | null;
 	reviews: ShortsClipReview[];
 	/** 이 클립을 유튜브에 올린 기록, 최신 먼저. 같은 클립을 비공개로 시험한 뒤 다시 올릴 수 있어 여럿이다. */
@@ -502,6 +506,10 @@ export interface ShortsSourceDetail {
 	stageCalls: ShortsStageCall[];
 	/** 보관한 대사의 발화 수(tease §5-1). 0 이면 그 출처는 아직 없다. 쓰는 대사는 `source.caption_source`. */
 	transcripts: Record<TranscriptOrigin, number>;
+	/** 관리자 숏폼의 컨셉 셋(tease §5-11). 글은 서버 코드(`pipeline/concepts.py`)에 있다 — 화면은 그대로 쓴다. */
+	concepts: ShortsConcept[];
+	/** 가장 최근 AI 추천. 한 번도 받지 않았으면 null. */
+	ideas: ShortsIdeas | null;
 	stt: {
 		/** 음성 인식이 들은 범위. 🔴 같은 오디오는 다시 듣지 않는다. */
 		spans: ShortsSttSpan[];
@@ -512,6 +520,48 @@ export interface ShortsSourceDetail {
 }
 
 export type TranscriptOrigin = "youtube" | "whisper";
+
+// ---------------------------------------------------------------- 관리자 숏폼 — 컨셉 셋 · AI 추천 (tease §5-11)
+
+/** 🔴 서버 `concepts.KEYS` · 마이그레이션 023 의 CHECK 와 같은 값. */
+export type ConceptKey = "brand" | "viral" | "info";
+
+export interface ShortsConcept {
+	key: ConceptKey;
+	label: string;
+	/** 화면에 쓰는 한 줄. */
+	summary: string;
+	/** 프롬프트에 들어가는 글 원문 — 고르기(goal) · 자르기(goal + cut) · AI 카피(goal + copy). */
+	goal: string;
+	cut: string;
+	copy: string;
+	/** 기준 칸의 "예시로 시작". */
+	examples: string[];
+}
+
+export interface ShortsIdea {
+	concept: ConceptKey;
+	/** 숏폼 가제. */
+	title: string;
+	/** 🔴 구간을 다시 나누면 이 id 가 사라진다 — 그때 추천은 `stale` 이다. */
+	segment_id: number;
+	segment_idx: number;
+	/** 왼쪽 기준 칸에 들어가는 한 문장. */
+	criteria: string;
+	reason: string | null;
+}
+
+export interface ShortsIdeas {
+	id: number;
+	createdAt: string;
+	/** 컨셉 셋이 늘 이 순서로 온다. fit 이 null 이면 AI 가 판단하지 않았다. */
+	concepts: { concept: ConceptKey; fit: number | null; note: string | null }[];
+	ideas: ShortsIdea[];
+	/** 검증에서 버린 주제 수(없는 구간 · 모르는 컨셉 · 중복). */
+	dropped: number;
+	/** 주제가 가리키던 구간이 지금 없다 — 구간을 다시 나눴다. */
+	stale: boolean;
+}
 
 export interface ShortsSttSpan {
 	start_sec: number;
@@ -889,6 +939,8 @@ export interface PromptCatalog {
 	standard: PromptStandard;
 	/** 시청자 반응 요약 관점(tease §3-6). 관리자 기준과 다른 글이다. */
 	reaction: PromptStandard;
+	/** 관리자 숏폼의 컨셉 셋(tease §5-11) — 글 원문. 보이기만 한다. */
+	concepts: ShortsConcept[];
 }
 
 

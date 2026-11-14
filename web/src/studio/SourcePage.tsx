@@ -16,6 +16,7 @@ import { StudioBanners } from "./components/StudioChrome";
 import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type {
+	ConceptKey,
 	ShortsChunk,
 	ShortsClip,
 	ShortsClusterList,
@@ -31,6 +32,8 @@ import "./source.css";
 // 🔴 빈 칸으로 시작한다. 예전엔 "한 문장으로 인용할 만한 핵심 논지" 가 **값**으로 채워져 있어서
 // 입력 안내처럼 보이는데 실제로는 그대로 기준으로 나갔다. 안내 문구는 입력칸의 placeholder 가 맡는다.
 const DEFAULT_CRITERIA = "";
+// 관리자 숏폼의 컨셉(tease §5-11). 처음엔 정보성 — 컨셉을 넣기 전의 기본 예시("숫자나 기준이 나오는 대목")와 가장 가깝다.
+const DEFAULT_CONCEPT: ConceptKey = "info";
 
 type RankedPayload = NonNullable<ShortsRun["ranked"]>;
 export type RankedEntry = NonNullable<RankedPayload["ranked"]>[number];
@@ -97,6 +100,9 @@ export interface SourceView {
 
 	criteria: string;
 	setCriteria: Dispatch<SetStateAction<string>>;
+	/** 새 클립 탭에서 고른 컨셉(브랜딩 · 바이럴 · 정보성). 기준 칸과 함께 [구간 고르기] 로 간다. */
+	concept: ConceptKey;
+	setConcept: Dispatch<SetStateAction<ConceptKey>>;
 	language: string | null;
 	setLanguage: Dispatch<SetStateAction<string | null>>;
 	openPreview: number | null;
@@ -131,6 +137,7 @@ export function SourcePage() {
 	const { job, jobBusy, reloadToken, reload, submit, act } = studio;
 
 	const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
+	const [concept, setConcept] = useState<ConceptKey>(DEFAULT_CONCEPT);
 	const [openPreview, setOpenPreview] = useState<number | null>(null);
 	const [transcript, setTranscript] = useState<ShortsUtterance[] | null>(null);
 	const [language, setLanguage] = useState<string | null>(null);
@@ -269,6 +276,8 @@ export function SourcePage() {
 		setRangeOpen,
 		criteria,
 		setCriteria,
+		concept,
+		setConcept,
 		language,
 		setLanguage,
 		openPreview,

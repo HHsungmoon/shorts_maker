@@ -99,6 +99,30 @@ export function PromptsPage() {
 				</table>
 			</div>
 
+			{/* 관리자 숏폼의 컨셉 셋(tease §5-11). 🔴 서버 코드의 글 그대로다 — 화면에서 따로 적지 않는다. */}
+			<h2 className="section-title">컨셉 셋</h2>
+			<p className="sm-meta">
+				새 클립 탭에서 고르는 관리자 숏폼의 컨셉입니다. 고른 컨셉의 글이 고르기 · 자르기 · AI 카피의{" "}
+				<span className="pr-slot pr-slot--request">{"{concept_block}"}</span> 칸에 들어갑니다. 코드에 있는 글이라
+				여기서는 보이기만 합니다.
+			</p>
+			{data.concepts.map((concept) => (
+				<section key={concept.key} className="pr-stage">
+					<div className="sm-actions">
+						<span className="pr-stage__name">{concept.label}</span>
+						<span className="sm-meta">
+							{concept.key} · {concept.summary}
+						</span>
+					</div>
+					<details className="sm-fold">
+						<summary>글 원문 보기</summary>
+						<pre className="sm-pre">
+							{`[고르기 · 자르기 · 카피 공통]\n${concept.goal}\n\n[자르기에 덧붙임]\n${concept.cut}\n\n[카피에 덧붙임]\n${concept.copy}`}
+						</pre>
+					</details>
+				</section>
+			))}
+
 			<h2 className="section-title">단계별 원문</h2>
 			<p className="sm-meta">
 				색이 있는 칸이 실행할 때 채워지는 자리이고, 나머지 글이 고정된 규칙입니다. 관리자 기준은{" "}
@@ -245,7 +269,7 @@ const LAYER_HINT: Record<string, string> = {
 	standard: "2층 관리자 기준 — 이 화면 위에서 고칩니다",
 	reaction: "시청자 반응 요약 관점 — 이 화면 위에서 고칩니다",
 	context: "3층 영상 개요 — 영상 준비 탭에서 고칩니다",
-	request: "4층 이번 요청 — 기준 입력 또는 시청자 질문",
+	request: "4층 이번 요청 — 컨셉 · 기준 입력 또는 시청자 질문",
 	auto: "자동 — 파이프라인이 채웁니다",
 	rule: "1층 규칙",
 };

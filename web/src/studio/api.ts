@@ -1,6 +1,7 @@
 import { request } from "../shared/client";
 import type {
 	ClipEditorState,
+	ConceptKey,
 	ClipLayout,
 	ClipTrim,
 	CopySuggestion,
@@ -165,11 +166,16 @@ export function draftOverview(sourceId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/overview`, { method: "POST" });
 }
 
-export function runRank(sourceId: number, criteria: string | null): Promise<ShortsJob> {
+export function runRank(sourceId: number, criteria: string | null, concept: ConceptKey | null): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/rank`, {
 		method: "POST",
-		body: { criteria },
+		body: { criteria, concept },
 	});
+}
+
+/** [추천 받기] — 영상을 읽고 컨셉마다 적합도 · 숏폼 주제를 받는다(tease §5-11, Gemini 1회). 결과는 상세의 ideas. */
+export function runIdeas(sourceId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/ideas`, { method: "POST" });
 }
 
 export function runPipeline(

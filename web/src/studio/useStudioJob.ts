@@ -20,6 +20,8 @@ export const STAGE_LABEL: Record<string, string> = {
 	segment: "주제 분할",
 	overview: "개요 초안",
 	rank: "선정",
+	ideas: "숏폼 추천",
+	idea: "숏폼 추천",
 	cut: "클립 만들기",
 	render: "렌더",
 	pipeline: "전체 실행",

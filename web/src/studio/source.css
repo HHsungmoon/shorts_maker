@@ -1197,11 +1197,60 @@
 	gap: 28px;
 }
 
+/* 위쪽 반반(tease §5-11, 2026-11-08) — 왼쪽 기준 쓰기 · 오른쪽 AI 추천. 좁으면 위아래로 쌓는다(기준 쓰기가 위). */
+.sm-make__top {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 24px;
+	align-items: start;
+}
+
+@media (max-width: 1000px) {
+	.sm-make__top {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
 .sm-make__compose {
 	display: flex;
 	flex-direction: column;
 	gap: 14px;
-	max-width: 960px;
+	min-width: 0;
+}
+
+/* 컨셉 줄 — 이름 · 셋 중 하나(붙은 단추) · 글 원문 말풍선 */
+.sm-make__conceptrow {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+}
+
+.sm-make__conceptrow .hint {
+	margin-left: auto;
+}
+
+.sm-make__conceptsum {
+	margin: 0 0 6px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--border);
+	font-size: 15px;
+	color: var(--text-muted);
+}
+
+.sm-make__conceptgoal {
+	display: block;
+	width: min(360px, 70vw);
+	font-size: 14px;
+	line-height: 1.6;
+	white-space: normal;
+}
+
+.sm-make__chiptag {
+	margin-right: 6px;
+	font-size: 12px;
+	font-weight: 700;
+	color: var(--accent);
 }
 
 .sm-make__title {
@@ -1320,6 +1369,164 @@
 .sm-make__chip--past {
 	background: var(--accent-soft);
 	border-color: var(--accent-line);
+}
+
+/* AI 추천(오른쪽 절반, tease §5-11) — 적합도 높은 컨셉이 위. 주제를 누르면 왼쪽 칸에 들어간다. */
+.sm-ideas {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	min-width: 0;
+	padding: 16px 18px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+}
+
+.sm-ideas__head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.sm-ideas__head .sm-meta {
+	margin: 4px 0 0;
+}
+
+.sm-ideas__title {
+	margin: 0;
+	font-size: 20px;
+}
+
+.sm-ideas__empty {
+	margin: 0;
+	padding: 18px 0;
+	line-height: 1.6;
+	color: var(--text-muted);
+}
+
+.sm-ideas__list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.sm-ideas__concept {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.sm-ideas__concept + .sm-ideas__concept {
+	padding-top: 14px;
+	border-top: 1px solid var(--border);
+}
+
+.sm-ideas__fitrow {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.sm-ideas__name {
+	min-width: 56px;
+	font-size: 16px;
+	font-weight: 700;
+}
+
+.sm-ideas__meter {
+	flex: 1;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--bg);
+	overflow: hidden;
+}
+
+.sm-ideas__meter > span {
+	display: block;
+	height: 100%;
+	border-radius: 3px;
+	background: var(--accent);
+}
+
+.sm-ideas__fit {
+	min-width: 28px;
+	text-align: right;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-ideas__note {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+.sm-ideas__items {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.sm-idea {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg);
+}
+
+.sm-idea--on {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.sm-idea__top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-idea__title {
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.sm-idea__made {
+	margin-left: auto;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	border: 1px solid var(--accent-line);
+	color: var(--accent);
+	font-size: 12px;
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.sm-idea__where {
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-idea__reason {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.sm-idea__actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
 }
 
 /* 결과 */
