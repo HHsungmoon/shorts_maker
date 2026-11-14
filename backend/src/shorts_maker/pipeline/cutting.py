@@ -14,6 +14,7 @@ import psycopg
 
 from .. import config, standards
 from ..adapters import gemini
+from . import concepts
 
 TARGET_MIN_SEC = 30.0
 TARGET_MAX_SEC = 60.0
@@ -45,7 +46,7 @@ PROMPT_TEMPLATE = """다음은 한 강연 구간의 발화 목록이다. 각 줄
 - 앞을 듣지 않아도 이해되는 지점에서 시작한다.
 - reason 은 왜 이 구간인지 한두 문장.
 
-{standard_block}{context_block}구간 요약: {description}
+{standard_block}{concept_block}{context_block}구간 요약: {description}
 
 발화 목록:
 {utterance_block}"""
@@ -59,8 +60,11 @@ class Cut:
 
 
 def build_prompt(
-    utterances: list[dict], description: str, context: str | None, standard: str | None = None
+    utterances: list[dict], description: str, context: str | None, standard: str | None = None,
+    concept: str | None = None,
 ) -> str:
+    """`concept` 는 그 run 의 컨셉(concepts.py, tease §5-11). 바이럴은 센 한마디가 앞에, 정보성은 정보가 끝까지 —
+    컨셉마다 자르는 자리가 다르다. 없으면 그 줄이 빠진다."""
     if not utterances:
         raise CuttingError("발화가 없다")
     lines = "\n".join(
@@ -72,6 +76,7 @@ def build_prompt(
         max_sec=TARGET_MAX_SEC,
         context_block=context_block,
         standard_block=standards.block(standard),
+        concept_block=concepts.block(concept, "cut"),
         description=description,
         utterance_block=lines,
     )
@@ -173,9 +178,12 @@ def run_for_segment(
         "select source_id from chunks where id = %s", (segment["chunk_id"],)
     ).fetchone()["source_id"]
     context = conn.execute("select context from sources where id = %s", (source_id,)).fetchone()["context"]
+    # 컨셉은 run 이 들고 있다 — 고를 때 쓴 컨셉으로 자른다(tease §5-11). 질문 경로 · 컨셉 이전의 run 은 null.
+    run = conn.execute("select concept from runs where id = %s", (run_id,)).fetchone()
+    concept = run["concept"] if run else None
 
     # 관리자 기준(2층). 구간 안에서 어디를 자를지는 선호의 문제라 여기에 넣는다.
-    prompt = build_prompt(utterances, segment["description"] or "", context, standards.load(conn))
+    prompt = build_prompt(utterances, segment["description"] or "", context, standards.load(conn), concept)
     try:
         raw, usage, latency_ms = gemini.generate_json(cfg, prompt, RESPONSE_SCHEMA)
     except Exception as exc:

@@ -2,7 +2,8 @@
 
 프롬프트는 §6-1 대로 [고정] + [가변] 으로 조립한다.
   [고정] 자립성 관문 · 출력 형식   ← 여기서 튜닝된다. 그래서 실제로 보낸 전문을 runs.prompt 에 남긴다
-  [가변] criteria_prompt          ← Run 마다 바뀌는 유일한 부분
+  [가변] criteria_prompt          ← Run 마다 바뀌는 부분
+  [가변] concept                  ← 관리자 숏폼의 컨셉(tease §5-11, 2026-11-08). 점수의 눈금만 바꾼다 — 1단계 관문은 그대로
 
 🔴 자립성은 **감점이 아니라 후보 제외**다(§1 EchoCut 교훈 4). 감점으로 두면 모델이 실제로
 안 뺀다. 제외 목록은 `runs.ranked` JSON 안에만 남는다 — 예전엔 `segments.excluded_by='auto'`
@@ -19,6 +20,7 @@ from psycopg.types.json import Jsonb
 
 from .. import config, standards
 from ..adapters import gemini
+from . import concepts
 
 
 class RankingError(RuntimeError):
@@ -71,7 +73,7 @@ reason 은 왜 그 점수인지 한두 문장.
 규칙:
 - 모든 구간이 excluded 나 ranked 중 정확히 한 곳에 들어가야 한다. 빠뜨리지 마라.
 - idx 는 아래 목록에 있는 번호만 쓴다.
-{standard_block}{criteria_block}
+{standard_block}{concept_block}{criteria_block}
 {context_block}구간 목록:
 {segment_block}"""
 
@@ -79,9 +81,13 @@ CRITERIA_HEADER = "\n무엇을 좋게 볼 것인가:\n"
 
 
 def build_prompt(
-    segments: list[dict], context: str | None, criteria: str | None, standard: str | None = None
+    segments: list[dict], context: str | None, criteria: str | None, standard: str | None = None,
+    concept: str | None = None,
 ) -> str:
-    """`standard` 는 관리자 기준(2층). 비면 그 줄이 빠진다 — standards.py 머리 주석."""
+    """`standard` 는 관리자 기준(2층). 비면 그 줄이 빠진다 — standards.py 머리 주석.
+
+    `concept` 는 관리자 숏폼의 컨셉 키(concepts.py). 순서는 공통 기준 → 컨셉 → 이번 기준 — 뒤로 갈수록 이번 요청에 가깝다.
+    """
     if not segments:
         raise RankingError("구간이 없다 — 먼저 `sm segment run` 을 돌린다")
     lines = "\n".join(
@@ -91,7 +97,7 @@ def build_prompt(
     criteria_block = f"{CRITERIA_HEADER}{criteria.strip()}\n" if criteria and criteria.strip() else ""
     context_block = f"강연 개요: {context.strip()}\n\n" if context and context.strip() else ""
     return FIXED_PROMPT.format(
-        standard_block=standards.block(standard),
+        standard_block=standards.block(standard), concept_block=concepts.block(concept, "rank"),
         criteria_block=criteria_block, context_block=context_block, segment_block=lines,
     )
 
@@ -165,21 +171,27 @@ def load_segments(conn: psycopg.Connection, source_id: int) -> list[dict]:
 
 
 def run_for_source(
-    conn: psycopg.Connection, cfg: config.Config, source_id: int, criteria: str | None
+    conn: psycopg.Connection, cfg: config.Config, source_id: int, criteria: str | None,
+    concept: str | None = None,
 ) -> int:
+    """`concept` 는 run 에 남는다(`runs.concept`) — 이 run 에서 나온 클립의 자르기 · AI 카피가 같은 컨셉을 읽는다."""
     source = conn.execute("select * from sources where id = %s", (source_id,)).fetchone()
     if source is None:
         raise RankingError(f"source {source_id} 없음")
+    try:
+        concept = concepts.check(concept)
+    except concepts.ConceptError as exc:
+        raise RankingError(str(exc)) from exc
 
     segments = load_segments(conn, source_id)
     # 🔴 관리자 기준은 run 시작에 한 번 읽는다. 프롬프트 원문이 runs.prompt 에 남으므로
     # 어떤 기준으로 뽑혔는지가 따로 기록하지 않아도 남는다.
-    prompt = build_prompt(segments, source["context"], criteria, standards.load(conn))
+    prompt = build_prompt(segments, source["context"], criteria, standards.load(conn), concept)
 
     run = conn.execute(
-        """insert into runs (source_id, criteria_prompt, prompt, status)
-           values (%s, %s, %s, 'RUNNING') returning id""",
-        (source_id, (criteria or "").strip() or None, prompt),
+        """insert into runs (source_id, criteria_prompt, prompt, status, concept)
+           values (%s, %s, %s, 'RUNNING', %s) returning id""",
+        (source_id, (criteria or "").strip() or None, prompt, concept),
     )
     run_id = run.fetchone()["id"]
     conn.commit()

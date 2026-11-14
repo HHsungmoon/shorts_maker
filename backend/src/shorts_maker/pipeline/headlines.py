@@ -1,6 +1,7 @@
 """숏폼 카피 후보 — AI 카피(tease §5-10 "AI 카피 후보", P4 첫 단계, 2026-11-08).
 
-편집 화면의 [AI 카피 후보] 가 부른다. 클립 대사 · 제목 · 영상 개요(3층) · 관리자 기준(2층)으로 카피 후보 다섯을 받는다.
+편집 화면의 [AI 카피 후보] 가 부른다. 클립 대사 · 제목 · 영상 개요(3층) · 관리자 기준(2층) · 그 클립을 고른 run 의 컨셉
+(4층, tease §5-11 — 바이럴은 세게, 정보성은 무엇을 알려 주는지)으로 카피 후보 다섯을 받는다.
 Gemini 1회. 저장하지 않는다 — 사람이 하나를 고르면 카피 칸에 들어가고, 거기서 고친다.
 
 🔴 코드가 검증한다(LLM 출력은 항상 검증한다):
@@ -25,7 +26,7 @@ from psycopg.types.json import Jsonb
 
 from .. import config, standards
 from ..adapters import gemini
-from . import templates
+from . import concepts, templates
 
 # 후보 수. 다섯이면 각도(결론 먼저 · 질문 · 숫자 · 말하는 사람 · 반전)가 하나씩 돌아간다 — 설계안 v3 의 P4 기준.
 COUNT = 5
@@ -45,7 +46,7 @@ PROMPT = """너는 유튜브 쇼츠 카드의 카피를 쓴다. 카드는 위에
 - 대사에 나온 사실만 쓴다. 숫자는 대사나 클립 제목에 나온 숫자만 쓴다.
 - quote 에는 그 카피의 근거가 된 대사 한 구절을 대사에서 글자 그대로 옮긴다({quote_max}자 이내).
 - angle 에는 그 후보의 각도를 짧게 적는다(예: "결론 먼저").
-{standard_block}{context_block}
+{standard_block}{concept_block}{context_block}
 클립 제목: {title}
 
 대사:
@@ -95,11 +96,12 @@ def _roles(block: dict) -> str:
 
 
 def build_prompt(
-    block: dict, *, title: str | None, context: str | None, standard: str | None, transcript: str
+    block: dict, *, title: str | None, context: str | None, standard: str | None, transcript: str,
+    concept: str | None = None,
 ) -> str:
     return PROMPT.format(
         lines=len(block["lines"]), count=COUNT, roles=_roles(block), max_chars=block["max_chars"], quote_max=QUOTE_MAX,
-        standard_block=standards.block(standard),
+        standard_block=standards.block(standard), concept_block=concepts.block(concept, "copy"),
         context_block=f"\n영상 개요: {context.strip()}\n" if context and context.strip() else "",
         title=(title or "").strip() or "(없음)", transcript=transcript,
     )
@@ -164,7 +166,7 @@ def check(raw: str, *, block: dict, transcript: str, title: str | None) -> tuple
 
 def run(
     conn: psycopg.Connection, cfg: config.Config, *, source_id: int, clip_id: int, spec: dict,
-    title: str | None, context: str | None, transcript: str,
+    title: str | None, context: str | None, transcript: str, concept: str | None = None,
 ) -> dict:
     """카피 후보를 받는다. 돌려주는 것: candidates(남긴 후보) · dropped(버린 수) · latencyMs. 저장하지 않는다.
 
@@ -178,12 +180,14 @@ def run(
         raise NothingToWrite("이 구간에는 대사가 없어 카피를 쓸 수 없다")
     if len(transcript) > TRANSCRIPT_MAX:
         raise NothingToWrite(f"대사가 {TRANSCRIPT_MAX}자를 넘는다 — 구간을 줄인 뒤 다시 누른다")
-    prompt = build_prompt(block, title=title, context=context, standard=standards.load(conn), transcript=transcript)
+    prompt = build_prompt(
+        block, title=title, context=context, standard=standards.load(conn), transcript=transcript, concept=concept
+    )
     # 🔴 모델 호출이 몇 초다 — 그동안 트랜잭션을 붙잡지 않는다.
     conn.commit()
 
     params = {"clip_id": clip_id, "lines": len(block["lines"]), "max_chars": block["max_chars"],
-              "transcript_chars": len(transcript)}
+              "transcript_chars": len(transcript), "concept": concept}
     started = time.monotonic()
     result: tuple[list[dict], list[dict]] | None = None
     call_id = None

@@ -9,7 +9,7 @@ import psycopg
 from .. import config, doctor
 from ..adapters import ffmpeg, gemini
 from ..answers import clusters, demo, embeddings, suggest
-from ..pipeline import captions, cutting, ingest, ranking, render, segmentation, stt, transcripts
+from ..pipeline import captions, concepts, cutting, ingest, ranking, render, segmentation, stt, transcripts
 from ..db import store
 
 
@@ -235,7 +235,7 @@ def _cmd_run_create(cfg: config.Config, args) -> int:
 
 def _cmd_rank_run(cfg: config.Config, args) -> int:
     with store.connect(cfg.database_url) as conn:
-        run_id = ranking.run_for_source(conn, cfg, args.source_id, args.criteria)
+        run_id = ranking.run_for_source(conn, cfg, args.source_id, args.criteria, args.concept)
         row = conn.execute("select ranked from runs where id = %s", (run_id,)).fetchone()
     data = row["ranked"]  # jsonb — psycopg 가 dict 로 준다
     print(f"run {run_id}")
@@ -431,6 +431,9 @@ def main(argv: list[str] | None = None) -> int:
     rank_run = rank_sub.add_parser("run", help="구간에 점수를 매긴다 (Gemini)")
     rank_run.add_argument("source_id", type=int)
     rank_run.add_argument("--criteria", help="기준 프롬프트 (§6-1 의 [가변] 부분)")
+    rank_run.add_argument(
+        "--concept", choices=concepts.KEYS, help="관리자 숏폼의 컨셉 — 브랜딩 · 바이럴 · 정보성 (tease §5-11)"
+    )
 
     run_p = sub.add_parser("run", help="Run 관리")
     run_sub = run_p.add_subparsers(dest="run_command", required=True)

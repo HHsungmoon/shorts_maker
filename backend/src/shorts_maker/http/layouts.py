@@ -95,11 +95,12 @@ def _clip(conn: psycopg.Connection, clip_id: int) -> dict:
     clip = conn.execute(
         """select cl.id, cl.title, cl.start_sec, cl.end_sec, cl.total_sec, cl.rendered, cl.layout, cl.render_spec,
                   sg.chunk_id, s.id as source_id, s.path as source_path, s.channel, s.context,
-                  s.series_id as source_series_id
+                  s.series_id as source_series_id, r.concept
            from clips cl
            join segments sg on sg.id = cl.segment_id
            join chunks ch on ch.id = sg.chunk_id
            join sources s on s.id = ch.source_id
+           left join runs r on r.id = cl.run_id
            where cl.id = %s""",
         (clip_id,),
     ).fetchone()
@@ -521,6 +522,8 @@ def suggest_copy(clip_id: int, body: LayoutIn) -> dict:
             found = headlines.run(
                 conn, deps.cfg, source_id=clip["source_id"], clip_id=clip_id, spec=current["spec"],
                 title=clip["title"], context=clip["context"], transcript=" ".join(c.text for c in cues),
+                # 그 클립을 고른 run 의 컨셉(tease §5-11). 질문 경로 · 컨셉 이전의 클립은 null — 줄이 빠진다.
+                concept=clip["concept"],
             )
         except headlines.NothingToWrite as exc:
             raise HTTPException(422, str(exc)) from exc

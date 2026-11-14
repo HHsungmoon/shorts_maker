@@ -22,6 +22,7 @@ def run_all(
     criteria: str | None,
     resegment: bool = False,
     burn_subtitles: bool = True,
+    concept: str | None = None,
 ) -> dict:
     chunks = conn.execute(
         "select id from chunks where source_id = %s order by idx", (source_id,)
@@ -38,7 +39,7 @@ def run_all(
             continue
         segmented += len(segmentation.run_for_chunk(conn, cfg, chunk["id"], force=True))
 
-    run_id = ranking.run_for_source(conn, cfg, source_id, criteria)
+    run_id = ranking.run_for_source(conn, cfg, source_id, criteria, concept)
     # runs.ranked 는 jsonb — 이미 dict 로 온다.
     ranked = conn.execute("select ranked from runs where id = %s", (run_id,)).fetchone()["ranked"]["ranked"]
     if not ranked:
