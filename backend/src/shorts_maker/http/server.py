@@ -47,7 +47,8 @@ def login(body: LoginIn, request: Request, response: Response) -> dict:
         return {"ok": True, "authRequired": False, "role": auth.ADMIN, "readonlyHint": None}
     # 🔴 잠금은 **IP 별**이다(2026-09-16). 보기 전용 비밀번호를 화면에 공개하면서 서로 모르는
     # 여러 명이 같은 문으로 들어오게 됐고, 전역 카운터면 남의 오타가 나를 잠근다(auth.py).
-    # IP 는 nginx 가 덮어쓰는 X-Real-IP 에서 온다 — 클라이언트가 위조할 수 없는 값이다.
+    # IP 는 앞단(nginx · Cloudflare)이 덮어쓰는 헤더 하나에서 온다(SHORTS_CLIENT_IP_HEADER) — 클라이언트가
+    # 위조할 수 없는 값이다.
     ip = viewers.client_ip(request)
     locked = auth.locked_for(ip)
     if locked:

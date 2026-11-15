@@ -125,6 +125,13 @@ DEFAULTS = {
     # 세션 수명. 하루 작업을 한 번의 로그인으로 끝내되, 자리를 뜬 브라우저가 무기한
     # 열려 있지는 않을 만큼으로 잡았다.
     "SHORTS_SESSION_TTL_HOURS": "12",
+    # 방문자 IP 를 어느 헤더에서 읽나(answers/viewers.client_ip). 레이트리밋과 로그인 잠금이 이 값으로 센다.
+    #   x-real-ip        — nginx 뒤(NCP 시절). nginx 가 `$remote_addr` 로 덮어쓴다
+    #   cf-connecting-ip — Cloudflare Tunnel 뒤(2026-11-15, 집 서버). Cloudflare 가 늘 덮어쓴다
+    # 🔴 **하나만 믿는다.** 터널 뒤에서 X-Real-IP 를 믿으면 Cloudflare 는 그 헤더를 손대지 않고 넘기므로
+    # 방문자가 아무 값이나 적어 한도를 피한다. nginx 뒤에서 CF-Connecting-IP 를 믿으면 반대가 된다.
+    # 둘 다 보는 순간 둘 중 위조 가능한 쪽이 생긴다 — 배포마다 앞에 선 것 하나를 고른다.
+    "SHORTS_CLIENT_IP_HEADER": "x-real-ip",
     # 빌드된 프론트(web/dist). 없으면 개발용 단일 페이지로 폴백한다 — node 빌드 없이도
     # 브라우저로 파이프라인 상태를 볼 수 있어야 디버깅이 된다.
     "SHORTS_WEB_DIR": "../web/dist",
@@ -132,6 +139,20 @@ DEFAULTS = {
 
 # 이 주소에 바인딩하면 외부에서 닿지 않는다 — 인증 없이 띄워도 되는 유일한 경우다.
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+
+# 🔴 X-Forwarded-For 는 넣지 않는다. 앞단(nginx·Cloudflare)이 클라이언트가 보낸 값 **뒤에 덧붙이는**
+# 헤더라 첫 항목을 아무나 적을 수 있다. 여기 있는 둘은 앞단이 통째로 **덮어쓰는** 헤더다.
+CLIENT_IP_HEADERS = ("x-real-ip", "cf-connecting-ip")
+
+
+def _client_ip_header(raw: str) -> str:
+    """오타를 기동 시점에 막는다. 틀린 이름을 조용히 받으면 헤더가 늘 비어 소켓 주소(앞단 프록시)로
+    떨어지고, 전 방문자가 한 IP 로 묶여 질문 한도와 로그인 잠금을 다 같이 맞는다 — 그런데 겉으론 멀쩡하다.
+    """
+    name = raw.strip().lower()
+    if name not in CLIENT_IP_HEADERS:
+        raise ValueError(f"SHORTS_CLIENT_IP_HEADER 는 {' · '.join(CLIENT_IP_HEADERS)} 중 하나여야 합니다: {raw!r}")
+    return name
 
 
 def _load_dotenv(path: Path) -> None:
@@ -199,6 +220,8 @@ class Config:
     youtube_client_id: str = ""
     youtube_client_secret: str = ""
     youtube_redirect_uri: str = "http://localhost:8100/api/youtube/callback"
+    # 방문자 IP 를 읽는 헤더(소문자). 고를 수 있는 값은 CLIENT_IP_HEADERS 뿐이다 — DEFAULTS 주석.
+    client_ip_header: str = "x-real-ip"
 
     # ---- DB 에 저장되는 파일 경로 ------------------------------------------------
     # 🔴 DB 에는 **상대경로**를 넣는다. 원본은 source_dir 기준, 파생물(청크·클립)은 work_dir 기준.
@@ -299,6 +322,7 @@ def load() -> Config:
         youtube_client_id=os.environ.get("SHORTS_YOUTUBE_CLIENT_ID", "").strip(),
         youtube_client_secret=os.environ.get("SHORTS_YOUTUBE_CLIENT_SECRET", "").strip(),
         youtube_redirect_uri=get("SHORTS_YOUTUBE_REDIRECT_URI").strip(),
+        client_ip_header=_client_ip_header(get("SHORTS_CLIENT_IP_HEADER")),
     )
 
 

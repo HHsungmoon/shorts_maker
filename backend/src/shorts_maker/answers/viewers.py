@@ -35,17 +35,25 @@ _hits: dict[tuple[str, str], list[float]] = {}
 
 
 def client_ip(request: Request) -> str:
-    """🔴 `X-Real-IP` 만 믿는다. nginx 가 이 헤더를 **덮어쓰기** 때문이다
-    (`proxy_set_header X-Real-IP $remote_addr`).
+    """🔴 앞단이 **덮어쓰는** 헤더 하나만 믿는다(`SHORTS_CLIENT_IP_HEADER`).
+    nginx 뒤면 `X-Real-IP`(`proxy_set_header X-Real-IP $remote_addr`), Cloudflare Tunnel 뒤면
+    `CF-Connecting-IP`(2026-11-15, 집 서버). 다른 쪽 헤더는 앞단이 손대지 않고 넘겨서 방문자가 적은
+    값이 그대로 온다 — 그래서 둘을 함께 보지 않는다(config.DEFAULTS 주석).
 
-    `X-Forwarded-For` 는 쓰지 않는다 — nginx 설정이 `$proxy_add_x_forwarded_for` 라
-    클라이언트가 보낸 값 뒤에 덧붙이는 형태고, 그러면 첫 항목을 아무나 위조해 IP 한도를
-    피해 갈 수 있다. 프록시 없이 직접 띄운 경우(로컬)는 소켓 주소로 떨어진다.
+    `X-Forwarded-For` 는 쓰지 않는다 — 앞단이 클라이언트가 보낸 값 뒤에 덧붙이는 형태라 첫 항목을
+    아무나 위조해 IP 한도를 피해 갈 수 있다. 프록시 없이 직접 띄운 경우(로컬)는 소켓 주소로 떨어진다.
     """
-    real = request.headers.get("x-real-ip")
+    real = request.headers.get(_ip_header())
     if real:
         return real.strip()
     return request.client.host if request.client else "unknown"
+
+
+def _ip_header() -> str:
+    # 지연 import — _cookie_secure 와 같은 이유(설정은 호출 시점에 읽어야 테스트의 교체가 반영된다).
+    from ..http import deps
+
+    return deps.cfg.client_ip_header
 
 
 def viewer_id(request: Request, response: Response) -> str:
