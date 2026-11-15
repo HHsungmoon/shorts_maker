@@ -2,10 +2,14 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { fetchPrompts, saveReactionGuide, saveStandard } from "./api";
-import { StudioHead } from "./components/StudioChrome";
+import { StudioBrand } from "./components/StudioChrome";
+import { useGuide } from "./guide";
+import { PROMPTS_GUIDE } from "./guides/prompts";
+import { guideAttr } from "./guides/targets";
 import { useAsync } from "../shared/useAsync";
 import type { ReactNode } from "react";
 import type { PromptCatalog, PromptPart, PromptStage, PromptStandard } from "./types";
+import type { GuideTarget } from "./guides/targets";
 import "./prompts.css";
 
 /**
@@ -22,6 +26,8 @@ import "./prompts.css";
 export function PromptsPage() {
 	const [token, setToken] = useState(0);
 	const catalog = useAsync<PromptCatalog>(fetchPrompts, [token], { keepPrevious: true });
+	// 🔴 아래 이른 return 보다 앞이어야 한다(훅 순서).
+	const openGuide = useGuide(PROMPTS_GUIDE);
 
 	if (catalog.loading) {
 		return <p className="state">불러오는 중…</p>;
@@ -32,14 +38,25 @@ export function PromptsPage() {
 	const data = catalog.data;
 
 	return (
-		<div className="page">
-			<StudioHead title="프롬프트">
-				<Link to="/studio" className="button button--small">
-					영상 목록으로
-				</Link>
-			</StudioHead>
+		<div className="sm-shell">
+			{/* 홈 · 영상 화면과 같은 상단바(2026-11-15). 옛 머리(StudioHead)에는 [가이드 보기] 를 둘 자리가 없었다. */}
+			<header className="sm-bar sm-bar--plain">
+				<StudioBrand onGuide={openGuide} />
+				<div className="sm-bar__row">
+					<h1 className="sm-bar__title">프롬프트</h1>
+					<span className="sm-bar__actions">
+						<Link to="/studio" className="button button--small">
+							영상 목록으로
+						</Link>
+					</span>
+				</div>
+			</header>
+			<main className="sm-shell__main">
+			{/* 글이 길어 폭을 1100px 로 묶는다(옛 .page 와 같은 폭) — 넓은 화면에서 원문 한 줄이 너무 길어지지 않게. */}
+			<div className="pr-body">
 
 			<TextEditor
+				guide="pr-standard"
 				title="관리자 기준"
 				value={data.standard}
 				save={saveStandard}
@@ -59,6 +76,7 @@ export function PromptsPage() {
 			</TextEditor>
 
 			<TextEditor
+				guide="pr-reaction"
 				title="시청자 반응 요약 관점"
 				value={data.reaction}
 				save={saveReactionGuide}
@@ -74,7 +92,7 @@ export function PromptsPage() {
 			</TextEditor>
 
 			<h2 className="section-title">네 층</h2>
-			<div className="table-wrap">
+			<div className="table-wrap" {...guideAttr("pr-layers")}>
 				<table className="table">
 					<thead>
 						<tr>
@@ -100,6 +118,7 @@ export function PromptsPage() {
 			</div>
 
 			{/* 관리자 숏폼의 컨셉 셋(tease §5-11). 🔴 서버 코드의 글 그대로다 — 화면에서 따로 적지 않는다. */}
+			<div {...guideAttr("pr-concepts")}>
 			<h2 className="section-title">컨셉 셋</h2>
 			<p className="sm-meta">
 				새 클립 탭에서 고르는 관리자 숏폼의 컨셉입니다. 고른 컨셉의 글이 고르기 · 자르기 · AI 카피의{" "}
@@ -122,21 +141,28 @@ export function PromptsPage() {
 					</details>
 				</section>
 			))}
+			</div>
 
+			{/* 가이드는 머리와 설명만 짚는다 — 단계 원문까지 감싸면 화면 몇 개 높이라 말풍선이 그 끝에 붙는다. */}
+			<div {...guideAttr("pr-stages")}>
 			<h2 className="section-title">단계별 원문</h2>
 			<p className="sm-meta">
 				색이 있는 칸이 실행할 때 채워지는 자리이고, 나머지 글이 고정된 규칙입니다. 관리자 기준은{" "}
 				<strong>구간 분할과 답 구간 찾기, 시청자 반응 요약에는 들어가지 않습니다.</strong>
 			</p>
+			</div>
 			{data.stages.map((stage) => (
 				<StageBlock key={stage.key} stage={stage} />
 			))}
+			</div>
+			</main>
 		</div>
 	);
 }
 
 /** 프롬프트 화면에서 고치는 글 하나 — 관리자 기준 · 요약 관점이 같은 모양이다. 서버는 둘 다 **덧붙인다**. */
 function TextEditor({
+	guide,
 	title,
 	value,
 	save: send,
@@ -145,6 +171,8 @@ function TextEditor({
 	clearLabel,
 	children,
 }: {
+	/** 가이드가 짚는 이름(guides/targets.ts). 두 글이 같은 컴포넌트라 밖에서 준다. */
+	guide: GuideTarget;
 	title: string;
 	value: PromptStandard;
 	save: (body: string) => Promise<PromptStandard>;
@@ -182,7 +210,7 @@ function TextEditor({
 	};
 
 	return (
-		<section className="pr-standard">
+		<section className="pr-standard" {...guideAttr(guide)}>
 			<h2 className="section-title">{title}</h2>
 			{children}
 			<textarea

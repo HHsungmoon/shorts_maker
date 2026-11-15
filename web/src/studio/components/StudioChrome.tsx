@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { GutterPicker, ThemePicker } from "./ThemePicker";
@@ -10,8 +9,7 @@ import type { ShortsStatus } from "../types";
 import "../shell.css";
 
 // 화면들이 함께 쓰는 머리와 배너. 잡 상태 자체는 useStudioJob 이 들고 있다.
-// 홈과 영상 화면은 상단바(shell.css)를 쓴다 — 첫 줄(StudioBrand)이 같고 둘째 줄부터 화면마다 다르다.
-// 프롬프트 화면만 아직 옛 머리(StudioHead)다.
+// 홈 · 영상 화면 · 프롬프트는 상단바(shell.css)를 쓴다 — 첫 줄(StudioBrand)이 같고 둘째 줄부터 화면마다 다르다.
 
 function elapsed(since: string): string {
 	return `${Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 1000))}초`;
@@ -22,7 +20,7 @@ function elapsed(since: string): string {
  * 홈이 옛 머리(가운데 1100px · 글자 제목)로 남아 있어서 영상 화면과 다른 서비스처럼 보였다.
  *
  * `onGuide` 를 준 화면에만 [가이드 보기] 가 뜬다. 안내가 없는 화면에 버튼을 두면 눌러도 아무 일이 없다 —
- * 지금은 홈만 안내가 있다(영상 화면의 탭별 안내는 다음 차례).
+ * 안내는 홈 · 영상 화면의 탭마다 · 숏폼 편집 · 프롬프트에 있다(문구는 guides/*.ts).
  */
 export function StudioBrand({ onGuide }: { onGuide?: () => void }) {
 	const { authRequired, signOut } = useAuth();
@@ -56,34 +54,6 @@ export function StudioBrand({ onGuide }: { onGuide?: () => void }) {
 				<span className="sm-bar__gutter">
 					<GutterPicker />
 				</span>
-				<ThemePicker />
-				{authRequired && (
-					<button type="button" className="button button--small" onClick={signOut}>
-						로그아웃
-					</button>
-				)}
-			</span>
-		</div>
-	);
-}
-
-/** 옛 페이지 머리(프롬프트). 제목 옆 버튼만 화면마다 다르고 오른쪽 로그아웃은 같다. */
-export function StudioHead({
-	title,
-	count,
-	children,
-}: {
-	title: string;
-	count?: ReactNode;
-	children?: ReactNode;
-}) {
-	const { authRequired, signOut } = useAuth();
-	return (
-		<div className="page-head">
-			<h1 className="page-title">{title}</h1>
-			{count && <span className="page-count">{count}</span>}
-			<span className="sm-actions sm-actions--end">
-				{children}
 				<ThemePicker />
 				{authRequired && (
 					<button type="button" className="button button--small" onClick={signOut}>

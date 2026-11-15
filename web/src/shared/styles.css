@@ -156,23 +156,6 @@ img {
 	padding: 10px;
 }
 
-.page-head {
-	display: flex;
-	align-items: baseline;
-	gap: 12px;
-	margin-bottom: 16px;
-}
-
-.page-title {
-	font-size: 24px;
-	margin: 0;
-}
-
-.page-count {
-	color: var(--text-muted);
-	font-size: 15px;
-}
-
 .section-title {
 	font-size: 18px;
 	margin: 28px 0 12px;

@@ -60,7 +60,13 @@ export type GuideTarget =
 	| "edit-shape"
 	| "edit-copy"
 	| "edit-slot"
-	| "edit-subtitles";
+	| "edit-subtitles"
+	// 프롬프트(/studio/prompts)
+	| "pr-standard"
+	| "pr-reaction"
+	| "pr-layers"
+	| "pr-concepts"
+	| "pr-stages";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {
