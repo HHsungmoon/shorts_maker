@@ -178,6 +178,14 @@ export function runIdeas(sourceId: number): Promise<ShortsJob> {
 	return request<ShortsJob>(`/api/sources/${sourceId}/ideas`, { method: "POST" });
 }
 
+/** AI 추천 카드의 [클립 만들기] — 주제 하나짜리 run 을 만들고 그 구간을 자른다(tease §5-11). */
+export function cutIdea(sourceId: number, ideaId: number, concept: ConceptKey, segmentId: number): Promise<ShortsJob> {
+	return request<ShortsJob>(`/api/sources/${sourceId}/ideas/${ideaId}/cut`, {
+		method: "POST",
+		body: { concept, segmentId },
+	});
+}
+
 export function runPipeline(
 	sourceId: number,
 	criteria: string | null,

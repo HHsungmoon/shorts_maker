@@ -28,9 +28,12 @@ type Filter = "all" | "clip" | "excluded";
  * 결과가 이 탭에 남아 있어서, 카드를 하나씩 클립으로 만들며 내려가면 된다 — 예전에는 결과를 보려고
  * 실행 버튼 아래 긴 목록을 훑어야 했다.
  *
- * 2026-11-08(tease §5-11): 관리자가 만드는 숏폼은 컨셉이 셋이다 — 브랜딩 · 바이럴 · 정보성. 위쪽을 반으로 가른다.
- * 왼쪽은 컨셉 · 기준을 쓰는 자리, 오른쪽은 AI 추천(영상을 읽고 컨셉마다 적합도와 주제). 추천의 주제를 누르면 왼쪽
- * 칸에 들어가고, 사람이 [구간 고르기] 를 누른다. 고른 컨셉은 run 에 남아 자르기 · AI 카피까지 따라간다.
+ * 2026-11-08(tease §5-11): 관리자가 만드는 숏폼은 컨셉이 셋이다 — 브랜딩 · 바이럴 · 정보성. 고른 컨셉은 run 에 남아
+ * 자르기 · AI 카피까지 따라간다.
+ *
+ * 2026-11-14: "어떤 클립을 뽑을까요?" 아래 **두 길을 선택지로** 가른다 — ① AI 추천 클립(카드에서 바로 만든다)
+ * ② 직접 고르기(컨셉 · 기준 → 점수순 결과). 처음엔 위쪽 반반이었는데, 고르기가 23개를 내놓으니 옆의 추천 둘이 그 안에
+ * 묻혔다(사용자 피드백). 한 번에 한 길만 보인다. 결과 카드는 직접 고르기 쪽에만 있다.
  */
 export function NewClipTab({ view }: { view: SourceView }) {
 	const {
@@ -54,6 +57,8 @@ export function NewClipTab({ view }: { view: SourceView }) {
 		setOpenPreview,
 		showAllRanked,
 		setShowAllRanked,
+		makeWay,
+		setMakeWay,
 	} = view;
 	const [filter, setFilter] = useState<Filter>("all");
 
@@ -79,25 +84,48 @@ export function NewClipTab({ view }: { view: SourceView }) {
 
 	return (
 		<div className="sm-make">
-			{/* 위쪽 반반 — 왼쪽 기준 쓰기(D1) · 오른쪽 AI 추천(tease §5-11) ---------------------------- */}
-			<div className="sm-make__top">
-				<section className="sm-make__compose">
-					<div className="sm-make__intro">
-						<h2 className="sm-make__title">어떤 클립을 뽑을까요?</h2>
-						<p className="sm-make__lead">
-							시청자 질문과 별개로 관리자가 직접 만드는 숏폼입니다. 만든 클립은{" "}
-							<Link to={`/studio/sources/${sourceId}/clips`}>공개</Link> 탭에 쌓입니다.
-						</p>
-					</div>
+			<div className="sm-make__intro">
+				<h2 className="sm-make__title">어떤 클립을 뽑을까요?</h2>
+				<p className="sm-make__lead">
+					시청자 질문과 별개로 관리자가 직접 만드는 숏폼입니다. 만든 클립은{" "}
+					<Link to={`/studio/sources/${sourceId}/clips`}>공개</Link> 탭에 쌓입니다.
+				</p>
+			</div>
 
-					{/* 구간이 없으면 고를 대상 자체가 없다. 버튼만 잠겨 있으면 왜 안 눌리는지 알 수 없다. */}
-					{!prepDone && (
-						<p className="sm-make__need">
-							영상 준비가 끝나야 구간을 고를 수 있습니다 —{" "}
-							<Link to={`/studio/sources/${sourceId}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
-						</p>
-					)}
+			{/* 구간이 없으면 고를 대상 자체가 없다. 버튼만 잠겨 있으면 왜 안 눌리는지 알 수 없다. */}
+			{!prepDone && (
+				<p className="sm-make__need">
+					영상 준비가 끝나야 클립을 만들 수 있습니다 —{" "}
+					<Link to={`/studio/sources/${sourceId}/prepare`}>영상 준비</Link> 탭에서 마저 진행하세요.
+				</p>
+			)}
 
+			{/* 두 길 — 선택지로 가른다(2026-11-14). 고른 쪽만 아래에 펼친다. */}
+			<div className="sm-make__ways" role="tablist" aria-label="만드는 길">
+				<WayTile
+					on={makeWay === "ideas"}
+					onClick={() => setMakeWay("ideas")}
+					title="AI 추천 클립"
+					lead="영상을 읽고 컨셉마다 만들 만한 숏폼을 골라 줍니다. 카드에서 바로 클립을 만듭니다."
+					meta={
+						data.ideas
+							? `추천 ${data.ideas.ideas.length}개 · ${stamp(data.ideas.createdAt)}`
+							: "아직 추천을 받지 않았습니다"
+					}
+				/>
+				<WayTile
+					on={makeWay === "criteria"}
+					onClick={() => setMakeWay("criteria")}
+					title="직접 고르기"
+					lead="컨셉과 주제를 적으면 영상 전체에서 맞는 구간을 점수순으로 고릅니다."
+					meta={latestRun ? `결과 ${ranked.length}개 · ${stamp(latestRun.created_at)}` : "아직 고르지 않았습니다"}
+				/>
+			</div>
+
+			{makeWay === "ideas" ? (
+				<IdeasPanel view={view} />
+			) : (
+				<section className="sm-make__compose" role="tabpanel" aria-label="직접 고르기">
 					<div className="sm-make__box">
 						{/* 컨셉 — 무엇을 노리는 숏폼인가. 고르기 · 자르기 · AI 카피가 같은 컨셉을 읽는다. */}
 						<div className="sm-make__conceptrow">
@@ -190,18 +218,14 @@ export function NewClipTab({ view }: { view: SourceView }) {
 						)}
 					</div>
 				</section>
-
-				<IdeasPanel view={view} onPick={() => document.getElementById("make-criteria")?.focus()} />
-			</div>
+			)}
 
 			{/* 결과(D3) ----------------------------------------------------------------- */}
-			{latestRun && (
+			{makeWay === "criteria" && latestRun && (
 				<section className="sm-make__results" aria-label="선정 결과">
 					<div className="sm-make__rhead">
 						<h3 className="sm-make__rtitle">결과 {ranked.length}개</h3>
-						<span className="sm-meta">
-							점수순 · {new Date(latestRun.created_at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}
-						</span>
+						<span className="sm-meta">점수순 · {stamp(latestRun.created_at)}</span>
 						<div className="sm-make__filters" role="tablist">
 							<FilterChip on={filter === "all"} onClick={() => setFilter("all")} label="전체" count={ranked.length} />
 							<FilterChip on={filter === "clip"} onClick={() => setFilter("clip")} label="클립 만듦" count={withClip.length} />
@@ -297,6 +321,33 @@ export function NewClipTab({ view }: { view: SourceView }) {
 				)}
 			</Modal>
 		</div>
+	);
+}
+
+function stamp(at: string): string {
+	return new Date(at).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+}
+
+/** 두 길 중 하나 — 이름 · 무엇을 하는 길인가 · 지금 어디까지 왔나. */
+function WayTile({
+	on,
+	onClick,
+	title,
+	lead,
+	meta,
+}: {
+	on: boolean;
+	onClick: () => void;
+	title: string;
+	lead: string;
+	meta: string;
+}) {
+	return (
+		<button type="button" role="tab" aria-selected={on} className={`sm-way${on ? " sm-way--on" : ""}`} onClick={onClick}>
+			<span className="sm-way__title">{title}</span>
+			<span className="sm-way__lead">{lead}</span>
+			<span className="sm-way__meta">{meta}</span>
+		</button>
 	);
 }
 

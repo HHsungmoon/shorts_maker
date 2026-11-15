@@ -1197,25 +1197,82 @@
 	gap: 28px;
 }
 
-/* 위쪽 반반(tease §5-11, 2026-11-08) — 왼쪽 기준 쓰기 · 오른쪽 AI 추천. 좁으면 위아래로 쌓는다(기준 쓰기가 위). */
-.sm-make__top {
+/* 두 길(tease §5-11, 2026-11-14) — "어떤 클립을 뽑을까요?" 의 답 둘을 나란히 둔 선택지. 고른 쪽만 아래에 펼친다.
+   처음엔 위쪽 반반이었는데 고르기 결과 23개 앞에서 옆의 추천 둘이 묻혔다. */
+.sm-make__ways {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-	gap: 24px;
-	align-items: start;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 14px;
 }
 
-@media (max-width: 1000px) {
-	.sm-make__top {
+@media (max-width: 720px) {
+	.sm-make__ways {
 		grid-template-columns: minmax(0, 1fr);
 	}
 }
 
-.sm-make__compose {
+.sm-way {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 6px;
+	padding: 16px 18px;
+	border: 1px solid var(--border);
+	border-radius: 14px;
+	background: var(--surface);
+	color: var(--text);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.sm-way:hover {
+	border-color: var(--accent-line);
+}
+
+/* 고른 쪽 — 입력 상자와 같은 accent 테두리. 고르지 않은 쪽은 눌러 볼 수 있다는 것만 남긴다. */
+.sm-way--on {
+	border: 2px solid var(--accent);
+	padding: 15px 17px;
+	background: var(--accent-soft);
+	box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.sm-way__title {
+	font-size: 19px;
+	font-weight: 700;
+}
+
+.sm-way--on .sm-way__title {
+	color: var(--accent);
+}
+
+.sm-way__lead {
+	font-size: 15px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+.sm-way__meta {
+	margin-top: 2px;
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 직접 고르기 — 왼쪽 입력 상자, 오른쪽 예시 · 지난 기준. 입력 상자가 화면 폭을 다 쓰면 한 줄이 너무 길어 읽히지 않는다.
+   좁으면 위아래로 쌓는다(입력 상자가 위). */
+.sm-make__compose {
+	display: grid;
+	grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+	gap: 14px 24px;
+	align-items: start;
 	min-width: 0;
+}
+
+@media (max-width: 1000px) {
+	.sm-make__compose {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 
 /* 컨셉 줄 — 이름 · 셋 중 하나(붙은 단추) · 글 원문 말풍선 */
@@ -1371,56 +1428,58 @@
 	border-color: var(--accent-line);
 }
 
-/* AI 추천(오른쪽 절반, tease §5-11) — 적합도 높은 컨셉이 위. 주제를 누르면 왼쪽 칸에 들어간다. */
+/* AI 추천 클립(tease §5-11) — 컨셉 셋을 적합도 순으로 나란히, 그 아래 주제 카드. 카드에서 바로 만든다(2026-11-14). */
 .sm-ideas {
 	display: flex;
 	flex-direction: column;
-	gap: 14px;
+	gap: 16px;
 	min-width: 0;
-	padding: 16px 18px;
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: 14px;
 }
 
 .sm-ideas__head {
 	display: flex;
-	align-items: flex-start;
+	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
 }
 
-.sm-ideas__head .sm-meta {
-	margin: 4px 0 0;
-}
-
-.sm-ideas__title {
+.sm-ideas__lead {
 	margin: 0;
-	font-size: 20px;
+	font-size: 15px;
+	color: var(--text-muted);
 }
 
 .sm-ideas__empty {
 	margin: 0;
-	padding: 18px 0;
+	padding: 18px;
+	border: 1px dashed var(--border);
+	border-radius: 14px;
 	line-height: 1.6;
 	color: var(--text-muted);
 }
 
-.sm-ideas__list {
-	display: flex;
-	flex-direction: column;
+.sm-ideas__cols {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
 	gap: 16px;
+	align-items: start;
+}
+
+@media (max-width: 1000px) {
+	.sm-ideas__cols {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 
 .sm-ideas__concept {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-}
-
-.sm-ideas__concept + .sm-ideas__concept {
-	padding-top: 14px;
-	border-top: 1px solid var(--border);
+	min-width: 0;
+	padding: 14px 16px;
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 14px;
 }
 
 .sm-ideas__fitrow {
@@ -1431,7 +1490,7 @@
 
 .sm-ideas__name {
 	min-width: 56px;
-	font-size: 16px;
+	font-size: 17px;
 	font-weight: 700;
 }
 
@@ -1468,7 +1527,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	margin: 0;
+	margin: 4px 0 0;
 	padding: 0;
 	list-style: none;
 }
@@ -1483,14 +1542,24 @@
 	background: var(--bg);
 }
 
-.sm-idea--on {
-	border-color: var(--accent);
-	background: var(--accent-soft);
+.sm-idea--made {
+	border-color: var(--accent-line);
+}
+
+/* 이미 있는 대목 — 만들 것들 사이에서 눈이 덜 가게 가라앉힌다. 무엇이 있는지는 그대로 읽힌다. */
+.sm-idea--dup {
+	border-style: dashed;
+	background: transparent;
+}
+
+.sm-idea--dup .sm-idea__title,
+.sm-idea--dup .sm-idea__reason {
+	color: var(--text-muted);
 }
 
 .sm-idea__top {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 8px;
 }
 
@@ -1499,7 +1568,21 @@
 	font-weight: 700;
 }
 
-.sm-idea__made {
+.sm-idea__score {
+	flex: none;
+	min-width: 30px;
+	font-size: 18px;
+	font-weight: 800;
+	line-height: 1.15;
+	color: var(--accent);
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-idea--dup .sm-idea__score {
+	color: var(--text-muted);
+}
+
+.sm-idea__badge {
 	margin-left: auto;
 	padding: 1px 8px;
 	border-radius: 999px;
@@ -1509,6 +1592,12 @@
 	font-size: 12px;
 	font-weight: 600;
 	white-space: nowrap;
+}
+
+.sm-idea__badge--dup {
+	background: var(--warn-bg);
+	border-color: var(--warn-line);
+	color: var(--warn-ink);
 }
 
 .sm-idea__where {
@@ -1523,8 +1612,33 @@
 	line-height: 1.5;
 }
 
+/* "이미 있습니다" — 그 구간을 쓰는 클립의 이름과 출처 · 상태 */
+.sm-idea__dup {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 4px 0 0;
+	padding: 8px 10px;
+	border-radius: var(--radius);
+	background: var(--warn-bg);
+	font-size: 14px;
+}
+
+.sm-idea__duplabel {
+	font-weight: 700;
+	color: var(--warn-ink);
+}
+
+.sm-idea__dupwhat {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .sm-idea__actions {
 	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
 	gap: 6px;
 	margin-top: 4px;
 }

@@ -115,13 +115,16 @@ export interface ShortsRun {
 	criteria_prompt: string | null;
 	/**
 	 * 실제로 보낸 프롬프트 전문. 🔴 **새 클립 탭의 선정(pipeline/ranking)만 채운다** — 질문 답하기의
-	 * run(answers/answer)은 비어 있다. 그래서 "이 run 이 선정인가" 를 이 값으로 가른다(SourcePage).
+	 * run(answers/answer)과 AI 추천 카드로 만든 run(pipeline/ideas.cut)은 비어 있다. 그래서 "이 run 이 선정인가" 를
+	 * 이 값으로 가른다(SourcePage).
 	 */
 	prompt: string | null;
 	/** 질문 답하기가 고른 길('retrieval' | 'rank'). 선정 run 은 null. */
 	route: string | null;
 	/** 관리자 숏폼의 컨셉(tease §5-11). 질문 경로 · 컨셉 이전의 선정 run 은 null. */
 	concept: ConceptKey | null;
+	/** AI 추천 카드로 만든 run 이면 그 추천 행(`source_ideas.id`). 나머지는 null. */
+	idea_id: number | null;
 	created_at: string;
 	error: string | null;
 	ranked: {
@@ -144,6 +147,8 @@ export interface ShortsClipReview {
 
 export interface ShortsClip {
 	id: number;
+	/** 이 클립을 만든 run. [다시 만들기] 가 같은 run · 구간으로 다시 자른다. */
+	run_id: number;
 	segment_id: number;
 	start_sec: number;
 	end_sec: number;
@@ -166,6 +171,13 @@ export interface ShortsClip {
 	route: string | null;
 	/** 그 클립을 고른 run 의 컨셉(tease §5-11). 질문 경로 · 컨셉 이전의 클립은 null. */
 	concept: ConceptKey | null;
+	/** AI 추천 카드로 만든 클립이면 그 추천 행(`source_ideas.id`). 컨셉 · 구간과 함께 "이 카드로 만든 클립" 을 찾는다. */
+	idea_id: number | null;
+	/**
+	 * 이 클립이 쓰는 구간 id 전부. 조합 클립은 조각이 여러 구간에 걸친다(`segment_id` 는 첫 조각뿐).
+	 * 🔴 AI 추천 카드의 "이미 있습니다" 가 이것으로 가른다 — 서버의 거절과 같은 기준이다.
+	 */
+	segment_ids: number[];
 	description: string | null;
 	reviews: ShortsClipReview[];
 	/** 이 클립을 유튜브에 올린 기록, 최신 먼저. 같은 클립을 비공개로 시험한 뒤 다시 올릴 수 있어 여럿이다. */
@@ -546,7 +558,9 @@ export interface ShortsIdea {
 	/** 🔴 구간을 다시 나누면 이 id 가 사라진다 — 그때 추천은 `stale` 이다. */
 	segment_id: number;
 	segment_idx: number;
-	/** 왼쪽 기준 칸에 들어가는 한 문장. */
+	/** 이 주제의 점수(0~100). 문턱(`minScore`) 이상만 온다. 2026-11-14 전의 추천에는 없다. */
+	score?: number | null;
+	/** 고를 기준 한 문장. 카드로 클립을 만들면 그 run 의 기준 문장(공개 탭의 출처)이 된다. */
 	criteria: string;
 	reason: string | null;
 }
@@ -557,8 +571,12 @@ export interface ShortsIdeas {
 	/** 컨셉 셋이 늘 이 순서로 온다. fit 이 null 이면 AI 가 판단하지 않았다. */
 	concepts: { concept: ConceptKey; fit: number | null; note: string | null }[];
 	ideas: ShortsIdea[];
-	/** 검증에서 버린 주제 수(없는 구간 · 모르는 컨셉 · 중복). */
+	/** 검증에서 버린 주제 수(없는 구간 · 모르는 컨셉 · 중복 · 다섯 넘김). */
 	dropped: number;
+	/** 점수가 문턱 미만이라 뺀 주제 수. 틀린 것이 아니라 약한 것이다. */
+	below: number;
+	/** 그때 쓴 점수 문턱(65). 2026-11-14 전의 추천은 null. */
+	minScore: number | null;
 	/** 주제가 가리키던 구간이 지금 없다 — 구간을 다시 나눴다. */
 	stale: boolean;
 }

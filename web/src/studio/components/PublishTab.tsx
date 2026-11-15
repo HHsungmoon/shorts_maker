@@ -193,7 +193,8 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 						</>
 					) : (
 						<>
-							<span className="sm-kind sm-kind--own">내 기준</span>
+							{/* AI 추천 카드로 만든 것도 기준 문장은 있다(추천의 것) — 사람이 쓴 기준과 이름으로 가른다. */}
+							<span className="sm-kind sm-kind--own">{clip.idea_id !== null ? "AI 추천" : "내 기준"}</span>
 							<span className="sm-short__criteria" title={clip.criteria_prompt ?? undefined}>
 								{clip.criteria_prompt ?? "기준 없음"}
 							</span>

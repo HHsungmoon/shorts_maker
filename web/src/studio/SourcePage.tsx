@@ -35,6 +35,12 @@ const DEFAULT_CRITERIA = "";
 // 관리자 숏폼의 컨셉(tease §5-11). 처음엔 정보성 — 컨셉을 넣기 전의 기본 예시("숫자나 기준이 나오는 대목")와 가장 가깝다.
 const DEFAULT_CONCEPT: ConceptKey = "info";
 
+/**
+ * 새 클립 탭의 두 길(tease §5-11, 2026-11-14). `ideas` = AI 추천 카드에서 바로 만든다, `criteria` = 컨셉 · 기준을 적어
+ * 영상 전체에서 점수순으로 고른다. 한 번에 한 길만 보인다 — 반반으로 두었더니 고르기 결과 23개 앞에서 추천 둘이 묻혔다.
+ */
+export type MakeWay = "ideas" | "criteria";
+
 type RankedPayload = NonNullable<ShortsRun["ranked"]>;
 export type RankedEntry = NonNullable<RankedPayload["ranked"]>[number];
 export type ExcludedEntry = NonNullable<RankedPayload["excluded"]>[number];
@@ -103,6 +109,9 @@ export interface SourceView {
 	/** 새 클립 탭에서 고른 컨셉(브랜딩 · 바이럴 · 정보성). 기준 칸과 함께 [구간 고르기] 로 간다. */
 	concept: ConceptKey;
 	setConcept: Dispatch<SetStateAction<ConceptKey>>;
+	/** 새 클립 탭에서 보고 있는 길. 사람이 고르기 전에는 있는 것으로 정한다(추천이 있거나 고른 적이 없으면 AI 추천). */
+	makeWay: MakeWay;
+	setMakeWay: Dispatch<SetStateAction<MakeWay | null>>;
 	language: string | null;
 	setLanguage: Dispatch<SetStateAction<string | null>>;
 	openPreview: number | null;
@@ -138,6 +147,8 @@ export function SourcePage() {
 
 	const [criteria, setCriteria] = useState(DEFAULT_CRITERIA);
 	const [concept, setConcept] = useState<ConceptKey>(DEFAULT_CONCEPT);
+	// null 이면 아직 고르지 않았다 — 기본값은 데이터를 읽은 뒤에 파생한다(range 와 같은 이유).
+	const [makeWay, setMakeWay] = useState<MakeWay | null>(null);
 	const [openPreview, setOpenPreview] = useState<number | null>(null);
 	const [transcript, setTranscript] = useState<ShortsUtterance[] | null>(null);
 	const [language, setLanguage] = useState<string | null>(null);
@@ -278,6 +289,9 @@ export function SourcePage() {
 		setCriteria,
 		concept,
 		setConcept,
+		// 추천을 받아 둔 영상은 추천부터 보인다. 고르기만 해 본 영상은 그 결과로 돌아온다.
+		makeWay: makeWay ?? (data?.ideas || !latestRun ? "ideas" : "criteria"),
+		setMakeWay,
 		language,
 		setLanguage,
 		openPreview,
