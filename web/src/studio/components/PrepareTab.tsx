@@ -214,7 +214,8 @@ export function PrepareTab({ view }: { view: SourceView }) {
 						: "분석할 범위를 정합니다"}
 					{data && hasChunks && !editingRange && (
 						/* 누르면 바로 다시 뽑지 않는다. 범위를 먼저 펼쳐 사람이 확인하게 한다 —
-						   이 버튼 하나로 전사·구간·클립이 통째로 날아가기 때문이다. */
+						   이 버튼 하나로 구간·클립이 통째로 날아가기 때문이다. 대사는 transcripts 에 남아 있어
+						   새 범위로 다시 옮겨 담는다(ingest.add_chunks → transcripts.use) — 음성 인식은 들은 범위만큼만. */
 						<button
 							type="button"
 							className="button button--small sm-actions--end"
@@ -1288,7 +1289,7 @@ function SourceInfoEditor({
 				<label className="sm-prep__label" htmlFor={`overview-${sourceId}`}>
 					영상 개요
 					<span className="sm-meta">
-						이 영상이 무엇인지 한두 문장. 이후 순위·자르기·답하기에 붙고, 이미 나눈 구간에는 반영되지 않습니다
+						이 영상이 무엇인지 한두 문장. 이후 주제 분할·순위·자르기·답하기에 붙고, 이미 나눈 구간에는 반영되지 않습니다
 					</span>
 				</label>
 				<span className="sm-prep__value">
