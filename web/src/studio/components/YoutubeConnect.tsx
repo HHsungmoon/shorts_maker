@@ -1,5 +1,6 @@
 import { connectYoutube, disconnectYoutube } from "../api";
 import { useAuth } from "../AuthContext";
+import { guideAttr } from "../guides/targets";
 import type { YoutubeState } from "../types";
 
 /**
@@ -66,6 +67,7 @@ export function YoutubeConnect({
 			<button
 				type="button"
 				className="button button--small"
+				{...guideAttr("youtube")}
 				onClick={connect}
 				title={state.configured ? "Google 동의 화면으로 이동합니다" : "서버 .env 에 유튜브 설정이 없습니다"}
 			>
@@ -74,7 +76,7 @@ export function YoutubeConnect({
 		);
 	}
 	return (
-		<span className="sm-yt-channel">
+		<span className="sm-yt-channel" {...guideAttr("youtube")}>
 			<span
 				className="sm-yt-channel__name"
 				title={channel.channel_title ? undefined : "채널 이름은 첫 업로드 뒤에 보입니다"}

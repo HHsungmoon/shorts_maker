@@ -26,7 +26,7 @@ export function ThemePicker() {
 	);
 }
 
-/** 좌우 여백 고르기. 영상 화면에만 둔다 — 홈과 프롬프트 화면은 원래 가운데 1100px 라 해당이 없다. */
+/** 좌우 여백 고르기. 상단바(홈 · 영상 화면)에 둔다 — 프롬프트 화면은 아직 가운데 1100px 라 해당이 없다. */
 export function GutterPicker() {
 	return (
 		<PrefMenu
