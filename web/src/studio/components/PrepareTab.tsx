@@ -15,6 +15,7 @@ import { Modal } from "../../shared/Modal";
 import type { SourceView } from "../SourcePage";
 import type { ShortsUtterance, SttFix, TranscriptOrigin } from "../types";
 import { TranscriptCompare } from "./TranscriptCompare";
+import { guideAttr } from "../guides/targets";
 
 const ORIGIN_LABEL: Record<TranscriptOrigin, string> = { youtube: "유튜브 자막", whisper: "음성 인식" };
 
@@ -109,7 +110,7 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			</div>
 
 			{/* 단계 표시(C1). 누르면 아래 그 단계 칸으로 내려간다. */}
-			<nav className="sm-steps" aria-label="준비 단계">
+			<nav className="sm-steps" aria-label="준비 단계" {...guideAttr("prep-steps")}>
 				{steps.map((step, index) => {
 					const isDone = done[index];
 					const isNext = nextStep === index + 1;
@@ -136,7 +137,7 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			    구간 추출과 음성 인식은 한 번 돌고 나면 볼 것이 적어서 한 칸에 모았다. 주제 분할이 이 탭의 본체다. */}
 			<div className="sm-prep__top">
 			{/* 1 · 원본 (C2) ------------------------------------------------------------ */}
-			<section id={STEP_IDS[0]} className="sm-prep__card">
+			<section id={STEP_IDS[0]} className="sm-prep__card" {...guideAttr("prep-source")}>
 				<StepHead no={1} title="원본" done={done[0]} next={nextStep === 1}>
 					{data && `${time(data.source.duration_sec ?? 0)} · ${data.source.channel ?? "채널 모름"}`}
 				</StepHead>
@@ -201,6 +202,9 @@ export function PrepareTab({ view }: { view: SourceView }) {
 
 			{/* 2·3 · 구간 추출 · 대사 가져오기 ------------------------------------------ */}
 			<section id={STEP_IDS[1]} className="sm-prep__card">
+				{/* 가이드가 2단계만 짚도록 머리 · 범위 입력 · 범위 그림을 감싼다 — 이 카드에는 3단계가 이어 붙어 있다.
+				    카드는 블록 흐름이라 감싸도 간격이 그대로다. */}
+				<div {...guideAttr("prep-range")}>
 				<StepHead no={2} title="구간 추출" done={done[1]} next={nextStep === 2}>
 					{hasChunks && !editingRange
 						? `${time(chunkStart)} ~ ${time(chunkEnd)} · ${chunks.length}조각`
@@ -286,12 +290,13 @@ export function PrepareTab({ view }: { view: SourceView }) {
 						calls={data?.stageCalls ?? []}
 					/>
 				)}
+				</div>
 
 				{/* 3 · 대사 가져오기 — 🔴 유튜브 자막이 기본, 음성 인식은 두 번째 버튼(2026-11-01, tease §5-1).
 				    whisper 가 없는 문장을 지어내는 것을 실측했다. 두 대사는 따로 보관되고(transcripts) 쓰는 것 하나를
 				    고른다 — 자막을 받아도 음성 인식이 날아가지 않고, 둘이 다 있으면 아래 비교 칸이 열린다.
 				    🔴 음성 인식은 같은 오디오에 한 번뿐이다. 다 들었으면 버튼 대신 "끝남" 만 보인다. */}
-				<div id={STEP_IDS[2]} className="sm-prep__sub">
+				<div id={STEP_IDS[2]} className="sm-prep__sub" {...guideAttr("prep-captions")}>
 					<StepHead no={3} title="대사 가져오기" done={done[2]} next={nextStep === 3}>
 						{utterances > 0
 							? `발화 ${utterances.toLocaleString()} · ${captionSource ? ORIGIN_LABEL[captionSource] : "출처 모름"}`
@@ -446,7 +451,7 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			)}
 
 			{/* 4 · 주제 분할 (C3) ------------------------------------------------------- */}
-			<section id={STEP_IDS[3]} className="sm-prep__card">
+			<section id={STEP_IDS[3]} className="sm-prep__card" {...guideAttr("prep-segments")}>
 				<StepHead no={4} title="주제 분할" done={done[3]} next={nextStep === 4}>
 					{segments.length > 0 ? `구간 ${segments.length}개` : "전사를 주제 단위로 나눕니다"}
 					{data && (
@@ -617,7 +622,7 @@ function SttSettings({
 	const changed = transcribed && terms.join(", ") !== usedHint;
 
 	return (
-		<div className="sm-stt">
+		<div className="sm-stt" {...guideAttr("prep-dict")}>
 			<dl className="sm-stt__facts">
 				<div>
 					<dt>모델</dt>

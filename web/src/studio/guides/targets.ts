@@ -19,7 +19,14 @@ export type GuideTarget =
 	| "q-import"
 	| "q-list"
 	| "q-answer"
-	| "q-work";
+	| "q-work"
+	// 영상 화면 · 영상 준비 탭
+	| "prep-steps"
+	| "prep-source"
+	| "prep-range"
+	| "prep-captions"
+	| "prep-dict"
+	| "prep-segments";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {

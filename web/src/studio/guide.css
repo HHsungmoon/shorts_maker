@@ -33,6 +33,10 @@
 	font-size: 15px;
 	line-height: 1.65;
 	color: var(--text);
+	/* 한글은 기본값이면 글자 사이 아무 데서나 줄을 바꿔 "나눕 / 니다" 처럼 낱말이 갈린다. 띄어쓰기에서만 바꾸고,
+	   한 덩어리가 말풍선보다 길 때만 그 안에서 자른다. */
+	word-break: keep-all;
+	overflow-wrap: anywhere;
 }
 
 /* 본문 안 목록(숫자 칸 설명). driver.css 가 말풍선에 all: unset 을 걸어 목록 들여쓰기도 사라져 있다. */

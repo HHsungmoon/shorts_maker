@@ -15,6 +15,7 @@ import type { MiniPlayer } from "./components/SourceBar";
 import { StudioBanners } from "./components/StudioChrome";
 import { useGuide } from "./guide";
 import type { GuideStep } from "./guide";
+import { PREPARE_GUIDE } from "./guides/prepare";
 import { QUESTIONS_GUIDE } from "./guides/questions";
 import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
@@ -49,6 +50,7 @@ export type MakeWay = "ideas" | "criteria";
  * 🔴 키는 주소의 탭 조각 **하나로 끝나는 경우**만 맞춘다. `clips/12/edit`(편집 화면)에 공개 탭 안내가 뜨면 안 된다.
  */
 const TAB_GUIDES: Record<string, GuideStep[]> = {
+	prepare: PREPARE_GUIDE,
 	questions: QUESTIONS_GUIDE,
 };
 const NO_GUIDE: GuideStep[] = [];
