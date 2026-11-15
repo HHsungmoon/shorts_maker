@@ -1,0 +1,342 @@
+/* 스튜디오 화면의 틀 — 상단바(로고 줄 · 제목 줄 · 탭 줄) · 본문 · 미니 플레이어.
+ *
+ * 영상 화면(SourceBar)과 홈(StudioHome)이 같이 쓴다. 원래 source.css 맨 앞에 있었는데 홈이 같은 상단바로
+ * 옮기면서(2026-11-15) 떼어 냈다 — 홈이 영상 화면의 CSS 에 기대면 한쪽을 고칠 때 다른 쪽이 조용히 깨진다.
+ * 토큰(--surface, --border …)은 shared/styles.css 것을 쓴다.
+ */
+
+/* 틀 — 상단바 · 본문 · 미니 플레이어 ----------------------------------------
+ *
+ * 🔴 예전에는 `.page`(1100px 가운데 정렬) 안에 제목 · 펼친 플레이어 · 탭 줄을 차례로 쌓아서 탭 줄이
+ * y≈700 에야 나왔다. 상단바로 줄이고 원본은 미니 플레이어로 뺐다(개선안 A2, 2026-10-24).
+ * 폭은 화면 전체를 쓴다 — 질문 화면이 목록 · 질문 · 후보 3단이라 가운데 1100px 로 묶으면 후보 대사가
+ * 좁은 칸에서 접힌다(2026-10-24 사용자 피드백). */
+.sm-shell {
+	/* 화면에 붙는 탭 줄의 높이(44 + 경계선 1). 안쪽의 sticky(질문 목록·질문 칸)가 이만큼 내려와
+	   붙어야 탭 줄 밑으로 숨지 않는다. 탭 줄 높이를 바꾸면 여기도 바꾼다. */
+	--sm-bar-h: 45px;
+	min-height: 100vh;
+}
+
+/* 로고 줄과 영상 줄. 스크롤하면 올라간다 — 둘 다 한 번 보면 되는 정보라 세로를 계속 먹을 이유가 없다. */
+.sm-bar {
+	/* 맨 위 3px 띠가 로고 그라데이션이다. 화면에서 브랜드 색이 넓게 깔리는 곳은 여기와 켜진 탭 밑줄뿐이다. */
+	background: var(--brand-gradient) top / 100% 3px no-repeat, var(--surface);
+	padding: 3px 32px 0;
+}
+
+.sm-bar__brand {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 60px;
+}
+
+.sm-bar__home {
+	display: flex;
+	flex-shrink: 0;
+}
+
+.sm-bar__home img {
+	display: block;
+	height: 36px;
+	width: auto;
+}
+
+.sm-bar__home:focus-visible,
+.sm-bar__back:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+	border-radius: 6px;
+}
+
+.sm-bar__account {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.sm-bar__account .button {
+	white-space: nowrap;
+}
+
+/* [가이드 보기] — 옆의 여백 · 색상과 같은 모양(그림 + 글자)이다. 그림만 강조색으로 둬서 "처음이면 여기" 가 보인다. */
+.sm-bar__guide {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sm-bar__guide svg {
+	flex-shrink: 0;
+	color: var(--accent);
+}
+
+.sm-bar__gutter {
+	display: contents;
+}
+
+/* 제목 줄부터 아래는 좌우 여백(--sm-gutter)을 더 받는다. 로고 줄은 받지 않는다 — 로고는 늘 왼쪽 끝이다. */
+.sm-bar__row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 2px 0 10px;
+	margin-inline: var(--sm-gutter, 0px);
+}
+
+/* 영상 목록으로. 글자 없는 화살표라 누를 자리가 작아 보이지 않게 칸을 잡아 준다. */
+.sm-bar__back {
+	flex-shrink: 0;
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	margin-left: -6px;
+	border-radius: 6px;
+	color: var(--text-muted);
+}
+
+.sm-bar__back:hover {
+	background: var(--bg);
+	color: var(--text);
+}
+
+/* 강연 제목은 길다(60자 넘는 것도 흔하다). 한 줄에서 자르고 전문은 title 로 둔다. */
+.sm-bar__title {
+	margin: 0;
+	min-width: 0;
+	font-size: 22px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.sm-bar__meta {
+	flex-shrink: 0;
+	font-size: 15px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.sm-bar__chip {
+	flex-shrink: 0;
+	padding: 1px 8px;
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-size: 13px;
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.sm-bar__chip--ok {
+	border-color: transparent;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 600;
+}
+
+/* 탭 줄 — 이것만 화면에 붙는다. 스크롤해도 탭과 "원본 보기" 가 남는다.
+   쓰는 빈도 순서다: 질문은 매일, 영상 준비는 영상당 한 번, 기록은 뭔가 이상할 때만. */
+.sm-bar__tabs {
+	position: sticky;
+	top: 0;
+	z-index: 20;
+	display: flex;
+	align-items: stretch;
+	gap: 4px;
+	height: 44px;
+	padding: 0 calc(32px + var(--sm-gutter, 0px));
+	background: var(--surface);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.sm-bar__tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 0 12px;
+	/* 비활성 탭도 같은 두께의 투명 밑줄을 갖는다 — 없으면 고를 때 글자가 위아래로 흔들린다. */
+	border-bottom: 2px solid transparent;
+	font-size: 16px;
+	color: var(--text-muted);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.sm-bar__tab:hover {
+	color: var(--text);
+}
+
+.sm-bar__tab--on {
+	/* 밑줄을 테두리가 아니라 배경으로 그린다 — border 는 그라데이션을 받지 못한다. 투명 테두리는 그대로
+	   두어 켜고 끌 때 글자 높이가 같다. */
+	background: var(--brand-gradient) bottom / 100% 2px no-repeat;
+	color: var(--text);
+	font-weight: 600;
+}
+
+/* 답을 기다리는 질문 수. 이 탭에 갈 이유가 곧 이 숫자라서 탭 이름 옆에 붙인다. */
+.sm-bar__badge {
+	padding: 0 7px;
+	border-radius: 999px;
+	background: var(--accent);
+	color: #fff;
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* 준비가 안 끝나면 질문에 답할 수 없다. 고장이 아니라 아직 안 한 일이라 알림 색이다. */
+.sm-bar__need {
+	padding: 0 7px;
+	border: 1px solid var(--warn-line);
+	border-radius: 999px;
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 13px;
+	font-weight: 400;
+}
+
+.sm-bar__end {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding-left: 12px;
+}
+
+.sm-bar__end .button {
+	white-space: nowrap;
+}
+
+.sm-bar__readonly {
+	padding: 2px 9px;
+	border: 1px solid var(--warn-line);
+	border-radius: 999px;
+	background: var(--warn-bg);
+	color: var(--warn-ink);
+	font-size: 14px;
+	white-space: nowrap;
+	cursor: help;
+}
+
+.sm-shell__main {
+	padding: 24px calc(32px + var(--sm-gutter, 0px)) 64px;
+}
+
+/* 미니 플레이어 — 본문 위에 떠서 아무것도 밀어내지 않는다. */
+.sm-mini {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	z-index: 30;
+	width: 360px;
+	border-radius: 10px;
+	overflow: hidden;
+	background: #111;
+	box-shadow: 0 12px 32px rgb(0 0 0 / 25%);
+}
+
+.sm-mini iframe {
+	display: block;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border: 0;
+}
+
+.sm-mini__bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 6px 8px 6px 12px;
+	font-size: 14px;
+	color: #e5e7eb;
+	font-variant-numeric: tabular-nums;
+}
+
+.sm-mini__close {
+	width: 32px;
+	height: 32px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: #e5e7eb;
+	font-size: 22px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.sm-mini__close:hover {
+	background: rgb(255 255 255 / 12%);
+}
+
+/* 좁은 화면 — 영상 줄이 넘치면 정보(메타·칩)를 먼저 버린다. 제목이 남는다. */
+@media (max-width: 1000px) {
+	.sm-bar__meta,
+	.sm-bar__chip {
+		display: none;
+	}
+}
+
+@media (max-width: 640px) {
+	.sm-bar,
+	.sm-bar__tabs {
+		padding: 0 16px;
+	}
+
+	.sm-bar__brand {
+		height: 52px;
+	}
+
+	/* 🔴 로고 줄이 폰 폭(390)을 넘쳐 가로 스크롤이 생겼다(2026-11-15, 가이드 버튼을 더하며). 그 전에도 338px 칸에
+	   339px 로 겨우 들어가 있었다. 폰에서 효과가 없는 여백 버튼을 빼고, 가이드는 그림만 남긴다. */
+	.sm-bar__gutter,
+	.sm-bar__guide-label {
+		display: none;
+	}
+
+	.sm-bar__title {
+		font-size: 18px;
+	}
+
+	.sm-shell__main {
+		padding: 16px 16px 48px;
+	}
+
+	.sm-mini {
+		right: 12px;
+		bottom: 12px;
+		width: calc(100% - 24px);
+	}
+}
+
+/* 탭 줄이 없는 상단바(홈). 탭 줄이 긋던 경계선을 바가 직접 긋고, 제목 줄 오른쪽에 버튼을 받는다.
+   버튼이 셋 넘게 붙으니 좁은 화면에서는 제목 줄이 두 줄로 접힌다. */
+.sm-bar--plain {
+	border-bottom: 1px solid var(--border);
+}
+
+.sm-bar--plain .sm-bar__row {
+	flex-wrap: wrap;
+	padding-bottom: 14px;
+}
+
+.sm-bar__actions {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+/* 버튼 모양의 링크(프롬프트)는 밑줄을 지운다 — 옆의 진짜 버튼들과 같은 모양이어야 한다. */
+.sm-bar__actions .button {
+	white-space: nowrap;
+	text-decoration: none;
+}

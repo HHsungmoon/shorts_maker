@@ -1,19 +1,73 @@
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-import { ThemePicker } from "./ThemePicker";
-import { REPO_NAME } from "../../shared/brand";
+import { GutterPicker, ThemePicker } from "./ThemePicker";
+import { LOGO_SRC, PRODUCT_NAME, REPO_NAME } from "../../shared/brand";
+import { guideAttr } from "../guides/targets";
 import { STAGE_LABEL } from "../useStudioJob";
 import type { StudioJob } from "../useStudioJob";
 import type { ShortsStatus } from "../types";
+import "../shell.css";
 
 // 화면들이 함께 쓰는 머리와 배너. 잡 상태 자체는 useStudioJob 이 들고 있다.
-// 영상 화면은 머리 대신 상단바(SourceBar)를 쓰고 배너만 가져간다.
+// 홈과 영상 화면은 상단바(shell.css)를 쓴다 — 첫 줄(StudioBrand)이 같고 둘째 줄부터 화면마다 다르다.
+// 프롬프트 화면만 아직 옛 머리(StudioHead)다.
 
 function elapsed(since: string): string {
 	return `${Math.max(0, Math.round((Date.now() - new Date(since).getTime()) / 1000))}초`;
 }
 
-/** 페이지 머리(홈 · 프롬프트). 제목 옆 버튼만 화면마다 다르고 오른쪽 로그아웃은 같다. */
+/**
+ * 상단바 첫 줄 — 로고와 가이드 · 화면 설정 · 로그아웃. 홈과 영상 화면이 이 줄을 같이 쓴다(2026-11-15).
+ * 홈이 옛 머리(가운데 1100px · 글자 제목)로 남아 있어서 영상 화면과 다른 서비스처럼 보였다.
+ *
+ * `onGuide` 를 준 화면에만 [가이드 보기] 가 뜬다. 안내가 없는 화면에 버튼을 두면 눌러도 아무 일이 없다 —
+ * 지금은 홈만 안내가 있다(영상 화면의 탭별 안내는 다음 차례).
+ */
+export function StudioBrand({ onGuide }: { onGuide?: () => void }) {
+	const { authRequired, signOut } = useAuth();
+	return (
+		<div className="sm-bar__brand">
+			{/* 로고는 첫 화면(`/`)으로 간다. 영상 목록은 영상 화면의 ← 가 맡는다. */}
+			<Link to="/" className="sm-bar__home" title="첫 화면">
+				<img src={LOGO_SRC} alt={`${PRODUCT_NAME} 첫 화면`} />
+			</Link>
+			<span className="sm-bar__account">
+				{/* 🔴 보기 전용도 누른다. 서버의 무엇도 바꾸지 않고, 물어볼 사람 없이 들어온 방문자에게 가장 필요하다. */}
+				{onGuide && (
+					// 폰에서는 글자를 숨기고 그림만 남는다(shell.css) — 그때도 이름이 남게 aria-label 을 단다.
+					<button
+						type="button"
+						className="button button--small sm-bar__guide"
+						{...guideAttr("guide")}
+						aria-label="가이드 보기"
+						title="가이드 보기"
+						onClick={onGuide}
+					>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+							<circle cx="12" cy="12" r="10" />
+							<path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" />
+							<path d="M12 17h.01" />
+						</svg>
+						<span className="sm-bar__guide-label">가이드 보기</span>
+					</button>
+				)}
+				{/* 폰에서는 숨긴다 — 여백 설정이 폰에서는 적용되지 않는다(styles.css). */}
+				<span className="sm-bar__gutter">
+					<GutterPicker />
+				</span>
+				<ThemePicker />
+				{authRequired && (
+					<button type="button" className="button button--small" onClick={signOut}>
+						로그아웃
+					</button>
+				)}
+			</span>
+		</div>
+	);
+}
+
+/** 옛 페이지 머리(프롬프트). 제목 옆 버튼만 화면마다 다르고 오른쪽 로그아웃은 같다. */
 export function StudioHead({
 	title,
 	count,

@@ -1,9 +1,9 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-import { GutterPicker, ThemePicker } from "./ThemePicker";
-import { LOGO_SRC, PRODUCT_NAME } from "../../shared/brand";
+import { StudioBrand } from "./StudioChrome";
 import { time } from "../../shared/format";
 import type { ShortsSourceDetail } from "../types";
+import "../shell.css";
 
 /** 미니 플레이어가 지금 어디서부터 틀고 있나. null 이면 닫혀 있다. */
 export interface MiniPlayer {
@@ -46,7 +46,7 @@ export function SourceBar({
 	missingCount,
 	onPlay,
 }: SourceBarProps) {
-	const { authRequired, canAct, signOut } = useAuth();
+	const { canAct } = useAuth();
 	const source = data?.source ?? null;
 
 	return (
@@ -54,21 +54,7 @@ export function SourceBar({
 			<header className="sm-bar">
 				{/* 첫 줄은 제품, 둘째 줄은 지금 작업 중인 영상이다. 둘을 한 줄에 두었더니 로고와 긴 강연 제목이
 				    붙어서 어디까지가 제품 이름인지 읽히지 않았다(2026-10-24 사용자 피드백). */}
-				<div className="sm-bar__brand">
-					{/* 로고는 첫 화면(`/`)으로 간다. 영상 목록은 바로 아래 ← 가 맡는다. */}
-					<Link to="/" className="sm-bar__home" title="첫 화면">
-						<img src={LOGO_SRC} alt={`${PRODUCT_NAME} 첫 화면`} />
-					</Link>
-					<span className="sm-bar__account">
-						<GutterPicker />
-						<ThemePicker />
-						{authRequired && (
-							<button type="button" className="button button--small" onClick={signOut}>
-								로그아웃
-							</button>
-						)}
-					</span>
-				</div>
+				<StudioBrand />
 
 				<div className="sm-bar__row">
 					{/* 링크로 열린 화면에는 브라우저 뒤로가기에 돌아갈 데가 없다. */}
