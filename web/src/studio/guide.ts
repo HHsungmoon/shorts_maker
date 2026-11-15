@@ -28,6 +28,12 @@ export interface GuideStep {
 	title: string;
 	/** 순수 글. 꾸밈은 둘뿐이다 — `**굵게**` 와 줄바꿈(`\n`). HTML 태그를 적으면 글자 그대로 보인다. */
 	body: string;
+	/**
+	 * 짚을 자리가 **데이터가 없어서** 화면에 없을 때 대신 띄울 문구(2026-11-15). 있으면 그 단계는 빠지지 않고
+	 * 화면 가운데에 이 문구로 뜬다 — 처음 쓰는 사람에게 "이런 기능이 여기 생긴다" 를 알리고, 단계 수도 상태와
+	 * 무관하게 같아진다. 권한처럼 데이터와 무관하게 없는 자리(보기 전용 표시)는 비워 둔다 → 그 단계는 빠진다.
+	 */
+	empty?: string;
 	side?: Side;
 	align?: Alignment;
 }
@@ -53,17 +59,24 @@ function toHtml(text: string): string {
 /**
  * 지금 화면에 맞춰 안내를 시작한다.
  *
- * 🔴 대상이 없는 단계는 **미리 뺀다**. 같은 화면이라도 상태에 따라 없는 요소가 있다 — 영상이 없으면 카드가,
+ * 🔴 대상이 없는 단계는 `empty` 문구가 있으면 가운데에 그 문구로 띄우고, 없으면 **미리 뺀다**. 같은 화면이라도 상태에 따라 없는 요소가 있다 — 영상이 없으면 카드가,
  * 관리자로 들어오면 "보기 전용" 표시가 없다. driver.js 의 skipMissingElement 로 건너뛰게 하면 진행 표시가
  * "3 / 9" 에서 "5 / 9" 로 뛴다. 빼고 세야 숫자가 맞는다.
  */
 function start(steps: GuideStep[]): Driver {
-	const present: DriveStep[] = steps
-		.filter((step) => !step.target || document.querySelector(selector(step.target)))
-		.map((step) => ({
-			element: step.target ? selector(step.target) : undefined,
-			popover: { title: toHtml(step.title), description: toHtml(step.body), side: step.side, align: step.align },
-		}));
+	const present: DriveStep[] = steps.flatMap((step): DriveStep[] => {
+		const found = !step.target || document.querySelector(selector(step.target)) !== null;
+		if (found) {
+			return [
+				{
+					element: step.target ? selector(step.target) : undefined,
+					popover: { title: toHtml(step.title), description: toHtml(step.body), side: step.side, align: step.align },
+				},
+			];
+		}
+		// 자리가 없으면 empty 문구로 가운데에 띄운다. 없으면 뺀다.
+		return step.empty ? [{ popover: { title: toHtml(step.title), description: toHtml(step.empty) } }] : [];
+	});
 
 	const tour = driver({
 		steps: present,
