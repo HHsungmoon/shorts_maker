@@ -72,6 +72,9 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			? ((job.result as { context?: string } | null)?.context ?? null)
 			: null;
 
+	// 주제 분할이 끝나지 않은 조각 수. 나누다 멈춘 영상(할당량 소진 등)에서만 0 보다 크다.
+	const segmentedChunks = new Set(segments.map((s) => s.chunk_id));
+	const unsegmented = segments.length > 0 ? chunks.filter((c) => c.utteranceCount > 0 && !segmentedChunks.has(c.id)).length : 0;
 	const done = [data !== null, hasChunks, sttDone, segments.length > 0];
 	const doneCount = done.filter(Boolean).length;
 	const steps = [
@@ -453,17 +456,22 @@ export function PrepareTab({ view }: { view: SourceView }) {
 			{/* 4 · 주제 분할 (C3) ------------------------------------------------------- */}
 			<section id={STEP_IDS[3]} className="sm-prep__card" {...guideAttr("prep-segments")}>
 				<StepHead no={4} title="주제 분할" done={done[3]} next={nextStep === 4}>
-					{segments.length > 0 ? `구간 ${segments.length}개` : "전사를 주제 단위로 나눕니다"}
-					{data && (
+					{segments.length > 0
+						? `구간 ${segments.length}개${unsegmented > 0 ? ` · ${unsegmented}조각 남음` : ""}`
+						: "전사를 주제 단위로 나눕니다"}
+					{/* 🔴 서버는 이미 나눈 조각을 건너뛴다(segmentation.run_for_source, 할당량이 떨어져 멈췄을 때 이어 가려는 것).
+					    그래서 버튼은 남은 조각이 있을 때만 있고 이름도 "이어서 분할" 이다 — 다 나눈 영상에 "다시 분할" 을
+					    두면 눌러도 아무 일도 없다(2026-11-16). 처음부터 다시 나누는 길은 일부러 두지 않는다. */}
+					{data && (segments.length === 0 || unsegmented > 0) && (
 						<span className="sm-actions sm-actions--end">
 							{sourceBusy && <span className="sm-meta">처리 중</span>}
 							<button
 								type="button"
-								className={`button button--small${nextStep === 4 ? " sm-go" : ""}`}
+								className={`button button--small${nextStep === 4 || unsegmented > 0 ? " sm-go" : ""}`}
 								disabled={jobBusy || sourceBusy || utterances === 0 || !geminiReady}
 								onClick={() => submit(() => runSegment(data.source.id))}
 							>
-								{segments.length > 0 ? "다시 분할" : "실행"}
+								{segments.length > 0 ? "이어서 분할" : "실행"}
 							</button>
 						</span>
 					)}
