@@ -3,7 +3,8 @@
 # `backend_default` 네트워크에 얹혀 포트를 열지 않았지만, 독립하면서 그 의존이 사라졌다.
 #
 #   로컬:  브라우저 ──127.0.0.1:8100──> shorts 컨테이너   (vite dev 는 :5173 → :8100 프록시)
-#   운영:  인터넷 ──443──> nginx (VM) ──127.0.0.1:8100──> shorts 컨테이너
+#   운영:  인터넷 ──443──> Cloudflare ──터널──> cloudflared 컨테이너 ──shorts:8100──> shorts 컨테이너
+#          (2026-11-15 부터 집 윈도우 PC. 그 전 NCP VM 시절은 nginx 가 그 자리였다 — deploy/nginx-shorts.conf)
 #
 # DB 는 Postgres 컨테이너(`db`)다(2026-09-06, SQLite 에서 전환 — db/store.py 주석). 데이터는 `shorts-pg`
 # 볼륨, 중간 산출물(청크·클립)은 `shorts-data` 볼륨. `docker compose down -v` 면 둘 다 사라진다.
@@ -114,6 +115,40 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+
+  # Cloudflare Tunnel(2026-11-15, 집 서버). 인터넷 ──443──> Cloudflare ──터널──> 이 컨테이너 ──> shorts:8100
+  # 연결을 **안에서 밖으로** 연다 — 공유기 포트를 열지 않고, 집 공인 IP 가 DNS 에 드러나지 않는다.
+  # TLS 는 Cloudflare 가 끝낸다(nginx·certbot 이 하던 일).
+  #
+  # 🔴 `tunnel` 프로필에서만 뜬다. 맥 로컬의 `docker compose up` 은 이 서비스를 모른다 — 토큰도 없다.
+  # 서버는 레포 루트 `.env` 에 `COMPOSE_PROFILES=tunnel` 을 둬서 `docker compose up -d` 한 줄로 셋이 뜬다.
+  # 🔴 터널 뒤에선 shorts 가 방문자 IP 를 `CF-Connecting-IP` 에서 읽어야 한다(SHORTS_CLIENT_IP_HEADER).
+  # 그대로 두면 X-Real-IP 를 믿는데, Cloudflare 는 그 헤더를 덮어쓰지 않아 방문자가 위조할 수 있다.
+  # 🔴 env_file 을 붙이지 않는다. backend/.env 의 시크릿(Gemini 키·관리자 비밀번호)을 이 컨테이너가 볼 이유가 없다.
+  # 토큰은 루트 `.env` 의 CLOUDFLARE_TUNNEL_TOKEN 이 compose 치환으로 들어온다.
+  cloudflared:
+    # 버전을 고정한다 — latest 는 재빌드 없이도 pull 할 때마다 바뀐다. 올릴 때는 이 줄만 바꾼다.
+    image: cloudflare/cloudflared:2026.11.0
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    # 대시보드에서 관리하는 터널이다 — 어느 호스트를 어디로 보낼지(clipq.cloud → http://shorts:8100)는
+    # Cloudflare Zero Trust 화면에 있고, 여기엔 토큰만 있다. 자체 업데이트는 끈다(이미지 태그로 올린다).
+    command: tunnel --no-autoupdate run
+    environment:
+      # 🔴 `:?`(없으면 실패)를 쓰지 않는다. compose 는 프로필이 꺼진 서비스도 치환하므로, 맥 로컬의
+      # `docker compose up` 까지 "토큰이 없다" 로 죽는다(실제로 그랬다). 비어 있으면 이 컨테이너만
+      # 재시작을 반복하고 `docker compose logs cloudflared` 에 이유가 찍힌다.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      shorts:
+        condition: service_healthy
+    # 실측 전 추정: cloudflared 상주는 수십 MB 다. 상한은 새는 경우를 막는 울타리다.
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   shorts-data:
