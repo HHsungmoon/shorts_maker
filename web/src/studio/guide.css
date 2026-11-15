@@ -1,0 +1,125 @@
+/* 가이드 보기의 말풍선(guide.ts). driver.js 기본 모양(driver.css) 위에 스튜디오 토큰을 덮는다.
+ *
+ * 🔴 driver.css 는 말풍선과 버튼에 `all: unset` 을 걸고 클래스 하나로 다시 칠한다. 여기서는 `.sm-guide` 를
+ * 앞에 붙여 클래스 둘로 이긴다 — !important 를 쓰지 않는다. 말풍선은 body 끝에 붙으므로 :root 의 토큰이 그대로 닿는다.
+ * 꼬리(arrow)는 손대지 않는다. 테두리 색으로 그린 삼각형이라 색을 통째로 바꾸면 삼각형이 네모가 된다 —
+ * 기본 흰색이 --surface(모든 테마에서 흰색)와 같아서 그대로 둔다.
+ */
+
+.driver-popover.sm-guide {
+	font-family: inherit;
+	color: var(--text);
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	box-shadow: 0 12px 32px rgb(20 26 46 / 18%);
+	min-width: 260px;
+	max-width: min(360px, calc(100vw - 24px));
+	padding: 18px 20px 16px;
+}
+
+.sm-guide .driver-popover-title {
+	padding-right: 20px;
+	font-size: 17px;
+	font-weight: 700;
+	line-height: 1.45;
+}
+
+.sm-guide .driver-popover-title[style*="block"] + .driver-popover-description {
+	margin-top: 6px;
+}
+
+.sm-guide .driver-popover-description {
+	font-size: 15px;
+	line-height: 1.65;
+	color: var(--text);
+}
+
+/* 본문 안 목록(숫자 칸 설명). driver.css 가 말풍선에 all: unset 을 걸어 목록 들여쓰기도 사라져 있다. */
+.sm-guide .driver-popover-description ul {
+	margin: 6px 0 0;
+	padding-left: 18px;
+}
+
+.sm-guide .driver-popover-description li + li {
+	margin-top: 3px;
+}
+
+.sm-guide .driver-popover-description b {
+	font-weight: 600;
+}
+
+.sm-guide .driver-popover-close-btn {
+	width: 36px;
+	height: 36px;
+	font-size: 20px;
+	color: var(--text-muted);
+}
+
+.sm-guide .driver-popover-close-btn:hover,
+.sm-guide .driver-popover-close-btn:focus-visible {
+	color: var(--text);
+}
+
+.sm-guide .driver-popover-footer {
+	margin-top: 16px;
+}
+
+.sm-guide .driver-popover-progress-text {
+	font-size: 13px;
+	color: var(--text-muted);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 버튼은 스튜디오의 .button--small · .sm-go 와 같은 모양이다. */
+.sm-guide .driver-popover-footer-btn {
+	padding: 5px 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--text);
+	font-size: 14px;
+	line-height: 1.4;
+	text-shadow: none;
+}
+
+.sm-guide .driver-popover-footer-btn:hover,
+.sm-guide .driver-popover-footer-btn:focus {
+	background: var(--surface);
+	border-color: var(--text-muted);
+}
+
+.sm-guide .driver-popover-footer-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+.sm-guide .driver-popover-navigation-btns button + button {
+	margin-left: 6px;
+}
+
+/* [다음] · [완료] 가 이 말풍선에서 누를 것 하나다 — 강조색으로 칠한다. */
+.sm-guide .driver-popover-next-btn,
+.sm-guide .driver-popover-done-btn {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+	font-weight: 600;
+}
+
+/* 밝게 하지 않고 어둡게 한다(.sm-go 와 같은 이유 — 흰 글자 대비). */
+.sm-guide .driver-popover-next-btn:hover,
+.sm-guide .driver-popover-next-btn:focus,
+.sm-guide .driver-popover-done-btn:hover,
+.sm-guide .driver-popover-done-btn:focus {
+	background: var(--accent-hover);
+	border-color: var(--accent-hover);
+}
+
+/* 움직임을 줄여 달라고 설정한 사람에게는 덮개·말풍선을 서서히 띄우지 않는다. */
+@media (prefers-reduced-motion: reduce) {
+	.driver-fade .driver-overlay,
+	.driver-fade .driver-popover {
+		animation: none;
+	}
+}
