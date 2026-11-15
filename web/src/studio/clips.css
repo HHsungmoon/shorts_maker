@@ -51,7 +51,7 @@
 	overflow: hidden;
 }
 
-/* 시청자에게 나가 있는 것. 배지만으로는 격자를 훑을 때 안 걸려서 테두리도 물들인다. */
+/* 유튜브에 올라간 것(2026-11-16 부터 — 전엔 시청자 페이지 공개). 배지만으로는 격자를 훑을 때 안 걸려서 테두리도 물들인다. */
 .sm-short--live {
 	border-color: var(--accent-line);
 	box-shadow: 0 0 0 1px var(--accent-line);

@@ -4,17 +4,13 @@ import { fetchYoutubeUploadForm } from "../api";
 import { Modal } from "../../shared/Modal";
 import { useAsync } from "../../shared/useAsync";
 import type { ShortsClip, ShortsClipUpload, YoutubePrivacy, YoutubeUploadDraft, YoutubeUploadForm } from "../types";
+import { PRIVACY_LABEL } from "../youtubePrivacy";
 
 // 유튜브가 받는 한도(videos.insert). 🔴 넘으면 **잘라 보내지 않고** 사람이 고치게 둔다 — 개발자 정책
 // III.C.3 은 사람이 쓴 값을 바꿔 보내는 것을 막는다. 서버(upload.check_metadata)도 같은 선에서 거절한다.
 const TITLE_MAX = 100;
 const DESCRIPTION_MAX_BYTES = 5000;
 
-const PRIVACY_LABEL: Record<YoutubePrivacy, string> = {
-	private: "비공개",
-	unlisted: "일부 공개",
-	public: "공개",
-};
 
 const PRIVACY_HINT: Record<YoutubePrivacy, string> = {
 	private: "나만 봅니다. 채널에서 먼저 확인하고 공개로 바꿀 때",

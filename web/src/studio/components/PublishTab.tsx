@@ -4,18 +4,26 @@ import { clipUrl, fetchInsights, patchClipTitle, publishClip, renderClip, review
 import { Modal } from "../../shared/Modal";
 import { useAsync } from "../../shared/useAsync";
 import { time } from "../../shared/format";
-import type { ShortsClip, ShortsFunnelRow, ShortsInsights } from "../types";
+import type { ShortsClip, ShortsClipUpload, ShortsFunnelRow, ShortsInsights } from "../types";
 import type { SourceView } from "../SourcePage";
 import { YoutubeUploadLine, YoutubeUploadModal } from "./YoutubeUploadModal";
+import { PRIVACY_LABEL } from "../youtubePrivacy";
 import { guideAttr } from "../guides/targets";
 import "../clips.css";
 
+/** 유튜브에 실제로 올라간 마지막 업로드. 올리는 중 · 실패는 올라간 것이 아니라 건너뛴다(uploads 는 최신 먼저). */
+function lastUploaded(clip: ShortsClip): ShortsClipUpload | null {
+	return clip.uploads.find((u) => u.status === "DONE") ?? null;
+}
+
 // 거르개. "공개" 탭이지만 안에는 아직 안 내보낸 클립도 있다 — 둘을 한 번에 가를 수 있어야
 // 탭 이름이 거짓말이 되지 않는다.
+// 🔴 기준은 **유튜브 업로드**다(2026-11-16). 예전엔 시청자 페이지 공개(published_at)였는데 /watch 는 걷어낼
+// 예정이고, "비공개" 라는 말이 유튜브 공개 범위와 겹쳐 읽혔다.
 const FILTERS: { key: string; label: string; match: (clip: ShortsClip) => boolean }[] = [
 	{ key: "all", label: "전체", match: () => true },
-	{ key: "live", label: "공개 중", match: (clip) => clip.published_at !== null },
-	{ key: "hidden", label: "비공개", match: (clip) => clip.published_at === null },
+	{ key: "uploaded", label: "유튜브에 올림", match: (clip) => lastUploaded(clip) !== null },
+	{ key: "pending", label: "안 올림", match: (clip) => lastUploaded(clip) === null },
 ];
 
 // 고를 답 칸에 적는 질문 수. 넘치면 "외 N개" 로 질문 탭에 넘긴다 — 칸이 영상보다 길어지지 않게.
@@ -52,18 +60,18 @@ export function PublishTab({ view }: { view: SourceView }) {
 	const active = FILTERS.find((f) => f.key === filter) ?? FILTERS[0];
 	// 순서는 서버가 준 그대로(최신 먼저) — 방금 만든 것이 위에 있어야 한다.
 	const visible = clips.filter(active.match);
-	const liveCount = clips.filter((clip) => clip.published_at !== null).length;
+	const uploadedCount = clips.filter((clip) => lastUploaded(clip) !== null).length;
 	const stats = new Map<number, ShortsFunnelRow>((insights.data?.clips ?? []).map((row) => [row.clip_id, row]));
-	// 후보가 나왔는데 아직 하나를 고르지 않은 질문. 비공개 클립과 같은 "아직 안 나간 것" 이라 전체·비공개에서 보인다.
+	// 후보가 나왔는데 아직 하나를 고르지 않은 질문. 안 올린 클립과 같은 "아직 안 나간 것" 이라 전체·안 올림에서 보인다.
 	const waiting =
-		filter === "live" ? [] : (clusters.data?.clusters ?? []).filter((c) => c.status === "REVIEW" && c.clip === null);
+		filter === "uploaded" ? [] : (clusters.data?.clusters ?? []).filter((c) => c.status === "REVIEW" && c.clip === null);
 
 	return (
 		<>
 			<div className="sm-shorts__head">
 				<h2 className="sm-shorts__title">완성 클립</h2>
 				<span className="sm-meta">
-					{clips.length}개 · 시청자에게 공개 중 {liveCount}개
+					{clips.length}개 · 유튜브에 올림 {uploadedCount}개
 					{waiting.length > 0 && ` · 고를 답 ${waiting.length}개`}
 				</span>
 				<span className="sm-actions sm-actions--end">
@@ -149,6 +157,7 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 	const [editing, setEditing] = useState(false);
 	const [uploading, setUploading] = useState(false);
 	const live = clip.published_at !== null;
+	const uploaded = lastUploaded(clip);
 	const envelope = clip.end_sec - clip.start_sec;
 	// 🔴 길이는 total_sec 이 먼저다. 조합 클립의 start~end 는 조각들을 감싼 봉투라서, 그걸 빼면
 	// 18초짜리 클립이 "1186초" 로 찍힌다(2026-09-14 화면에서 잡았다).
@@ -160,7 +169,7 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 	const title = clip.title ?? `클립 ${clip.id}`;
 
 	return (
-		<article className={`sm-short${live ? " sm-short--live" : ""}`} {...guideAttr("pub-card")}>
+		<article className={`sm-short${uploaded ? " sm-short--live" : ""}`} {...guideAttr("pub-card")}>
 			<div className="sm-short__media">
 				{clip.rendered ? (
 					// 🔴 비율을 미리 잡는다(CSS). 메타데이터가 오기 전엔 <video> 높이가 0 이라 카드가 납작하게
@@ -179,7 +188,13 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 						</button>
 					</div>
 				)}
-				<span className={`sm-short__live${live ? " sm-short__live--on" : ""}`}>{live ? "공개 중" : "비공개"}</span>
+				{/* 🔴 공개 범위는 **올릴 때 고른 값**이다. 유튜브 스튜디오에서 바꾸면 여기는 따라가지 않는다. */}
+				<span
+					className={`sm-short__live${uploaded ? " sm-short__live--on" : ""}`}
+					title={uploaded ? "올릴 때 고른 공개 범위 — 유튜브 스튜디오에서 바꾼 것은 반영되지 않습니다" : undefined}
+				>
+					{uploaded ? `유튜브 ${PRIVACY_LABEL[uploaded.privacy]}` : "안 올림"}
+				</span>
 				{clip.score !== null && <span className="sm-short__score">{clip.score}</span>}
 			</div>
 
