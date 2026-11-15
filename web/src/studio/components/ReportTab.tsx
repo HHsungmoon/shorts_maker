@@ -5,6 +5,7 @@ import { useAsync } from "../../shared/useAsync";
 import type { ShortsReport, ShortsReportQuestion } from "../types";
 import type { SourceView } from "../SourcePage";
 import { ReactionsSection, reactionsText } from "./ReactionsSection";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 회차 리포트 — **이 설명회가 답하지 않은 것**.
@@ -60,13 +61,13 @@ export function ReportTab({ view }: { view: SourceView }) {
 		<div className="sm-report">
 			<div className="sm-report__top">
 				<h2 className="sm-report__title">회차 리포트</h2>
-				<button type="button" className="button button--small sm-actions--end" onClick={copy}>
+				<button type="button" className="button button--small sm-actions--end" onClick={copy} {...guideAttr("rep-copy")}>
 					{copied ? "복사했습니다" : "글로 복사"}
 				</button>
 			</div>
 
 			{/* 숫자 여섯(개선안 F1, 2026-10-24). 예전엔 이 숫자들이 한 문장 안에 묻혀 있었다. */}
-			<div className="sm-kpis">
+			<div className="sm-kpis" {...guideAttr("rep-numbers")}>
 				<Kpi label="받은 질문" value={summary.questions} sub={`묶음 ${summary.clusters}개로`} />
 				<Kpi
 					label="답한 묶음"
@@ -98,6 +99,7 @@ export function ReportTab({ view }: { view: SourceView }) {
 					{/* 🔴 본체가 먼저다. 답한 것보다 **답하지 못한 것**이 이 리포트의 값이다 —
 					    다음 회차에 무엇을 말해야 하는지가 여기 있다. */}
 					<Section
+						guide
 						title="이 영상이 답하지 않은 질문"
 						hint="다음 설명회 큐시트이자, 공고에서 빠진 정보입니다."
 						rows={data.missing}
@@ -221,7 +223,7 @@ function AskedChart({ rows }: { rows: ChartRow[] }) {
 	const max = Math.max(1, ...shown.map((row) => row.askedBy));
 	const present = (Object.keys(STATUS_TEXT) as ChartStatus[]).filter((key) => shown.some((row) => row.status === key));
 	return (
-		<section className="sm-report__card" aria-label="가장 많이 물은 질문">
+		<section className="sm-report__card" aria-label="가장 많이 물은 질문" {...guideAttr("rep-chart")}>
 			<div className="sm-chart__head">
 				<h3 className="sm-report__head">가장 많이 물은 질문</h3>
 				<span className="sm-meta">막대 = 질문한 사람 수</span>
@@ -288,6 +290,7 @@ function Section({
 	rows,
 	empty,
 	sourceId,
+	guide = false,
 }: {
 	title: string;
 	hint: string;
@@ -295,9 +298,11 @@ function Section({
 	empty: string;
 	/** 주면 줄마다 "답하러 가기" 를 단다 — 할 일 목록에서 바로 질문 탭의 그 질문으로 간다. */
 	sourceId?: number;
+	/** 가이드가 짚는 칸인가(답하지 않은 질문 하나뿐). */
+	guide?: boolean;
 }) {
 	return (
-		<section className="sm-report__card">
+		<section className="sm-report__card" {...(guide ? guideAttr("rep-missing") : {})}>
 			<h3 className="sm-report__head">
 				{title} <span className="sm-meta">{rows.length}개</span>
 			</h3>

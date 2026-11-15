@@ -18,6 +18,7 @@ import type { GuideStep } from "./guide";
 import { MAKE_GUIDE } from "./guides/make";
 import { PREPARE_GUIDE } from "./guides/prepare";
 import { PUBLISH_GUIDE } from "./guides/publish";
+import { REPORT_GUIDE } from "./guides/report";
 import { YOUTUBE_GUIDE } from "./guides/youtube";
 import { QUESTIONS_GUIDE } from "./guides/questions";
 import { useStudioJob } from "./useStudioJob";
@@ -57,6 +58,7 @@ const TAB_GUIDES: Record<string, GuideStep[]> = {
 	make: MAKE_GUIDE,
 	clips: PUBLISH_GUIDE,
 	youtube: YOUTUBE_GUIDE,
+	report: REPORT_GUIDE,
 	questions: QUESTIONS_GUIDE,
 };
 const NO_GUIDE: GuideStep[] = [];

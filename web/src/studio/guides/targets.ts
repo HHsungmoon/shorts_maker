@@ -40,7 +40,13 @@ export type GuideTarget =
 	// 영상 화면 · 유튜브 성과 탭
 	| "yt-refresh"
 	| "yt-totals"
-	| "yt-shorts";
+	| "yt-shorts"
+	// 영상 화면 · 리포트 탭
+	| "rep-copy"
+	| "rep-numbers"
+	| "rep-chart"
+	| "rep-missing"
+	| "rep-reactions";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {

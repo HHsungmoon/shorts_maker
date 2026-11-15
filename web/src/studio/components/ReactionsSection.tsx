@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { summarizeReactions } from "../api";
 import type { ShortsReactions, ShortsReactionTheme, ShortsReview } from "../types";
 import type { SourceView } from "../SourcePage";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 시청자 반응 — 질문이 아닌 유튜브 댓글(tease §3-6, 2026-11-01).
@@ -24,7 +25,7 @@ export function ReactionsSection({ view, reactions }: { view: SourceView; reacti
 	const order = useMemo(() => new Map(reviews.map((r, n) => [r.id, n + 1])), [reviews]);
 
 	return (
-		<section className="sm-report__card sm-reactions" aria-label="시청자 반응">
+		<section className="sm-report__card sm-reactions" aria-label="시청자 반응" {...guideAttr("rep-reactions")}>
 			<div className="sm-reactions__top">
 				<h3 className="sm-report__head">
 					시청자 반응 <span className="sm-meta">감상 댓글 {reviews.length}개</span>
