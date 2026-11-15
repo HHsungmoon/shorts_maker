@@ -24,7 +24,7 @@ from shorts_maker import cli, config
 from shorts_maker.answers import clusters
 
 main_module = importlib.import_module("shorts_maker.cli.main")
-from shorts_maker.pipeline import ingest, ranking, segmentation, stt
+from shorts_maker.pipeline import concepts, ingest, ranking, segmentation, stt
 from shorts_maker.db import store
 
 from .support import make_config, reset_db
@@ -57,7 +57,19 @@ class RankRunTest(unittest.TestCase):
             code = cli.main(["rank", "run", "1", "--criteria", "핵심 논지"])
         self.assertEqual(code, 0)
         run.assert_called_once()
-        self.assertEqual(run.call_args.args[2:], (1, "핵심 논지"))
+        # 셋째 자리는 컨셉(ee116a0). 플래그가 없으면 None — 컨셉 없는 run 이다.
+        self.assertEqual(run.call_args.args[2:], (1, "핵심 논지", None))
+
+    def test_passes_the_concept_flag_through(self):
+        concept = concepts.KEYS[0]
+        with (
+            mock.patch.object(config, "load", return_value=self.cfg),
+            mock.patch.object(ranking, "run_for_source", autospec=True, return_value=1) as run,
+            redirect_stdout(io.StringIO()),
+        ):
+            code = cli.main(["rank", "run", "1", "--concept", concept])
+        self.assertEqual(code, 0)
+        self.assertEqual(run.call_args.args[2:], (1, None, concept))
 
 
 class ChunkAddTest(unittest.TestCase):
