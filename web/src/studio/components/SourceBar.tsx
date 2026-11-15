@@ -1,6 +1,7 @@
 import { Link, NavLink } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { StudioBrand } from "./StudioChrome";
+import { guideAttr } from "../guides/targets";
 import { time } from "../../shared/format";
 import type { ShortsSourceDetail } from "../types";
 import "../shell.css";
@@ -23,6 +24,8 @@ interface SourceBarProps {
 	/** 이 영상에 답이 없는 질문 수. 리포트가 가져갈 것. */
 	missingCount: number;
 	onPlay: (sec: number) => void;
+	/** 지금 탭에 안내가 있으면 그 안내를 연다. 없으면 [가이드 보기] 를 띄우지 않는다. */
+	onGuide?: () => void;
 }
 
 const tabClass = ({ isActive }: { isActive: boolean }) => `sm-bar__tab${isActive ? " sm-bar__tab--on" : ""}`;
@@ -45,6 +48,7 @@ export function SourceBar({
 	openCount,
 	missingCount,
 	onPlay,
+	onGuide,
 }: SourceBarProps) {
 	const { canAct } = useAuth();
 	const source = data?.source ?? null;
@@ -54,7 +58,7 @@ export function SourceBar({
 			<header className="sm-bar">
 				{/* 첫 줄은 제품, 둘째 줄은 지금 작업 중인 영상이다. 둘을 한 줄에 두었더니 로고와 긴 강연 제목이
 				    붙어서 어디까지가 제품 이름인지 읽히지 않았다(2026-10-24 사용자 피드백). */}
-				<StudioBrand />
+				<StudioBrand onGuide={onGuide} />
 
 				<div className="sm-bar__row">
 					{/* 링크로 열린 화면에는 브라우저 뒤로가기에 돌아갈 데가 없다. */}
@@ -85,7 +89,7 @@ export function SourceBar({
 			    /sources/3/clips/questions 가 된다(react-router 7 의 v7_relativeSplatPath 기본값). */}
 			{/* 🔴 순서가 곧 일하는 순서다 — 질문을 보고, 영상을 준비하고, 새로 뽑고, 내보낸다(2026-09-14).
 			    공개 탭의 주소는 예전 클립 탭의 `clips` 를 그대로 쓴다 — 옛 링크가 같은 내용을 연다. */}
-			<nav className="sm-bar__tabs" aria-label="영상 작업">
+			<nav className="sm-bar__tabs" aria-label="영상 작업" {...guideAttr("source-tabs")}>
 				<NavLink to={`/studio/sources/${sourceId}/questions`} className={tabClass}>
 					질문
 					{openCount > 0 && <span className="sm-bar__badge">{openCount}</span>}

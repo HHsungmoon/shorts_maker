@@ -12,7 +12,14 @@ export type GuideTarget =
 	| "readonly"
 	| "new-source"
 	| "source-card"
-	| "youtube";
+	| "youtube"
+	// 영상 화면 공통
+	| "source-tabs"
+	// 영상 화면 · 질문 탭
+	| "q-import"
+	| "q-list"
+	| "q-answer"
+	| "q-work";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {

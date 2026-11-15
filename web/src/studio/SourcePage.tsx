@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
-import { Link, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { fetchClusters, fetchShortsSource, fetchStatus } from "./api";
 import { ClipEditor } from "./components/ClipEditor";
 import { LogTab } from "./components/LogTab";
@@ -13,6 +13,9 @@ import { QuestionsTab } from "./components/QuestionsTab";
 import { MiniPlayerDock, SourceBar } from "./components/SourceBar";
 import type { MiniPlayer } from "./components/SourceBar";
 import { StudioBanners } from "./components/StudioChrome";
+import { useGuide } from "./guide";
+import type { GuideStep } from "./guide";
+import { QUESTIONS_GUIDE } from "./guides/questions";
 import { useStudioJob } from "./useStudioJob";
 import { useAsync } from "../shared/useAsync";
 import type {
@@ -40,6 +43,15 @@ const DEFAULT_CONCEPT: ConceptKey = "info";
  * 영상 전체에서 점수순으로 고른다. 한 번에 한 길만 보인다 — 반반으로 두었더니 고르기 결과 23개 앞에서 추천 둘이 묻혔다.
  */
 export type MakeWay = "ideas" | "criteria";
+
+/**
+ * 탭마다의 [가이드 보기] 문구(guides/*.ts). 여기 없는 탭에는 버튼이 뜨지 않는다 — 눌러도 아무 일이 없는 버튼을 두지 않는다.
+ * 🔴 키는 주소의 탭 조각 **하나로 끝나는 경우**만 맞춘다. `clips/12/edit`(편집 화면)에 공개 탭 안내가 뜨면 안 된다.
+ */
+const TAB_GUIDES: Record<string, GuideStep[]> = {
+	questions: QUESTIONS_GUIDE,
+};
+const NO_GUIDE: GuideStep[] = [];
 
 type RankedPayload = NonNullable<ShortsRun["ranked"]>;
 export type RankedEntry = NonNullable<RankedPayload["ranked"]>[number];
@@ -163,6 +175,10 @@ export function SourcePage() {
 	// 미니 플레이어. 어느 영상의 것인지도 함께 든다 — 다른 영상으로 옮기면 앞 영상에서 고른 초로
 	// 새 영상을 틀지 않게 한다.
 	const [player, setPlayer] = useState<(MiniPlayer & { sourceId: number }) | null>(null);
+	// 지금 탭의 안내. 탭 조각 뒤에 더 붙은 주소(편집 화면 등)는 안내가 없다.
+	const tab = /^\/studio\/sources\/[^/]+\/([^/]+)\/?$/.exec(useLocation().pathname)?.[1] ?? "";
+	const tabGuide = TAB_GUIDES[tab] ?? NO_GUIDE;
+	const openGuide = useGuide(tabGuide);
 
 	// 🔴 셋 다 `keepPrevious` 다. 잡이 도는 동안 `reloadToken` 이 올라가며 통째로 다시 읽는데,
 	// 유지하지 않으면 그때마다 화면이 비어 작업이 사라진 것처럼 보인다. `subject` 를 주는 이유는
@@ -317,6 +333,7 @@ export function SourcePage() {
 				openCount={openCount}
 				missingCount={missingCount}
 				onPlay={playAt}
+				onGuide={tabGuide.length > 0 ? openGuide : undefined}
 			/>
 
 			<main className="sm-shell__main">

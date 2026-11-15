@@ -23,6 +23,7 @@ import type {
 	ShortsJob,
 } from "../types";
 import "../clusters.css";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 질문 한 줄 — 채팅에서 가져온 것은 언제 물었는지를, 댓글에서 가져온 것은 답글을 달았는지를 붙인다.
@@ -240,7 +241,7 @@ export function ClusterPanel({
 				<span className="sm-meta">
 					묶인 클러스터 {clusters.length} · 아직 안 묶인 질문 {unclustered.length}
 				</span>
-				<span className="sm-actions sm-actions--end">
+				<span className="sm-actions sm-actions--end" {...guideAttr("q-import")}>
 					<span className="sm-meta">{aggregateHint}</span>
 					{/* 끝난 라이브만 된다. 라이브가 아니었던 영상이면 서버가 이유를 말한다(잡 오류) — 영상마다
 					    라이브였는지 미리 알 길이 없어 버튼을 숨기지 않는다. */}
@@ -288,7 +289,7 @@ export function ClusterPanel({
 			{(clusters.length > 0 || unclustered.length > 0) && (
 				<div className="sm-qsplit">
 					{/* 왼쪽 — 질문 목록 ---------------------------------------------------- */}
-					<nav className="sm-qlist" aria-label="질문 목록">
+					<nav className="sm-qlist" aria-label="질문 목록" {...guideAttr("q-list")}>
 						<div className="sm-qfilter" role="tablist">
 							{FILTERS.map((f) => {
 								const count = clusters.filter((c) => inFilter(c, f)).length;
@@ -509,7 +510,7 @@ function ClusterDetail({
 					)}
 
 					{!editing && (
-						<div className="sm-actions">
+						<div className="sm-actions" {...guideAttr("q-answer")}>
 							{/* 상태가 곧 다음 행동이다 — 무엇을 누를 수 있는지 제목 바로 아래에서 끝난다. */}
 							{cluster.status === "OPEN" && (
 								<button
@@ -568,7 +569,7 @@ function ClusterDetail({
 				)}
 			</div>
 
-			<div className="sm-qd__work">
+			<div className="sm-qd__work" {...guideAttr("q-work")}>
 				{timeline && duration > 0 && (
 					<SourceTimeline duration={duration} parts={timeline.parts} label={timeline.label} onPlay={onPlay} />
 				)}
