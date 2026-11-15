@@ -110,8 +110,14 @@ def get_source(source_id: int) -> dict:
             # 🔴 클립이 **어디서 나왔는지**를 함께 준다. 질문에 답한 것과 크리에이터가 자기 기준으로
             # 뽑은 것이 한 목록에 섞이면 "클립 3" 이라는 이름만으로는 구분할 수가 없다.
             # 질문에서 나온 것은 대표 문장이, 기준에서 나온 것은 그때 쓴 기준 문장이 이름이 된다.
+            # 🔴 segment_ids — 이 클립이 쓰는 구간 전부. 조합 클립은 조각이 여러 구간에 걸친다(clips.segment_id 는 첫
+            # 조각뿐). AI 추천 카드가 "이미 있습니다" 를 이것으로 가른다 — 서버의 거절(ideas.clip_on_segment)과 같은 기준이다.
             """select cl.*, sg.description,
-                      r.criteria_prompt, r.route, r.concept,
+                      r.criteria_prompt, r.route, r.concept, r.idea_id,
+                      array(select cl.segment_id
+                            union
+                            select cp.segment_id from clip_parts cp
+                             where cp.clip_id = cl.id and cp.segment_id is not null) as segment_ids,
                       qc.canonical_text as question,
                       (select count(*) from questions q where q.cluster_id = qc.id) as asked_by
                from clips cl
@@ -597,14 +603,45 @@ def run_ideas(source_id: int) -> dict:
     with connect() as conn:
         if conn.execute("select 1 from sources where id = %s", (source_id,)).fetchone() is None:
             raise HTTPException(404, "source not found")
-        if not ranking.load_segments(conn, source_id):
+        segment_ids = {s["id"] for s in ranking.load_segments(conn, source_id)}
+        if not segment_ids:
             raise HTTPException(409, "구간이 없어 추천할 수 없습니다 — 영상 준비를 먼저 끝내세요")
+        # 클립이 이미 쓰는 구간은 추천 입력에서 빠진다(ideas.run_for_source). 다 빠지면 물을 것이 없다.
+        if segment_ids <= ideas.taken_segment_ids(conn, source_id):
+            raise HTTPException(409, "모든 구간에 이미 클립이 있어 추천할 구간이 없습니다")
 
     def work() -> dict:
         with connect() as conn:
             return {"ideaId": ideas.run_for_source(conn, deps.cfg, source_id)}
 
     return submit("ideas", f"source {source_id}", work)
+
+
+class IdeaCutIn(BaseModel):
+    concept: str
+    segmentId: int
+
+
+@router.post("/sources/{source_id}/ideas/{idea_id}/cut")
+def cut_idea(source_id: int, idea_id: int, body: IdeaCutIn) -> dict:
+    """AI 추천 카드의 [클립 만들기] — 주제 하나짜리 run 을 만들고 그 구간을 자른다(tease §5-11, 2026-11-14).
+    🔴 셋 다 잡을 띄우기 **전에** 본다 — 큐에 넣은 뒤 거절하면 사람은 한참 기다린 뒤에야 안다."""
+    with connect() as conn:
+        if ideas.find(conn, source_id, idea_id, body.concept, body.segmentId) is None:
+            raise HTTPException(404, "그런 추천 주제가 없습니다")
+        if not ideas.segment_exists(conn, source_id, body.segmentId):
+            raise HTTPException(409, "구간을 다시 나눠 이 추천이 가리키던 구간이 없습니다 — 추천을 다시 받으세요")
+        # 어느 길(질문 · 직접 고르기 · 추천)에서 나왔든 같은 구간이면 거절한다. 같은 대목을 다른 컨셉으로 또 만들고
+        # 싶으면 직접 고르기로 간다 — 이 버튼은 "아직 없는 것" 을 만드는 자리다.
+        taken = ideas.clip_on_segment(conn, body.segmentId)
+        if taken is not None:
+            raise HTTPException(409, f"이 구간을 쓰는 클립이 이미 있습니다 (클립 {taken['id']})")
+
+    def work() -> dict:
+        with connect() as conn:
+            return {"clipId": ideas.cut(conn, deps.cfg, source_id, idea_id, body.concept, body.segmentId)}
+
+    return submit("cut", f"segment {body.segmentId}", work)
 
 
 @router.post("/runs/{run_id}/segments/{segment_id}/cut")
