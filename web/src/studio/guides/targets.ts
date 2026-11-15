@@ -50,7 +50,17 @@ export type GuideTarget =
 	// 영상 화면 · 기록 탭
 	| "log-transcript"
 	| "log-cost"
-	| "log-calls";
+	| "log-calls"
+	// 영상 화면 · 숏폼 편집(공개 탭 → 숏폼 편집 · 카드 편집)
+	| "edit-head"
+	| "edit-stage"
+	| "edit-scenes"
+	| "edit-trim"
+	| "edit-phone"
+	| "edit-shape"
+	| "edit-copy"
+	| "edit-slot"
+	| "edit-subtitles";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {

@@ -19,6 +19,7 @@ import { MAKE_GUIDE } from "./guides/make";
 import { PREPARE_GUIDE } from "./guides/prepare";
 import { LOG_GUIDE } from "./guides/log";
 import { PUBLISH_GUIDE } from "./guides/publish";
+import { EDITOR_GUIDE } from "./guides/editor";
 import { REPORT_GUIDE } from "./guides/report";
 import { YOUTUBE_GUIDE } from "./guides/youtube";
 import { QUESTIONS_GUIDE } from "./guides/questions";
@@ -61,6 +62,8 @@ const TAB_GUIDES: Record<string, GuideStep[]> = {
 	youtube: YOUTUBE_GUIDE,
 	report: REPORT_GUIDE,
 	log: LOG_GUIDE,
+	// 공개 탭 아래 숏폼 편집(clips/:clipId/edit) — 탭이 아니라서 아래 tab 계산이 이 이름을 따로 붙인다.
+	edit: EDITOR_GUIDE,
 	questions: QUESTIONS_GUIDE,
 };
 const NO_GUIDE: GuideStep[] = [];
@@ -187,8 +190,11 @@ export function SourcePage() {
 	// 미니 플레이어. 어느 영상의 것인지도 함께 든다 — 다른 영상으로 옮기면 앞 영상에서 고른 초로
 	// 새 영상을 틀지 않게 한다.
 	const [player, setPlayer] = useState<(MiniPlayer & { sourceId: number }) | null>(null);
-	// 지금 탭의 안내. 탭 조각 뒤에 더 붙은 주소(편집 화면 등)는 안내가 없다.
-	const tab = /^\/studio\/sources\/[^/]+\/([^/]+)\/?$/.exec(useLocation().pathname)?.[1] ?? "";
+	// 지금 탭의 안내. 탭 조각 하나로 끝나는 주소만 탭이고, 그 밖에 안내가 있는 화면은 숏폼 편집 하나다.
+	const pathname = useLocation().pathname;
+	const tab = /^\/studio\/sources\/[^/]+\/clips\/[^/]+\/edit\/?$/.test(pathname)
+		? "edit"
+		: (/^\/studio\/sources\/[^/]+\/([^/]+)\/?$/.exec(pathname)?.[1] ?? "");
 	const tabGuide = TAB_GUIDES[tab] ?? NO_GUIDE;
 	const openGuide = useGuide(tabGuide);
 

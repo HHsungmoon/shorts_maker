@@ -101,6 +101,16 @@ function start(steps: GuideStep[]): Driver {
 }
 
 /**
+ * 지금 안내가 떠 있나. driver.js 는 떠 있는 동안 body 에 `driver-active` 를 단다.
+ *
+ * 🔴 자기 단축키를 창 전체에 거는 화면(숏폼 편집 — ← → 한 프레임 · 스페이스 재생 · S 장면 나누기)은 이걸 보고 물러선다.
+ * 안내도 같은 ← → 로 넘기므로, 안 물러서면 말풍선을 넘길 때마다 영상이 한 프레임씩 움직이고 S 는 장면을 나눈다.
+ */
+export function guideOpen(): boolean {
+	return document.body.classList.contains("driver-active");
+}
+
+/**
  * 화면 하나의 안내를 여는 함수를 돌려준다. 화면을 떠나면(언마운트) 열려 있던 안내를 닫는다 —
  * 브라우저 뒤로가기로 나가면 덮개가 다음 화면 위에 남는다.
  */

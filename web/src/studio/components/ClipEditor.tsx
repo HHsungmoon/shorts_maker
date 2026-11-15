@@ -33,6 +33,8 @@ import type {
 	SubtitleEdit,
 } from "../types";
 import type { SourceView } from "../SourcePage";
+import { guideOpen } from "../guide";
+import { guideAttr } from "../guides/targets";
 import "../editor.css";
 
 /**
@@ -903,6 +905,10 @@ export function ClipEditor({ view }: { view: SourceView }) {
 		seekClip(now + delta, line);
 	};
 	const onKey = (event: KeyboardEvent) => {
+		// 안내가 떠 있으면 ← → · Esc 는 안내의 것이다(guide.guideOpen).
+		if (guideOpen()) {
+			return;
+		}
 		const target = event.target as HTMLElement | null;
 		const tag = target?.tagName ?? "";
 		const kind = tag === "INPUT" ? (target as HTMLInputElement).type : "";
@@ -989,7 +995,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 	return (
 		<div className="sm-edit">
 			<Shortcuts onKey={onKey} />
-			<div className="sm-edit__head">
+			<div className="sm-edit__head" {...guideAttr("edit-head")}>
 				<Link className="sm-edit__back" to={`/studio/sources/${sourceId}/clips`}>
 					← 완성 클립
 				</Link>
@@ -1057,7 +1063,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 							onBoundary={moveBoundary}
 						/>
 						{/* 구간 — 원본 어디부터 어디까지인가. 처음 · 끝을 0.1초 · 1초씩 옮기거나 재생 위치로 자른다. */}
-						<div className="sm-edit__trim">
+						<div className="sm-edit__trim" {...guideAttr("edit-trim")}>
 							<span className="sm-edit__trimlabel">
 								구간 {clockLabel(first[0])}–{clockLabel(last[1])}
 								{ranges.length > 1 ? ` · 조각 ${ranges.length}개` : ""} · {seconds(line.total)}
@@ -1099,7 +1105,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 								</button>
 							)}
 						</div>
-						<div className="sm-edit__scenetools">
+						<div className="sm-edit__scenetools" {...guideAttr("edit-scenes")}>
 							<span className="sm-edit__scenelabel">
 								장면 {scene + 1}/{scenes.length} · {seconds(win.start)}–{seconds(sceneEnd)}
 							</span>
@@ -1194,7 +1200,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 				{/* 설정은 무대 아래가 아니라 한 단을 따로 쓴다 — 아래에 두면 상자를 끌면서 칸 높이 · 카피를 볼 수 없다(2026-11-06).
 				    자리(왼쪽 설정 · 가운데 폰 · 오른쪽 무대)는 editor.css 의 grid-template-areas 가 정한다. */}
 				<div className="sm-edit__form">
-					<section className="sm-edit__group">
+					<section className="sm-edit__group" {...guideAttr("edit-shape")}>
 						<h3>모양</h3>
 						<label className="sm-edit__field">
 							<span>템플릿</span>
@@ -1214,7 +1220,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						<SeriesField data={data} draft={draft} onSeries={pickSeries} act={act} />
 					</section>
 
-					<section className="sm-edit__group">
+					<section className="sm-edit__group" {...guideAttr("edit-copy")}>
 						<h3>카피 · 출처</h3>
 						<div className="sm-edit__row">
 							<button
@@ -1315,7 +1321,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						</label>
 					</section>
 
-					<section className="sm-edit__group">
+					<section className="sm-edit__group" {...guideAttr("edit-slot")}>
 						<h3>영상 칸</h3>
 						<label className="sm-edit__field">
 							<span>
@@ -1362,7 +1368,7 @@ export function ClipEditor({ view }: { view: SourceView }) {
 						</div>
 					</section>
 
-					<section className="sm-edit__group">
+					<section className="sm-edit__group" {...guideAttr("edit-subtitles")}>
 						{/* 켜고 끄기는 제목 줄에. 끄면 줄 목록을 숨기지 않고 흐리게만 한다 — 고친 문구가 사라진 것처럼 보이지 않게,
 						    다시 켤 때 무엇이 들어갈지 보이게(2026-11-08). */}
 						<div className="sm-edit__grouphead">
@@ -1699,7 +1705,7 @@ function Phone({
 	const pct = (value: number) => `${(value / FRAME_H) * 100}%`;
 
 	return (
-		<div className="sm-edit__phonewrap">
+		<div className="sm-edit__phonewrap" {...guideAttr("edit-phone")}>
 			<div className="sm-edit__phone" style={{ background }}>
 				{cardUrl ? (
 					<img className="sm-edit__card" src={cardUrl} alt="글자 층 미리보기" />
@@ -1911,7 +1917,7 @@ function RegionStage({
 	};
 
 	return (
-		<div className="sm-edit__region">
+		<div className="sm-edit__region" {...guideAttr("edit-stage")}>
 			<div
 				ref={stageRef}
 				className="sm-edit__stage"
