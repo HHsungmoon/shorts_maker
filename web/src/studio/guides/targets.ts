@@ -46,7 +46,11 @@ export type GuideTarget =
 	| "rep-numbers"
 	| "rep-chart"
 	| "rep-missing"
-	| "rep-reactions";
+	| "rep-reactions"
+	// 영상 화면 · 기록 탭
+	| "log-transcript"
+	| "log-cost"
+	| "log-calls";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {

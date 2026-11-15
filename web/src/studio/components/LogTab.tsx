@@ -11,6 +11,7 @@ import type {
 	ShortsStageCallBody,
 } from "../types";
 import type { SourceView } from "../SourcePage";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 기록 탭 — **성과 기록**(퍼널)과 작업 기록(전사·비용·단계).
@@ -30,7 +31,7 @@ export function LogTab({ view }: { view: SourceView }) {
 				<>
 					<h2 className="section-title">참고</h2>
 
-					<details className="sm-fold">
+					<details className="sm-fold" {...guideAttr("log-transcript")}>
 						<summary>전사 {utterances}발화</summary>
 						{hasChunks && (
 							<div className="sm-actions" style={{ margin: "12px 0" }}>
@@ -72,7 +73,7 @@ export function LogTab({ view }: { view: SourceView }) {
 						)}
 					</details>
 
-					<details className="sm-fold">
+					<details className="sm-fold" {...guideAttr("log-cost")}>
 						<summary>
 							API 비용 (추정) —{" "}
 							{data.cost.krw.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}원
@@ -80,7 +81,7 @@ export function LogTab({ view }: { view: SourceView }) {
 						<CostDetail cost={data.cost} />
 					</details>
 
-					<details className="sm-fold">
+					<details className="sm-fold" {...guideAttr("log-calls")}>
 						<summary>단계 기록 {data.stageCalls.length}건</summary>
 						<div className="table-wrap" style={{ maxHeight: 280, overflow: "auto" }}>
 							<table className="table">
