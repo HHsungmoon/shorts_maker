@@ -3,6 +3,7 @@ import { fetchYoutubeStats, refreshYoutubeStats } from "../api";
 import { useAsync } from "../../shared/useAsync";
 import type { YoutubeShort, YoutubeStatsView } from "../types";
 import type { SourceView } from "../SourcePage";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 유튜브 성과 — 이 영상에서 올린 숏폼이 유튜브에서 어떻게 되고 있나(tease §7-6, 2026-11-01).
@@ -37,6 +38,7 @@ export function YoutubeStatsTab({ view }: { view: SourceView }) {
 						type="button"
 						className="button button--small sm-actions--end"
 						disabled={busy}
+						{...guideAttr("yt-refresh")}
 						title={busy ? "다른 작업이 끝나야 실행할 수 있습니다" : "올린 숏폼의 지금 수치와 분석을 유튜브에서 다시 읽습니다"}
 						onClick={() => submit(() => refreshYoutubeStats(sourceId))}
 					>
@@ -72,7 +74,7 @@ export function YoutubeStatsTab({ view }: { view: SourceView }) {
 			) : (
 				<>
 					{totals && (
-						<div className="sm-kpis">
+						<div className="sm-kpis" {...guideAttr("yt-totals")}>
 							<Kpi label="조회수" value={num(totals.viewCount)} sub={`숏폼 ${totals.shorts}개 · 지금 수치`} />
 							<Kpi label="좋아요" value={num(totals.likeCount)} sub="지금 수치" />
 							<Kpi label="댓글" value={num(totals.commentCount)} sub="지금 수치" />
@@ -82,7 +84,7 @@ export function YoutubeStatsTab({ view }: { view: SourceView }) {
 						</div>
 					)}
 
-					<section className="sm-report__card">
+					<section className="sm-report__card" {...guideAttr("yt-shorts")}>
 						<h3 className="sm-report__head">
 							올린 숏폼 <span className="sm-meta">{data.shorts.length}개</span>
 						</h3>

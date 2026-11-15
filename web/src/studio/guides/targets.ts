@@ -36,7 +36,11 @@ export type GuideTarget =
 	| "pub-card"
 	| "pub-tools"
 	| "pub-upload"
-	| "pub-waiting";
+	| "pub-waiting"
+	// 영상 화면 · 유튜브 성과 탭
+	| "yt-refresh"
+	| "yt-totals"
+	| "yt-shorts";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {
