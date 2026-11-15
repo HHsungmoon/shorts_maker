@@ -3,6 +3,7 @@ import { cutIdea, renderClip, runCut, runIdeas } from "../api";
 import { time } from "../../shared/format";
 import type { ConceptKey, ShortsClip, ShortsConcept, ShortsIdea, ShortsIdeas, ShortsSegment } from "../types";
 import type { SourceView } from "../SourcePage";
+import { guideAttr } from "../guides/targets";
 
 /**
  * 새 클립 탭의 첫 번째 길 — AI 추천 클립(tease §5-11).
@@ -33,7 +34,7 @@ export function IdeasPanel({ view }: { view: SourceView }) {
 		.sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1) || a.order - b.order);
 
 	return (
-		<section className="sm-ideas" role="tabpanel" aria-label="AI 추천 클립">
+		<section className="sm-ideas" role="tabpanel" aria-label="AI 추천 클립" {...guideAttr("make-ideas")}>
 			<div className="sm-ideas__head">
 				<p className="sm-ideas__lead">
 					컨셉마다 이 영상이 얼마나 맞는지와 만들 만한 주제입니다. 주제는 컨셉마다 최대 5개, 65점 이상만 남깁니다.

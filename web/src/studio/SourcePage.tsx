@@ -15,6 +15,7 @@ import type { MiniPlayer } from "./components/SourceBar";
 import { StudioBanners } from "./components/StudioChrome";
 import { useGuide } from "./guide";
 import type { GuideStep } from "./guide";
+import { MAKE_GUIDE } from "./guides/make";
 import { PREPARE_GUIDE } from "./guides/prepare";
 import { QUESTIONS_GUIDE } from "./guides/questions";
 import { useStudioJob } from "./useStudioJob";
@@ -51,6 +52,7 @@ export type MakeWay = "ideas" | "criteria";
  */
 const TAB_GUIDES: Record<string, GuideStep[]> = {
 	prepare: PREPARE_GUIDE,
+	make: MAKE_GUIDE,
 	questions: QUESTIONS_GUIDE,
 };
 const NO_GUIDE: GuideStep[] = [];

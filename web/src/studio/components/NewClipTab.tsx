@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { renderClip, runCut, runRank, segmentPreviewUrl } from "../api";
 import { ClipVideo } from "./ClipVideo";
 import { IdeasPanel } from "./IdeasPanel";
+import { guideAttr } from "../guides/targets";
 import { Hint } from "../../shared/Hint";
 import { Modal } from "../../shared/Modal";
 import { time } from "../../shared/format";
@@ -101,7 +102,7 @@ export function NewClipTab({ view }: { view: SourceView }) {
 			)}
 
 			{/* 두 길 — 선택지로 가른다(2026-11-14). 고른 쪽만 아래에 펼친다. */}
-			<div className="sm-make__ways" role="tablist" aria-label="만드는 길">
+			<div className="sm-make__ways" role="tablist" aria-label="만드는 길" {...guideAttr("make-ways")}>
 				<WayTile
 					on={makeWay === "ideas"}
 					onClick={() => setMakeWay("ideas")}
@@ -125,7 +126,7 @@ export function NewClipTab({ view }: { view: SourceView }) {
 			{makeWay === "ideas" ? (
 				<IdeasPanel view={view} />
 			) : (
-				<section className="sm-make__compose" role="tabpanel" aria-label="직접 고르기">
+				<section className="sm-make__compose" role="tabpanel" aria-label="직접 고르기" {...guideAttr("make-criteria")}>
 					<div className="sm-make__box">
 						{/* 컨셉 — 무엇을 노리는 숏폼인가. 고르기 · 자르기 · AI 카피가 같은 컨셉을 읽는다. */}
 						<div className="sm-make__conceptrow">
@@ -222,7 +223,7 @@ export function NewClipTab({ view }: { view: SourceView }) {
 
 			{/* 결과(D3) ----------------------------------------------------------------- */}
 			{makeWay === "criteria" && latestRun && (
-				<section className="sm-make__results" aria-label="선정 결과">
+				<section className="sm-make__results" aria-label="선정 결과" {...guideAttr("make-results")}>
 					<div className="sm-make__rhead">
 						<h3 className="sm-make__rtitle">결과 {ranked.length}개</h3>
 						<span className="sm-meta">점수순 · {stamp(latestRun.created_at)}</span>
