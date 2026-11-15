@@ -7,6 +7,7 @@ import { time } from "../../shared/format";
 import type { ShortsClip, ShortsFunnelRow, ShortsInsights } from "../types";
 import type { SourceView } from "../SourcePage";
 import { YoutubeUploadLine, YoutubeUploadModal } from "./YoutubeUploadModal";
+import { guideAttr } from "../guides/targets";
 import "../clips.css";
 
 // 거르개. "공개" 탭이지만 안에는 아직 안 내보낸 클립도 있다 — 둘을 한 번에 가를 수 있어야
@@ -109,7 +110,7 @@ export function PublishTab({ view }: { view: SourceView }) {
 				    사이를 채워 선반이 반쯤 비어 보였다(2026-10-24 사용자 피드백). 다섯 개까지 적고, 하나를
 				    누르면 질문 탭의 그 질문으로 간다. */}
 				{waiting.length > 0 && (
-					<section className="sm-short sm-short--waiting" aria-label={`고를 답 ${waiting.length}개`}>
+					<section className="sm-short sm-short--waiting" aria-label={`고를 답 ${waiting.length}개`} {...guideAttr("pub-waiting")}>
 						<span className="sm-short__plus" aria-hidden="true">
 							<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
 								<path d="M12 5v14M5 12h14" />
@@ -159,7 +160,7 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 	const title = clip.title ?? `클립 ${clip.id}`;
 
 	return (
-		<article className={`sm-short${live ? " sm-short--live" : ""}`}>
+		<article className={`sm-short${live ? " sm-short--live" : ""}`} {...guideAttr("pub-card")}>
 			<div className="sm-short__media">
 				{clip.rendered ? (
 					// 🔴 비율을 미리 잡는다(CSS). 메타데이터가 오기 전엔 <video> 높이가 0 이라 카드가 납작하게
@@ -257,13 +258,14 @@ function ShortCard({ clip, view, stats }: { clip: ShortsClip; view: SourceView; 
 								className="button button--small"
 								disabled={jobBusy}
 								onClick={() => setUploading(true)}
+								{...guideAttr("pub-upload")}
 							>
 								유튜브에 올리기
 							</button>
 						</div>
 					)}
 					{clip.uploads.length > 0 && <YoutubeUploadLine upload={clip.uploads[0]} />}
-					<div className="sm-short__tools">
+					<div className="sm-short__tools" {...guideAttr("pub-tools")}>
 						{/* 누른 쪽이 눌린 채로 보여야 한다 — 안 그러면 들어갔는지 몰라 다시 누른다(연타의 출발점). */}
 						<button
 							type="button"

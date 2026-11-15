@@ -31,7 +31,12 @@ export type GuideTarget =
 	| "make-ways"
 	| "make-ideas"
 	| "make-criteria"
-	| "make-results";
+	| "make-results"
+	// 영상 화면 · 공개 탭
+	| "pub-card"
+	| "pub-tools"
+	| "pub-upload"
+	| "pub-waiting";
 
 /** 화면 요소에 펼쳐 붙인다: `<button {...guideAttr("new-source")}>`. */
 export function guideAttr(target: GuideTarget): { "data-guide": GuideTarget } {
